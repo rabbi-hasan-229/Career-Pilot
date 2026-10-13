@@ -1,0 +1,9 @@
+{
+  "appId": "com.careerpilot.app",
+  "appName": "Career Pilot",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

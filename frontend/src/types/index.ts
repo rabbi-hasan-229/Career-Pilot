@@ -1,0 +1,148 @@
+// Career Pilot: Professional Material 3 Data Models
+
+export interface Profile {
+  id: string;
+  full_name: string;
+  avatar_url?: string;
+  target_role: string;
+  plan: 'free' | 'premium';
+  daily_minutes: number;
+  ai_prompts_left: number;
+  streak_days: number;
+  created_at: string;
+}
+
+export interface Role {
+  id: string;
+  slug: string;
+  title: string;
+  category: string;
+  effort_hours: number;
+  source: 'curated' | 'ai';
+  description?: string;
+  icon_name?: string;
+}
+
+export interface Milestone {
+  id: string;
+  roadmap_id: string;
+  user_id: string;
+  title: string;
+  position: number;
+  start_date: string;
+  end_date: string;
+  status: 'todo' | 'doing' | 'done';
+  effort_hours?: number;
+}
+
+export interface Task {
+  id: string;
+  milestone_id: string;
+  user_id: string;
+  title: string;
+  subject: string; // e.g. 'Data Structures', 'Discrete Mathematics', 'Problem Solving'
+  type: 'Study' | 'Review' | 'Practice';
+  due_date: string;
+  est_minutes: number;
+  progress_pct: number; // 0 to 100
+  done_at?: string | null;
+  quiz?: TaskQuiz;
+}
+
+export interface QuizOption {
+  id: string;
+  text: string;
+  is_correct: boolean;
+}
+
+export interface TaskQuiz {
+  id: string;
+  task_id: string;
+  question: string;
+  options: QuizOption[];
+  explanation: string;
+  time_limit_sec?: number;
+}
+
+export interface AICoachMessage {
+  id: string;
+  sender: 'ai' | 'user';
+  text: string;
+  timestamp: string;
+  proposal?: {
+    action: 'shift_milestone' | 'compress_tasks' | 'pause_week';
+    title: string;
+    description: string;
+    days?: number;
+  };
+}
+
+export interface InterviewQuestion {
+  id: string;
+  round: 'Behavioral' | 'Technical' | 'System Design';
+  difficulty: 'Junior' | 'Mid' | 'Senior';
+  question: string;
+  expected_keywords: string[];
+  rubric: {
+    situation?: boolean;
+    task?: boolean;
+    action?: boolean;
+    result?: boolean;
+  };
+  model_answer: string;
+}
+
+export interface InterviewAttempt {
+  id: string;
+  question_id: string;
+  user_answer: string;
+  score: number;
+  matched_keywords: string[];
+  rubric_feedback: {
+    situation: boolean;
+    task: boolean;
+    action: boolean;
+    result: boolean;
+  };
+  ai_feedback?: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  category: string;
+  is_acquired: boolean;
+}
+
+export interface Vacancy {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  salary_range: string;
+  match_pct: number;
+  required_skills: string[];
+  missing_skills: string[];
+}
+
+export interface CVData {
+  full_name: string;
+  email: string;
+  phone: string;
+  headline: string;
+  summary: string;
+  skills: string[];
+  experience: {
+    title: string;
+    company: string;
+    period: string;
+    highlights: string[];
+  }[];
+  education: {
+    degree: string;
+    institution: string;
+    year: string;
+  }[];
+}
+
+export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills';
