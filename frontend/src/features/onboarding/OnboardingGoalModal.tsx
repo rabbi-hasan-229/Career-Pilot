@@ -1,8 +1,27 @@
-import React, { useState, useMemo } from 'react';
-import { Compass, Calendar, Clock, Award, ArrowRight, Check, Bell, Search, X } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import {
+  Calendar,
+  AlertTriangle,
+  Sparkles,
+  Search,
+  ChevronRight,
+  Code2,
+  Cloud,
+  Database,
+  Monitor,
+  Shield,
+  Smartphone,
+  Gamepad2,
+  CheckCircle2,
+  ArrowRight,
+  X,
+} from 'lucide-react';
 import { authService } from '../auth/authService';
 import { notificationService } from '../notifications/notificationService';
-import { comprehensiveCareerCatalog, careerCategories } from '../roadmap/careerCatalog';
+import {
+  comprehensiveCareerCatalog,
+  getOrCreateCareerBlueprint,
+} from '../roadmap/careerCatalog';
 import type { CareerOption } from '../roadmap/careerCatalog';
 import type { Profile } from '../../types';
 
@@ -11,39 +30,25 @@ interface Props {
   onComplete: (updatedProfile: Profile) => void;
 }
 
-const timelineOptions = [
-  { months: 3, label: '3 Months', sub: 'Fast Track (12 wks)' },
-  { months: 6, label: '6 Months', sub: 'Balanced (26 wks)' },
-  { months: 9, label: '9 Months', sub: 'Deep Dive (38 wks)' },
-  { months: 12, label: '12 Months', sub: 'Steady Shift (52 wks)' },
-];
-
-const commitmentOptions = [
-  { mins: 30, label: '30m / day', sub: '3.5 hrs/wk' },
-  { mins: 60, label: '60m / day', sub: '7 hrs/wk' },
-  { mins: 90, label: '90m / day', sub: '10.5 hrs/wk' },
-  { mins: 120, label: '2h / day', sub: '14 hrs/wk' },
-];
-
-const levelOptions: { id: 'beginner' | 'switcher' | 'junior' | 'mid'; label: string; desc: string }[] = [
-  { id: 'beginner', label: 'Beginner', desc: 'Starting from fundamentals' },
-  { id: 'switcher', label: 'Career Switcher', desc: 'Transitioning from non-tech' },
-  { id: 'junior', label: 'Junior', desc: 'Advancing toward mid-level' },
-];
-
 export const OnboardingGoalModal: React.FC<Props> = ({ profile, onComplete }) => {
-  const [selectedRole, setSelectedRole] = useState(profile.target_role || 'Full Stack Engineer');
-  const [customRole, setCustomRole] = useState('');
+  const [selectedSlug, setSelectedSlug] = useState(
+    profile.target_role
+      ? profile.target_role.toLowerCase().replace(/[^a-z0-9]/g, '-')
+      : 'serverless-application-engineer'
+  );
+  const [dailyMinutes, setDailyMinutes] = useState(profile.daily_minutes || 60);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [timelineMonths, setTimelineMonths] = useState(profile.target_timeline_months || 6);
-  const [dailyMinutes, setDailyMinutes] = useState(profile.daily_minutes || 60);
-  const [experienceLevel, setExperienceLevel] = useState<'beginner' | 'switcher' | 'junior' | 'mid'>('junior');
-  const [enableNotifications, setEnableNotifications] = useState(true);
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
-  const activeRoleTitle = customRole.trim() || selectedRole;
+  // Default target date: 90 days from now
+  const [targetDateStr, setTargetDateStr] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 90);
+    return d.toISOString().split('T')[0];
+  });
 
-  // Filter careers across 200+ options
+  // Filter 200+ careers
   const filteredCareers = useMemo(() => {
     let list: CareerOption[] = comprehensiveCareerCatalog;
     if (selectedCategory !== 'all') {
@@ -61,19 +66,253 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, onComplete }) =>
     return list;
   }, [selectedCategory, searchQuery]);
 
-  const handleFinish = async () => {
-    if (enableNotifications) {
-      await notificationService.requestPermission();
-    }
+  const selectedRole = useMemo(() => {
+    return getOrCreateCareerBlueprint(selectedSlug);
+  }, [selectedSlug]);
 
+  const { totalDays, totalWeeks, totalEffortHours, isOverloaded, requiredDailyMinutes } = useMemo(() => {
+    const targetDate = new Date(targetDateStr);
+    const today = new Date();
+    const diffTime = targetDate.getTime() - today.getTime();
+    const days = Math.max(14, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    const weeks = days / 7;
+    const effort = selectedRole.effortHours;
+    const available = (days * (5 / 7) * dailyMinutes) / 60;
+    const overloaded = available < effort;
+    const reqMins = Math.ceil((effort * 60) / (days * (5 / 7)));
+    return {
+      totalDays: days,
+      totalWeeks: weeks,
+      totalEffortHours: effort,
+      isOverloaded: overloaded,
+      requiredDailyMinutes: reqMins,
+    };
+  }, [targetDateStr, selectedRole.effortHours, dailyMinutes]);
+
+  const handleFinish = async () => {
+    try {
+      await notificationService.requestPermission();
+    } catch {}
+
+    const months = Math.max(1, Math.round(totalDays / 30));
     const updated = authService.saveOnboardingGoal(profile, {
-      target_role: activeRoleTitle,
-      target_timeline_months: timelineMonths,
+      target_role: selectedRole.title,
+      target_timeline_months: months,
       daily_minutes: dailyMinutes,
-      experience_level: experienceLevel,
+      experience_level: 'junior',
     });
 
     onComplete(updated);
+  };
+
+  const formatDisplayDate = (isoStr: string) => {
+    try {
+      const d = new Date(isoStr);
+      const day = String(d.getDate()).padStart(2, '0');
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const month = months[d.getMonth()] || 'Jan';
+      const year = d.getFullYear();
+      return `${day} - ${month} - ${year}`;
+    } catch {
+      return isoStr;
+    }
+  };
+
+  const getRoleIcon = (role: CareerOption) => {
+    const t = role.title.toLowerCase();
+    const c = role.category.toLowerCase();
+    if (t.includes('next')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#0F172A',
+            color: '#FFFFFF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '14px',
+            fontWeight: 900,
+            flexShrink: 0,
+          }}
+        >
+          N
+        </div>
+      );
+    }
+    if (t.includes('vue') || t.includes('nuxt')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#E6F9F0',
+            color: '#10B981',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '14px',
+            fontWeight: 900,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ color: '#10B981' }}>▲</span>
+        </div>
+      );
+    }
+    if (t.includes('serverless') || t.includes('cloud') || c.includes('cloud')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Cloud size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (t.includes('backend') || t.includes('database')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Database size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (t.includes('frontend') || t.includes('web') || c.includes('web')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Monitor size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (c.includes('ai') || c.includes('data')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Sparkles size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (c.includes('cyber') || c.includes('security')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Shield size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (c.includes('mobile')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Smartphone size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    if (c.includes('game')) {
+      return (
+        <div
+          style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: '#EFF6FF',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#2563EB',
+            flexShrink: 0,
+          }}
+        >
+          <Gamepad2 size={18} strokeWidth={2.2} />
+        </div>
+      );
+    }
+    return (
+      <div
+        style={{
+          width: '32px',
+          height: '32px',
+          borderRadius: '8px',
+          background: '#EFF6FF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#2563EB',
+          flexShrink: 0,
+        }}
+      >
+        <Code2 size={18} strokeWidth={2.2} />
+      </div>
+    );
   };
 
   return (
@@ -89,396 +328,461 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, onComplete }) =>
         justifyContent: 'center',
         padding: '16px',
         animation: 'fadeIn 0.2s ease-out',
+        fontFamily: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
       <div
+        className="career-path-window"
         style={{
+          maxWidth: '1060px',
           width: '100%',
-          maxWidth: '560px',
-          maxHeight: '92vh',
-          overflowY: 'auto',
-          background: 'var(--md-surface, #FFFFFF)',
-          borderRadius: '28px',
-          padding: '24px 22px',
-          boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
-          border: '1px solid var(--md-outline, #E2E8F0)',
-          color: 'var(--md-text-primary, #1E293B)',
+          height: '92vh',
+          maxHeight: '680px',
+          background: '#FFFFFF',
+          borderRadius: '24px',
+          boxShadow: '0 25px 60px -15px rgba(0,0,0,0.3)',
+          border: '1px solid #E2E8F0',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'row',
+          position: 'relative',
         }}
       >
-        {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '18px' }}>
-          <div
-            style={{
-              width: '46px',
-              height: '46px',
-              borderRadius: '50%',
-              background: '#8EA95B',
-              color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              margin: '0 auto 10px auto',
-              boxShadow: '0 6px 16px rgba(142, 169, 91, 0.35)',
-            }}
-          >
-            <Compass size={22} />
-          </div>
-          <h2 style={{ fontSize: '20px', fontWeight: 800, margin: '0 0 4px 0', letterSpacing: '-0.02em' }}>
-            Set Your Career Goal
-          </h2>
-          <p style={{ fontSize: '12.5px', color: '#64748B', margin: 0 }}>
-            Choose from 200+ curated tech careers. We customize your daily roadmap.
-          </p>
-        </div>
-
-        {/* Section 1: Career Role Quest */}
-        <div style={{ marginBottom: '18px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-            <label style={{ fontSize: '11px', fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              1. Choose Target Career ({filteredCareers.length} available)
-            </label>
-            {activeRoleTitle && (
-              <span style={{ fontSize: '11px', fontWeight: 700, color: '#5C7433', background: 'rgba(142, 169, 91, 0.12)', padding: '2px 8px', borderRadius: '6px' }}>
-                Selected: {activeRoleTitle}
-              </span>
-            )}
-          </div>
-
-          {/* Search bar */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              background: '#F8FAFC',
-              border: '1px solid #E2E8F0',
-              borderRadius: '12px',
-              padding: '8px 12px',
-              marginBottom: '8px',
-            }}
-          >
-            <Search size={15} color="#94A3B8" />
-            <input
-              type="text"
-              placeholder="Search 200+ careers (e.g. Rust, Cloud, AI, iOS, Quant, Design)..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                outline: 'none',
-                fontSize: '12.5px',
-                width: '100%',
-                color: '#1E293B',
-              }}
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#94A3B8' }}
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          {/* Category Filter Horizontal Scroll */}
-          <div
-            style={{
-              display: 'flex',
-              gap: '6px',
-              overflowX: 'auto',
-              paddingBottom: '6px',
-              marginBottom: '10px',
-              scrollbarWidth: 'none',
-            }}
-          >
-            {careerCategories.map((cat) => {
-              const isCatActive = selectedCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setSelectedCategory(cat.id)}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: '9999px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                    border: `1px solid ${isCatActive ? '#8EA95B' : '#E2E8F0'}`,
-                    background: isCatActive ? '#8EA95B' : '#FFFFFF',
-                    color: isCatActive ? '#FFFFFF' : '#64748B',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {cat.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Career Cards Scrollable Grid */}
-          <div
-            style={{
-              maxHeight: '185px',
-              overflowY: 'auto',
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
-              gap: '6px',
-              paddingRight: '4px',
-              marginBottom: '8px',
-            }}
-          >
-            {filteredCareers.map((role) => {
-              const isSelected = selectedRole === role.title && !customRole;
-              return (
-                <button
-                  key={role.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedRole(role.title);
-                    setCustomRole('');
-                  }}
-                  style={{
-                    padding: '8px 10px',
-                    borderRadius: '12px',
-                    border: `1.5px solid ${isSelected ? '#8EA95B' : '#E2E8F0'}`,
-                    background: isSelected ? 'rgba(142, 169, 91, 0.1)' : '#F8FAFC',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    transition: 'all 0.15s ease',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '4px' }}>
-                    <strong style={{ fontSize: '12px', color: isSelected ? '#5C7433' : '#1E293B', lineHeight: 1.25 }}>
-                      {role.title}
-                    </strong>
-                    {isSelected && <Check size={14} color="#8EA95B" strokeWidth={3} style={{ flexShrink: 0, marginTop: '2px' }} />}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '6px' }}>
-                    <span style={{ fontSize: '10px', fontWeight: 600, color: '#64748B' }}>
-                      {role.category}
-                    </span>
-                    <span style={{ fontSize: '9.5px', fontWeight: 700, color: '#8EA95B', background: 'rgba(142, 169, 91, 0.15)', padding: '1px 5px', borderRadius: '4px' }}>
-                      {role.effortHours}h
-                    </span>
-                  </div>
-                </button>
-              );
-            })}
-            {filteredCareers.length === 0 && (
-              <div style={{ gridColumn: 'span 2', textAlign: 'center', padding: '16px', color: '#64748B', fontSize: '12px' }}>
-                No careers matched "{searchQuery}". Type a custom title below!
-              </div>
-            )}
-          </div>
-
-          {/* Custom Role Input Fallback */}
-          <input
-            type="text"
-            placeholder="Or type any custom career role (e.g. Quantum Algorithm Engineer)..."
-            value={customRole}
-            onChange={(e) => setCustomRole(e.target.value)}
+        {/* Left Mountain Panel (Desktop) */}
+        <div
+          className="career-path-left-panel"
+          style={{
+            width: '240px',
+            position: 'relative',
+            background: '#0B1E38',
+            flexShrink: 0,
+            overflow: 'hidden',
+          }}
+        >
+          {/* Background Mountain Image from Reference */}
+          <img
+            src="/assets/career-mountain-desktop.png"
+            alt="Career path mountains"
             style={{
               width: '100%',
-              padding: '9px 12px',
-              borderRadius: '12px',
-              border: `1px solid ${customRole ? '#8EA95B' : '#E2E8F0'}`,
-              background: '#FFFFFF',
-              fontSize: '12px',
-              outline: 'none',
-              boxSizing: 'border-box',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'top center',
             }}
           />
         </div>
 
-        {/* Section 2: Time to Achieve It */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-            <Calendar size={13} color="#8EA95B" />
-            2. Time to Achieve It
-          </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-            {timelineOptions.map((opt) => {
-              const isSelected = timelineMonths === opt.months;
-              return (
-                <button
-                  key={opt.months}
-                  type="button"
-                  onClick={() => setTimelineMonths(opt.months)}
-                  style={{
-                    padding: '8px 4px',
-                    borderRadius: '10px',
-                    border: `1.5px solid ${isSelected ? '#8EA95B' : '#E2E8F0'}`,
-                    background: isSelected ? '#8EA95B' : '#F8FAFC',
-                    color: isSelected ? '#FFFFFF' : '#1E293B',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <strong style={{ fontSize: '12px', display: 'block' }}>{opt.label}</strong>
-                  <span style={{ fontSize: '9.5px', opacity: isSelected ? 0.9 : 0.7 }}>{opt.sub.split(' ')[0]}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Section 3: Daily Commitment */}
-        <div style={{ marginBottom: '20px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-            <Clock size={13} color="#8EA95B" />
-            3. Daily Commitment
-          </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-            {commitmentOptions.map((opt) => {
-              const isSelected = dailyMinutes === opt.mins;
-              return (
-                <button
-                  key={opt.mins}
-                  type="button"
-                  onClick={() => setDailyMinutes(opt.mins)}
-                  style={{
-                    padding: '8px 4px',
-                    borderRadius: '10px',
-                    border: `1.5px solid ${isSelected ? '#8EA95B' : '#E2E8F0'}`,
-                    background: isSelected ? '#8EA95B' : '#F8FAFC',
-                    color: isSelected ? '#FFFFFF' : '#1E293B',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <strong style={{ fontSize: '12px', display: 'block' }}>{opt.label}</strong>
-                  <span style={{ fontSize: '9.5px', opacity: isSelected ? 0.9 : 0.7 }}>{opt.sub}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Section 4: Experience Level */}
-        <div style={{ marginBottom: '22px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-            <Award size={13} color="#8EA95B" />
-            4. Current Level
-          </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
-            {levelOptions.map((lvl) => {
-              const isSelected = experienceLevel === lvl.id;
-              return (
-                <button
-                  key={lvl.id}
-                  type="button"
-                  onClick={() => setExperienceLevel(lvl.id)}
-                  style={{
-                    padding: '8px',
-                    borderRadius: '10px',
-                    border: `1.5px solid ${isSelected ? '#8EA95B' : '#E2E8F0'}`,
-                    background: isSelected ? 'rgba(142, 169, 91, 0.1)' : '#F8FAFC',
-                    cursor: 'pointer',
-                    textAlign: 'center',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <strong style={{ fontSize: '11.5px', color: isSelected ? '#5C7433' : '#1E293B', display: 'block' }}>
-                    {lvl.label}
-                  </strong>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Push Notification Opt-in */}
+        {/* Right Panel */}
         <div
+          className="career-path-right-panel"
           style={{
+            flex: 1,
             display: 'flex',
-            alignItems: 'center',
+            flexDirection: 'column',
             justifyContent: 'space-between',
-            background: '#F8FAFC',
-            border: '1px solid #E2E8F0',
-            borderRadius: '12px',
-            padding: '10px 14px',
-            marginBottom: '22px',
+            padding: '24px 28px',
+            boxSizing: 'border-box',
+            overflowY: 'auto',
+            background: '#FFFFFF',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Bell size={18} color="#F97316" />
-            <div>
-              <strong style={{ fontSize: '12px', display: 'block', color: '#1E293B' }}>
-                Daily Reminder Push
-              </strong>
-              <span style={{ fontSize: '11px', color: '#64748B' }}>
-                Notify me if I have uncompleted roadmap tasks today.
-              </span>
+          <div>
+            {/* Top Bar */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '16px',
+                marginBottom: '16px',
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: '10.5px',
+                    fontWeight: 800,
+                    color: '#64748B',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    marginBottom: '4px',
+                  }}
+                >
+                  Career Roadmaps
+                </div>
+                <h2
+                  style={{
+                    fontSize: '22px',
+                    fontWeight: 800,
+                    color: '#0F172A',
+                    letterSpacing: '-0.02em',
+                    margin: '0 0 4px 0',
+                  }}
+                >
+                  Choose your career path
+                </h2>
+                <div style={{ fontSize: '12px', color: '#64748B' }}>
+                  Browse 200+ tech roadmaps with zero-cost math engine
+                </div>
+              </div>
+
+              {/* Search Bar Input */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: '#F8FAFC',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  width: '260px',
+                }}
+              >
+                <Search size={14} color="#94A3B8" />
+                <input
+                  type="text"
+                  placeholder="Search 200+ careers (e.g. Next.js, DevOps, AI)..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    outline: 'none',
+                    fontSize: '11.5px',
+                    color: '#0F172A',
+                    width: '100%',
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filter Category Pills */}
+            <div
+              style={{
+                display: 'flex',
+                gap: '8px',
+                overflowX: 'auto',
+                paddingBottom: '8px',
+                marginBottom: '16px',
+                scrollbarWidth: 'none',
+              }}
+            >
+              {[
+                { id: 'all', label: 'All (200+)' },
+                { id: 'Software & Web', label: 'Software & Web' },
+                { id: 'AI & Data Science', label: 'AI & Data' },
+                { id: 'Cloud & DevOps', label: 'Cloud & DevOps' },
+                { id: 'Cybersecurity', label: 'Cybersecurity' },
+                { id: 'Mobile & Multiplatform', label: 'Mobile App' },
+                { id: 'Game Dev & 3D', label: 'Game Dev' },
+              ].map((cat) => {
+                const isActive = selectedCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '9999px',
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      border: 'none',
+                      background: isActive ? '#0F2744' : '#F1F5F9',
+                      color: isActive ? '#FFFFFF' : '#475569',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    {cat.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Target Role Section Header */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '10px',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  color: '#64748B',
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Target Role ({filteredCareers.length} available)
+              </div>
+              <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#2563EB' }}>
+                Selected: {selectedRole.title}
+              </div>
+            </div>
+
+            {/* Role Cards Grid */}
+            <div
+              className="career-role-cards-grid"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '10px',
+                maxHeight: '190px',
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                paddingRight: '4px',
+                marginBottom: '18px',
+              }}
+            >
+              {filteredCareers.map((role) => {
+                const isSelected = selectedRole.slug === role.slug;
+                return (
+                  <div
+                    key={role.id}
+                    onClick={() => setSelectedSlug(role.slug)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      borderRadius: '12px',
+                      border: `1.5px solid ${isSelected ? '#3B82F6' : '#E2E8F0'}`,
+                      background: isSelected ? '#EFF6FF' : '#FFFFFF',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      boxShadow: isSelected ? '0 2px 8px rgba(37, 99, 235, 0.12)' : '0 1px 2px rgba(0,0,0,0.02)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
+                      {getRoleIcon(role)}
+                      <div style={{ overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            fontSize: '12.5px',
+                            fontWeight: 800,
+                            color: isSelected ? '#1D4ED8' : '#0F172A',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {role.title}
+                        </div>
+                        <div style={{ fontSize: '10.5px', color: '#64748B' }}>{role.category}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                      <span
+                        style={{
+                          background: isSelected ? '#DBEAFE' : '#EFF6FF',
+                          color: '#2563EB',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                        }}
+                      >
+                        {role.effortHours}h · {role.stages.length} stages
+                      </span>
+                      <ChevronRight size={14} color={isSelected ? '#2563EB' : '#94A3B8'} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Target Deadline & Study Commitment Inputs */}
+            <div
+              className="career-controls-row"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.1fr 1fr',
+                gap: '16px',
+                marginBottom: '16px',
+              }}
+            >
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    color: '#64748B',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    marginBottom: '6px',
+                  }}
+                >
+                  Target Completion Deadline
+                </label>
+                <div
+                  onClick={() => dateInputRef.current?.showPicker?.()}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: '#FFFFFF',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: '10px',
+                    padding: '9px 12px',
+                    cursor: 'pointer',
+                    position: 'relative',
+                  }}
+                >
+                  <Calendar size={16} color="#2563EB" />
+                  <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F172A' }}>
+                    {formatDisplayDate(targetDateStr)}
+                  </span>
+                  <Calendar size={16} color="#94A3B8" />
+
+                  <input
+                    ref={dateInputRef}
+                    type="date"
+                    value={targetDateStr}
+                    onChange={(e) => setTargetDateStr(e.target.value)}
+                    style={{
+                      position: 'absolute',
+                      opacity: 0,
+                      width: '100%',
+                      height: '100%',
+                      left: 0,
+                      top: 0,
+                      cursor: 'pointer',
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    color: '#64748B',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                    marginBottom: '6px',
+                  }}
+                >
+                  Daily Study Commitment
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                  {[30, 60, 90, 120].map((mins) => {
+                    const isSelected = dailyMinutes === mins;
+                    return (
+                      <button
+                        key={mins}
+                        type="button"
+                        onClick={() => setDailyMinutes(mins)}
+                        style={{
+                          padding: '8px 0',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: isSelected ? '#0F2744' : '#F1F5F9',
+                          color: isSelected ? '#FFFFFF' : '#334155',
+                          fontWeight: 700,
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                        }}
+                      >
+                        {mins}m
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Overload Warning / Feasible Banner */}
+            <div
+              style={{
+                background: isOverloaded ? '#FEF2F2' : '#F0FDF4',
+                border: `1px solid ${isOverloaded ? '#FECACA' : '#BBF7D0'}`,
+                borderRadius: '10px',
+                padding: '10px 14px',
+                marginBottom: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+                {isOverloaded ? (
+                  <>
+                    <AlertTriangle size={15} color="#DC2626" />
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#DC2626' }}>
+                      Schedule Overload Warning
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={15} color="#166534" />
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#166534' }}>
+                      Feasible Study Plan
+                    </span>
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: '11.5px', color: '#475569', lineHeight: 1.4 }}>
+                {isOverloaded ? (
+                  <>
+                    Total effort is {totalEffortHours}h across {totalDays} days. You need at least{' '}
+                    <strong style={{ color: '#DC2626' }}>{requiredDailyMinutes} mins/day</strong>. Consider
+                    extending the deadline.
+                  </>
+                ) : (
+                  <>
+                    Total effort is {totalEffortHours}h across {totalDays} days. Feasible allocation of{' '}
+                    <strong>{totalWeeks.toFixed(1)} weeks</strong> across {selectedRole.stages.length} stages at{' '}
+                    {dailyMinutes} mins/weekday.
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
+          {/* Bottom Action Button */}
           <button
             type="button"
-            role="switch"
-            aria-checked={enableNotifications}
-            onClick={() => setEnableNotifications(!enableNotifications)}
+            onClick={handleFinish}
             style={{
-              width: '40px',
-              height: '22px',
-              borderRadius: '9999px',
-              background: enableNotifications ? '#FED7AA' : '#E2E8F0',
+              width: '100%',
+              padding: '13px',
+              borderRadius: '12px',
               border: 'none',
-              position: 'relative',
+              background: '#0F2744',
+              color: '#FFFFFF',
+              fontSize: '14px',
+              fontWeight: 800,
               cursor: 'pointer',
-              padding: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(15, 39, 68, 0.35)',
+              transition: 'background 0.15s ease',
             }}
           >
-            <span
-              style={{
-                position: 'absolute',
-                top: '2px',
-                left: enableNotifications ? '20px' : '2px',
-                width: '18px',
-                height: '18px',
-                borderRadius: '50%',
-                background: enableNotifications ? '#F97316' : '#FFFFFF',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
-                transition: 'all 0.2s ease',
-              }}
-            />
+            <span>Apply This Career Roadmap</span>
+            <ArrowRight size={16} />
           </button>
         </div>
-
-        {/* Submit Button */}
-        <button
-          type="button"
-          onClick={handleFinish}
-          style={{
-            width: '100%',
-            background: '#8EA95B',
-            color: '#FFFFFF',
-            border: 'none',
-            borderRadius: '14px',
-            padding: '14px',
-            fontSize: '14.5px',
-            fontWeight: 800,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            boxShadow: '0 4px 14px rgba(142, 169, 91, 0.35)',
-            transition: 'background 0.15s ease',
-          }}
-        >
-          Launch My Career Roadmap
-          <ArrowRight size={17} />
-        </button>
       </div>
     </div>
   );

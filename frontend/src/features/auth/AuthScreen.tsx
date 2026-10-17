@@ -4,12 +4,8 @@ import {
   Lock,
   Eye,
   EyeOff,
-  Compass,
   ArrowRight,
   User,
-  MapPin,
-  BarChart3,
-  Users,
   ChevronDown,
 } from 'lucide-react';
 import { GoogleIcon, GithubIcon, MicrosoftIcon } from '../../components/SocialIcons';
@@ -189,17 +185,12 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
           style={{
             width: mode === 'signup' ? '42%' : '44%',
             position: 'relative',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-            padding: '36px 32px',
-            boxSizing: 'border-box',
+            background: '#0B1E38',
             overflow: 'hidden',
             flexShrink: 0,
-            background: '#0B1E38',
           }}
         >
-          {/* Mountain Scenic Background Image */}
+          {/* Mountain Scenic Artwork from Reference */}
           <img
             src={
               mode === 'signup'
@@ -208,81 +199,12 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
             }
             alt="Scenic mountain learning path"
             style={{
-              position: 'absolute',
-              inset: 0,
               width: '100%',
               height: '100%',
               objectFit: 'cover',
               objectPosition: 'center',
-              zIndex: 1,
             }}
           />
-
-          {/* Subtle gradient overlay to ensure perfect contrast */}
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              background:
-                'linear-gradient(180deg, rgba(15, 30, 54, 0.55) 0%, rgba(15, 30, 54, 0.05) 40%, rgba(15, 30, 54, 0.75) 100%)',
-              zIndex: 2,
-            }}
-          />
-
-          {/* Top Logo & Slogan */}
-          <div style={{ position: 'relative', zIndex: 3 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-              <div
-                style={{
-                  width: '38px',
-                  height: '38px',
-                  borderRadius: '11px',
-                  background: '#0F2744',
-                  border: '1px solid rgba(255, 255, 255, 0.25)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#FFFFFF',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.25)',
-                }}
-              >
-                <Compass size={21} strokeWidth={2.4} />
-              </div>
-              <div style={{ fontSize: '18px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.02em' }}>
-                Career Roadmaps
-              </div>
-            </div>
-            <div style={{ fontSize: '13px', color: '#E2E8F0', fontWeight: 500, lineHeight: 1.4 }}>
-              Plan today,
-              <br />
-              build tomorrow.
-            </div>
-          </div>
-
-          {/* Bottom Value Badges */}
-          <div style={{ position: 'relative', zIndex: 3 }}>
-            {mode === 'signup' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#FFFFFF', fontSize: '13px', fontWeight: 600 }}>
-                  <MapPin size={17} color="#93C5FD" />
-                  <span>200+ tech careers</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#FFFFFF', fontSize: '13px', fontWeight: 600 }}>
-                  <BarChart3 size={17} color="#93C5FD" />
-                  <span>Structured roadmaps</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#FFFFFF', fontSize: '13px', fontWeight: 600 }}>
-                  <Users size={17} color="#93C5FD" />
-                  <span>Learn and grow</span>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#FFFFFF' }}>200+ tech careers</div>
-                <div style={{ fontSize: '12px', color: '#CBD5E1', marginTop: '2px' }}>One clear path</div>
-              </div>
-            )}
-          </div>
         </div>
 
         {/* ======================================================== */}
@@ -343,7 +265,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               display: 'none',
               margin: '-40px -48px 24px -48px',
               position: 'relative',
-              height: '160px',
+              height: '150px',
               overflow: 'hidden',
               background: '#0B1E38',
             }}
@@ -362,27 +284,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 objectPosition: 'center',
               }}
             />
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'linear-gradient(180deg, rgba(15, 30, 54, 0.4) 0%, rgba(15, 30, 54, 0.8) 100%)',
-              }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '16px',
-                left: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                color: '#FFFFFF',
-              }}
-            >
-              <Compass size={20} color="#93C5FD" strokeWidth={2.4} />
-              <span style={{ fontSize: '15px', fontWeight: 800 }}>Career Roadmaps</span>
-            </div>
           </div>
 
           <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
