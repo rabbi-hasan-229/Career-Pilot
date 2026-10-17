@@ -14,10 +14,12 @@
     "@capacitor/cli": "^8.5.3",
     "@capacitor/core": "^8.5.3",
     "@supabase/supabase-js": "^2.117.3",
+    "@types/three": "^0.186.0",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.56.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@types/canvas-confetti": "^1.9.0",

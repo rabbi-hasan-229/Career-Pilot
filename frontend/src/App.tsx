@@ -2,44 +2,60 @@ import { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { BottomNav } from './components/BottomNav';
 import { DesktopSidebar } from './components/DesktopSidebar';
-import { TodayPlanView } from './components/TodayPlanView';
-import { OverviewAnalyticsView } from './components/OverviewAnalyticsView';
-import { AICoachView } from './components/AICoachView';
-import { RoadmapTimelineView } from './components/RoadmapTimelineView';
-import { CheckpointQuestionModal } from './components/CheckpointQuestionModal';
+import { RoadmapView } from './features/roadmap/RoadmapView';
+import { WeeklyScheduleView } from './features/roadmap/WeeklyScheduleView';
+import { CheckpointQuizModal } from './features/roadmap/CheckpointQuizModal';
 import { RoleQuestSelectorModal } from './components/RoleQuestSelectorModal';
+import { OnboardingGoalModal } from './features/onboarding/OnboardingGoalModal';
+import { NotificationCenterModal } from './features/notifications/NotificationCenterModal';
+import { AuthScreen } from './features/auth/AuthScreen';
+import { OverviewAnalyticsView } from './components/OverviewAnalyticsView';
+import { AICoachView } from './features/coach/AICoachView';
 import { InterviewSimulatorView } from './components/InterviewSimulatorView';
 import { CVBuilderView } from './components/CVBuilderView';
 import { SkillGapView } from './components/SkillGapView';
 import { QuickActionSheetModal } from './components/QuickActionSheetModal';
 import { ProfileSettingsModal } from './components/ProfileSettingsModal';
-import { AuthModal } from './components/AuthModal';
+import { SignOutModal } from './components/SignOutModal';
 import {
-  initialProfile,
-  initialMilestones,
-  initialTasks,
   initialCoachMessages,
 } from './lib/mockData';
-import { applyQuickPlannerAction } from './lib/plannerEngine';
+import {
+  applyQuickPlannerAction,
+  generateRoadmapForRole,
+  generateTasksForMilestones,
+} from './features/roadmap/plannerEngine';
+import { authService } from './features/auth/authService';
+import { notificationService } from './features/notifications/notificationService';
 import { supabase } from './lib/supabase';
 import { getInitialTheme, applyTheme } from './lib/theme';
 import type { ThemeMode } from './lib/theme';
-import type { ActiveNavTab, Task, AICoachMessage, Profile } from './types';
+import type { ActiveNavTab, Task, AICoachMessage, Profile, Milestone } from './types';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveNavTab>('home');
-  const [profile, setProfile] = useState<Profile>(initialProfile);
-  const [milestones, setMilestones] = useState(initialMilestones);
-  const [tasks, setTasks] = useState<Task[]>(initialTasks);
+  const [profile, setProfile] = useState<Profile | null>(() => authService.getSession());
+  const [milestones, setMilestones] = useState<Milestone[]>(() => {
+    const role = profile?.target_role || 'UI/UX Designer';
+    return generateRoadmapForRole(role, profile?.target_timeline_months || 6, profile?.daily_minutes || 60);
+  });
+  const [tasks, setTasks] = useState<Task[]>(() => {
+    const role = profile?.target_role || 'UI/UX Designer';
+    const initMilestones = generateRoadmapForRole(role, profile?.target_timeline_months || 6, profile?.daily_minutes || 60);
+    return generateTasksForMilestones(initMilestones, role);
+  });
   const [coachMessages, setCoachMessages] = useState<AICoachMessage[]>(initialCoachMessages);
+
+  // Modals & Sheets
   const [activeQuizTask, setActiveQuizTask] = useState<Task | null>(null);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isQuickActionSheetOpen, setIsQuickActionSheetOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isAuthOpen, setIsAuthOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Material 3 Dark / Light Mode
+  // Theme
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme());
 
   useEffect(() => {
@@ -50,53 +66,101 @@ export function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Responsive Width Detection
-  const [isDesktop, setIsDesktop] = useState(
-    typeof window !== 'undefined' ? window.innerWidth >= 1024 : false
-  );
-
+  // Supabase Auth Check & Persistence Sync
   useEffect(() => {
-    const handleResize = () => setIsDesktop(window.innerWidth >= 1024);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  // Supabase Live Verification & Auth Listener
-  useEffect(() => {
-    async function verifySupabase() {
+    async function initAuth() {
       try {
-        const { data } = await supabase.from('roles').select('id, title, slug');
-        if (data && data.length > 0) {
-          console.log('Connected to remote Supabase project:', data.map((r) => r.title).join(', '));
-        }
-
-        const { data: authData } = await supabase.auth.getSession();
-        if (authData.session?.user) {
-          const user = authData.session.user;
-          setProfile((p) => ({
-            ...p,
-            id: user.id,
-            full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || p.full_name,
-          }));
+        const { data } = await supabase.auth.getSession();
+        if (data.session?.user) {
+          const user = data.session.user;
+          const current = authService.getSession();
+          if (!current) {
+            const newProf: Profile = {
+              id: user.id,
+              email: user.email || '',
+              full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Navigator',
+              avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.email || 'user')}`,
+              target_role: user.user_metadata?.target_role || '',
+              plan: 'free',
+              daily_minutes: 60,
+              ai_prompts_left: 15,
+              streak_days: 1,
+              created_at: new Date().toISOString(),
+              is_guest: false,
+              has_completed_onboarding: Boolean(user.user_metadata?.target_role),
+            };
+            authService.saveSession(newProf);
+            setProfile(newProf);
+          }
         }
       } catch (e) {
-        console.warn('Local fallback active:', e);
+        console.warn('Auth sync info:', e);
       }
     }
-    verifySupabase();
+    initAuth();
   }, []);
+
+  // Automatic Check for Unmarked Daily Tasks & Push Notification Alert
+  useEffect(() => {
+    if (profile && profile.has_completed_onboarding) {
+      notificationService.checkUnmarkedProgress(tasks, profile);
+    }
+  }, [tasks, profile]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const handleRequestSignOut = () => {
+    setIsSignOutModalOpen(true);
+  };
+
+  const handleConfirmSignOut = async () => {
+    setIsSignOutModalOpen(false);
+    await authService.signOut();
+    setProfile(null);
+    showToast('👋 Signed out. Please authenticate to continue.');
+  };
+
+  const handleAuthenticated = (newProfile: Profile) => {
+    setProfile(newProfile);
+    if (newProfile.target_role) {
+      const generated = generateRoadmapForRole(
+        newProfile.target_role,
+        newProfile.target_timeline_months || 6,
+        newProfile.daily_minutes || 60
+      );
+      const newTasks = generateTasksForMilestones(generated, newProfile.target_role);
+      setMilestones(generated);
+      setTasks(newTasks);
+    }
+  };
+
+  const handleOnboardingComplete = (updatedProfile: Profile) => {
+    setProfile(updatedProfile);
+    const generated = generateRoadmapForRole(
+      updatedProfile.target_role,
+      updatedProfile.target_timeline_months || 6,
+      updatedProfile.daily_minutes || 60
+    );
+    const newTasks = generateTasksForMilestones(generated, updatedProfile.target_role);
+    setMilestones(generated);
+    setTasks(newTasks);
+    showToast(`🚀 Roadmap generated for ${updatedProfile.target_role}!`);
+  };
+
   // Decrement AI Prompt Quota
   const handleUseAICall = () => {
-    setProfile((prev) => ({
-      ...prev,
-      ai_prompts_left: Math.max(0, prev.ai_prompts_left - 1),
-    }));
+    setProfile((prev) => {
+      if (!prev) return prev;
+      const updated = {
+        ...prev,
+        ai_prompts_left: Math.max(0, prev.ai_prompts_left - 1),
+      };
+      authService.saveSession(updated);
+      return updated;
+    });
   };
 
   // Checkpoint Quiz Passing handler
@@ -109,31 +173,48 @@ export function App() {
       )
     );
 
-    showToast('✨ Checkpoint Verified! Session marked Complete.');
+    showToast('✨ Checkpoint Passed! Task marked 100% Complete.');
     setActiveQuizTask(null);
 
     // Record submission to Supabase
-    try {
-      await supabase.from('quiz_submissions').insert({
-        task_id: taskId,
-        user_id: profile.id,
-        selected_option: 'correct',
-        is_correct: true,
-      });
-    } catch {
-      // offline/demo fallback
+    if (profile) {
+      try {
+        await supabase.from('quiz_submissions').insert({
+          task_id: taskId,
+          user_id: profile.id,
+          selected_option: 'correct',
+          is_correct: true,
+        });
+      } catch {}
     }
   };
 
-  // Re-planning Action handler (Docx Section 6)
-  const handleApplyPlannerAction = (action: 'behind' | 'early' | 'pause', days?: number) => {
+  // Direct Task Toggle
+  const handleToggleTaskComplete = (taskId: string) => {
+    setTasks((prev) =>
+      prev.map((t) => {
+        if (t.id === taskId) {
+          const isDone = t.done_at != null;
+          return {
+            ...t,
+            done_at: isDone ? null : new Date().toISOString(),
+            progress_pct: isDone ? 0 : 100,
+          };
+        }
+        return t;
+      })
+    );
+  };
+
+  // Re-planning Action handler
+  const handleApplyPlannerAction = (action: 'behind' | 'early' | 'pause') => {
     const updated = applyQuickPlannerAction(milestones, action);
     setMilestones(updated);
 
     const msgs: Record<string, string> = {
-      behind: `Milestone shifted by +${days || 3} days. Unfinished tasks moved to free slots.`,
+      behind: 'Milestone shifted by +3 days. Uncompleted tasks rebalanced.',
       early: 'Stage marked complete! Next milestone pulled forward.',
-      pause: 'Roadmap shifted by +7 days without breaking streak.',
+      pause: 'Roadmap paused: dates shifted by +7 days without breaking streak.',
     };
 
     showToast(`📅 Planner Updated: ${msgs[action]}`);
@@ -150,37 +231,84 @@ export function App() {
 
     setCoachMessages((prev) => [...prev, userMsg]);
 
-    // Check if user is asking for replan
     if (text.toLowerCase().includes('behind') || text.toLowerCase().includes('shift')) {
       setTimeout(() => {
         const aiReply: AICoachMessage = {
           id: `msg_ai_${Date.now()}`,
           sender: 'ai',
-          text: 'I checked your remaining effort. We can shift your current milestone by 3 days and rebalance your weekday sessions without affecting the final target date.',
+          text: 'I checked your remaining effort. We can shift your current stage by 3 days and rebalance your daily sessions without affecting the final target date.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           proposal: {
             action: 'shift_milestone',
-            title: 'Shift Current Milestone (+3 Days)',
-            description: 'Moves 3 overdue sessions to free slots. Total remaining effort stays on schedule.',
+            title: 'Shift Current Stage (+3 Days)',
+            description: 'Moves remaining sessions to free slots. Total remaining effort stays on schedule.',
             days: 3,
           },
         };
         setCoachMessages((prev) => [...prev, aiReply]);
-      }, 700);
+      }, 600);
     } else {
       setTimeout(() => {
         const aiReply: AICoachMessage = {
           id: `msg_ai_${Date.now()}`,
           sender: 'ai',
-          text: `Got it! I am keeping your weekly plan aligned with your 90 min/day target for ${profile.target_role}. Keep up the momentum!`,
+          text: `Got it! I am keeping your daily plan aligned with your ${profile?.daily_minutes || 60} min/day commitment for ${profile?.target_role || 'your career goal'}. Keep up the momentum!`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         setCoachMessages((prev) => [...prev, aiReply]);
-      }, 600);
+      }, 500);
     }
 
     handleUseAICall();
   };
+
+  // =========================================================================
+  // HARD AUTHENTICATION GATE
+  // Unauthenticated users CANNOT use this app; they must authenticate first.
+  // =========================================================================
+  if (!profile) {
+    return (
+      <>
+        {toastMessage && (
+          <div
+            style={{
+              position: 'fixed',
+              top: '20px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 3000,
+              background: '#0F172A',
+              color: '#FFFFFF',
+              padding: '10px 22px',
+              borderRadius: '9999px',
+              fontSize: '13px',
+              fontWeight: 700,
+              boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+              border: '1px solid #334155',
+              whiteSpace: 'nowrap',
+              animation: 'fadeIn 0.2s ease-out',
+            }}
+          >
+            {toastMessage}
+          </div>
+        )}
+        <AuthScreen onAuthenticated={handleAuthenticated} onToast={showToast} />
+      </>
+    );
+  }
+
+  // =========================================================================
+  // POST-SIGNUP ONBOARDING WIZARD
+  // User must set their career goal, timeline to achieve it, and daily pace.
+  // =========================================================================
+  if (!profile.has_completed_onboarding || !profile.target_role) {
+    return (
+      <OnboardingGoalModal
+        profile={profile}
+        onComplete={handleOnboardingComplete}
+      />
+    );
+  }
 
   return (
     <div className="app-root-container">
@@ -192,15 +320,15 @@ export function App() {
             top: '20px',
             left: '50%',
             transform: 'translateX(-50%)',
-            zIndex: 1600,
-            background: 'var(--md-surface)',
-            color: 'var(--md-text-primary)',
+            zIndex: 3000,
+            background: 'var(--md-surface, #FFFFFF)',
+            color: 'var(--md-text-primary, #1E293B)',
             padding: '10px 22px',
             borderRadius: '9999px',
             fontSize: '13px',
             fontWeight: 700,
-            boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-            border: '1px solid var(--md-outline)',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+            border: '1px solid var(--md-outline, #E2E8F0)',
             whiteSpace: 'nowrap',
             animation: 'fadeIn 0.2s ease-out',
           }}
@@ -209,9 +337,9 @@ export function App() {
         </div>
       )}
 
-      {/* Main Shell (Desktop Widescreen or Mobile Container) */}
+      {/* Main Shell */}
       <div className="app-desktop-shell">
-        {/* Left Desktop Sidebar (Hidden on Mobile) */}
+        {/* Left Desktop Sidebar */}
         <DesktopSidebar
           activeTab={activeTab}
           onChangeTab={setActiveTab}
@@ -220,6 +348,7 @@ export function App() {
           theme={theme}
           onToggleTheme={toggleTheme}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          onSignOut={handleRequestSignOut}
         />
 
         {/* Main Content Area */}
@@ -230,43 +359,36 @@ export function App() {
             theme={theme}
             onToggleTheme={toggleTheme}
             onOpenProfile={() => setIsSettingsOpen(true)}
+            onOpenNotifications={() => setIsNotificationsOpen(true)}
+            onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+            onSignOut={handleRequestSignOut}
           />
 
-          {/* VIEW: Home / Today's Plan */}
+          {/* VIEW: Home / Winding Highway Roadmap View */}
           {activeTab === 'home' && (
-            isDesktop ? (
-              /* Smart Widescreen Multi-Column View on PC */
-              <div className="desktop-grid-2col">
-                <div>
-                  <TodayPlanView
-                    tasks={tasks}
-                    onSelectTaskForQuiz={(t) => setActiveQuizTask(t)}
-                    onOpenCoach={() => setActiveTab('coach')}
-                    onViewAllPlans={() => setActiveTab('plan')}
-                  />
-                </div>
-                <div>
-                  <OverviewAnalyticsView isDesktopEmbedded={true} />
-                </div>
-              </div>
-            ) : (
-              /* Mobile View */
-              <TodayPlanView
-                tasks={tasks}
-                onSelectTaskForQuiz={(t) => setActiveQuizTask(t)}
-                onOpenCoach={() => setActiveTab('coach')}
-                onViewAllPlans={() => setActiveTab('plan')}
-              />
-            )
-          )}
-
-          {/* VIEW: Plan / Roadmap */}
-          {activeTab === 'plan' && (
-            <RoadmapTimelineView
+            <RoadmapView
+              tasks={tasks}
               milestones={milestones}
               profile={profile}
-              onApplyAction={(act) => handleApplyPlannerAction(act)}
-              onOpenRoleModal={() => setIsRoleModalOpen(true)}
+              onSelectTaskForQuiz={(t) => setActiveQuizTask(t)}
+              onToggleTaskComplete={handleToggleTaskComplete}
+              onApplyPlannerAction={handleApplyPlannerAction}
+              onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+              onOpenCoach={() => setActiveTab('coach')}
+              onOpenNotifications={() => setIsNotificationsOpen(true)}
+            />
+          )}
+
+          {/* VIEW: Plan / Weekly Stages Schedule */}
+          {activeTab === 'plan' && (
+            <WeeklyScheduleView
+              milestones={milestones}
+              tasks={tasks}
+              profile={profile}
+              onToggleTaskComplete={handleToggleTaskComplete}
+              onApplyPlannerAction={handleApplyPlannerAction}
+              onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+              onOpenCoach={() => setActiveTab('coach')}
             />
           )}
 
@@ -275,18 +397,18 @@ export function App() {
             <OverviewAnalyticsView onBack={() => setActiveTab('home')} />
           )}
 
-          {/* VIEW: AI Coach Assistant */}
+          {/* VIEW: AI Career Coach */}
           {activeTab === 'coach' && (
             <AICoachView
               messages={coachMessages}
               promptsLeft={profile.ai_prompts_left}
               onSendMessage={handleSendCoachMessage}
-              onApplyProposal={(_act, days) => handleApplyPlannerAction('behind', days)}
+              onApplyProposal={(_act) => handleApplyPlannerAction('behind')}
               onBack={() => setActiveTab('home')}
             />
           )}
 
-          {/* VIEW: Mock Interview Arena (Phase 4) */}
+          {/* VIEW: Mock Interview Arena */}
           {activeTab === 'interview' && (
             <InterviewSimulatorView
               aiPromptsLeft={profile.ai_prompts_left}
@@ -294,7 +416,7 @@ export function App() {
             />
           )}
 
-          {/* VIEW: CV & Resume Builder (Phase 4) */}
+          {/* VIEW: CV & Resume Builder */}
           {activeTab === 'cv' && (
             <CVBuilderView
               aiPromptsLeft={profile.ai_prompts_left}
@@ -303,25 +425,25 @@ export function App() {
             />
           )}
 
-          {/* VIEW: Skill-Gap & Vacancies Match (Phase 4) */}
+          {/* VIEW: Skill-Gap & Vacancies Match */}
           {activeTab === 'skills' && (
             <SkillGapView
               targetRole={profile.target_role}
               onToast={showToast}
-              onAddSkillToRoadmap={(sk) => showToast(`🎯 Queued "${sk}" into next milestone!`)}
+              onAddSkillToRoadmap={(sk) => showToast(`🎯 Queued "${sk}" into next roadmap stage!`)}
             />
           )}
         </main>
       </div>
 
-      {/* Mobile Bottom Navigation (Hidden on PC >= 1024px) */}
+      {/* Mobile Bottom Navigation Dock */}
       <BottomNav
         activeTab={activeTab}
         onChangeTab={setActiveTab}
         onOpenQuickAction={() => setIsQuickActionSheetOpen(true)}
       />
 
-      {/* Quick Action Sheet Modal (Opened by + FAB on Mobile) */}
+      {/* Quick Action Sheet Modal */}
       <QuickActionSheetModal
         isOpen={isQuickActionSheetOpen}
         onClose={() => setIsQuickActionSheetOpen(false)}
@@ -332,7 +454,7 @@ export function App() {
 
       {/* Checkpoint Question Challenge Modal */}
       {activeQuizTask && (
-        <CheckpointQuestionModal
+        <CheckpointQuizModal
           task={activeQuizTask}
           onClose={() => setActiveQuizTask(null)}
           onPassTask={handlePassCheckpoint}
@@ -345,11 +467,16 @@ export function App() {
           currentRoleSlug={profile.target_role.toLowerCase().replace(/[^a-z0-9]/g, '-')}
           onClose={() => setIsRoleModalOpen(false)}
           onSelectNewPlan={(roleTitle, _targetDate, dailyMins, newMilestones) => {
-            setProfile((prev) => ({
-              ...prev,
-              target_role: roleTitle,
-              daily_minutes: dailyMins,
-            }));
+            setProfile((prev) => {
+              if (!prev) return prev;
+              const updated = {
+                ...prev,
+                target_role: roleTitle,
+                daily_minutes: dailyMins,
+              };
+              authService.saveSession(updated);
+              return updated;
+            });
             setMilestones(newMilestones);
             setIsRoleModalOpen(false);
             showToast(`🚀 Roadmap Updated for ${roleTitle} (${dailyMins}m/day)!`);
@@ -362,22 +489,35 @@ export function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         profile={profile}
-        onUpdateProfile={(updated) => setProfile((p) => ({ ...p, ...updated }))}
+        onUpdateProfile={(updated) => {
+          setProfile((p) => {
+            if (!p) return p;
+            const res = { ...p, ...updated };
+            authService.saveSession(res);
+            return res;
+          });
+        }}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenAuth={() => {}}
+        onSignOut={handleRequestSignOut}
         onToast={showToast}
       />
 
-      {/* Supabase Authentication & Demo Switcher Modal */}
-      <AuthModal
-        isOpen={isAuthOpen}
-        onClose={() => setIsAuthOpen(false)}
-        onSelectProfile={(newProfile) => {
-          setProfile(newProfile);
-          showToast(`👤 Signed in as ${newProfile.full_name}`);
-        }}
+      {/* Notification Center Modal */}
+      <NotificationCenterModal
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        tasks={tasks}
+        profile={profile}
         onToast={showToast}
+      />
+
+      {/* Sign Out Confirmation Modal */}
+      <SignOutModal
+        isOpen={isSignOutModalOpen}
+        onClose={() => setIsSignOutModalOpen(false)}
+        onConfirmSignOut={handleConfirmSignOut}
       />
     </div>
   );

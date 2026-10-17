@@ -9,6 +9,7 @@ import {
   Save,
   Check,
 } from 'lucide-react';
+import { AvatarPicker } from '../features/auth/AuthIllustration';
 import type { Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
 
@@ -20,6 +21,7 @@ interface Props {
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenAuth: () => void;
+  onSignOut?: () => void;
   onToast: (msg: string) => void;
 }
 
@@ -31,9 +33,11 @@ export const ProfileSettingsModal: React.FC<Props> = ({
   theme,
   onToggleTheme,
   onOpenAuth,
+  onSignOut,
   onToast,
 }) => {
   const [fullName, setFullName] = useState(profile.full_name);
+  const [avatarUrl, setAvatarUrl] = useState(profile.avatar_url || '/avatars/career_navigator.jpg');
   const [dailyMinutes, setDailyMinutes] = useState(profile.daily_minutes);
   const [selectedPlan, setSelectedPlan] = useState<'free' | 'premium'>(profile.plan);
 
@@ -42,6 +46,7 @@ export const ProfileSettingsModal: React.FC<Props> = ({
   const handleSave = () => {
     onUpdateProfile({
       full_name: fullName,
+      avatar_url: avatarUrl,
       daily_minutes: dailyMinutes,
       plan: selectedPlan,
       ai_prompts_left: selectedPlan === 'premium' ? 100 : Math.min(15, profile.ai_prompts_left),
@@ -123,6 +128,9 @@ export const ProfileSettingsModal: React.FC<Props> = ({
             <X size={18} />
           </button>
         </div>
+
+        {/* Avatar Picker */}
+        <AvatarPicker selectedUrl={avatarUrl} onSelect={setAvatarUrl} />
 
         {/* Full Name & Target Role */}
         <div style={{ marginBottom: '18px' }}>
@@ -279,52 +287,80 @@ export const ProfileSettingsModal: React.FC<Props> = ({
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={() => {
-              onClose();
-              onOpenAuth();
-            }}
-            style={{
-              flex: 1,
-              background: 'var(--md-surface-variant)',
-              border: '1px solid var(--md-outline)',
-              borderRadius: '12px',
-              padding: '12px',
-              fontSize: '13px',
-              fontWeight: 700,
-              color: 'var(--md-text-primary)',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-            }}
-          >
-            <ShieldCheck size={16} /> Switch Account / Auth
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={() => {
+                onClose();
+                onOpenAuth();
+              }}
+              style={{
+                flex: 1,
+                background: 'var(--md-surface-variant)',
+                border: '1px solid var(--md-outline)',
+                borderRadius: '12px',
+                padding: '12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: 'var(--md-text-primary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+              }}
+            >
+              <ShieldCheck size={16} /> {profile.email && !profile.is_guest ? 'Account Status' : 'Sign In / Up'}
+            </button>
 
-          <button
-            onClick={handleSave}
-            style={{
-              flex: 1,
-              background: 'var(--md-violet-gradient)',
-              border: 'none',
-              borderRadius: '12px',
-              padding: '12px',
-              fontSize: '13px',
-              fontWeight: 700,
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              boxShadow: 'var(--shadow-glow)',
-            }}
-          >
-            <Save size={16} /> Save Changes
-          </button>
+            <button
+              onClick={handleSave}
+              style={{
+                flex: 1,
+                background: 'var(--md-violet-gradient)',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '12px',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: '#ffffff',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                boxShadow: 'var(--shadow-glow)',
+              }}
+            >
+              <Save size={16} /> Save Changes
+            </button>
+          </div>
+
+          {profile.email && !profile.is_guest && onSignOut && (
+            <button
+              onClick={() => {
+                onClose();
+                onSignOut();
+              }}
+              style={{
+                width: '100%',
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: '12px',
+                padding: '10px',
+                fontSize: '12.5px',
+                fontWeight: 700,
+                color: '#ef4444',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+              }}
+            >
+              Sign Out of {profile.email}
+            </button>
+          )}
         </div>
       </div>
     </div>

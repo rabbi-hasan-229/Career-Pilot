@@ -11,48 +11,52 @@ interface Props {
 export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuickAction }) => {
   return (
     <nav className="mobile-bottom-nav" aria-label="Bottom Navigation">
-      {/* 1. Home */}
+      {/* 1. Daily Roadmap */}
       <button
         className={`mobile-nav-btn ${activeTab === 'home' ? 'active' : ''}`}
         onClick={() => onChangeTab('home')}
       >
-        <Home size={22} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
-        <span>Home</span>
+        <Home size={20} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
+        <span>Roadmap</span>
       </button>
 
-      {/* 2. Plan / Roadmap */}
+      {/* 2. Schedule */}
       <button
         className={`mobile-nav-btn ${activeTab === 'plan' ? 'active' : ''}`}
         onClick={() => onChangeTab('plan')}
       >
-        <CalendarDays size={22} strokeWidth={activeTab === 'plan' ? 2.5 : 2} />
-        <span>Plan</span>
+        <CalendarDays size={20} strokeWidth={activeTab === 'plan' ? 2.5 : 2} />
+        <span>Schedule</span>
       </button>
 
-      {/* 3. Center FAB: Plus Quick Action (Matching Image 2 Left Screen) */}
+      {/* 3. Center Action Button */}
       <button
         className="mobile-fab-center"
         onClick={onOpenQuickAction}
-        title="Quick Action / Reschedule"
+        title="Quick Actions & Re-plan"
+        style={{
+          background: '#8EA95B',
+          boxShadow: '0 4px 14px rgba(142, 169, 91, 0.4)',
+        }}
       >
-        <Plus size={26} strokeWidth={2.8} />
+        <Plus size={24} strokeWidth={2.8} />
       </button>
 
-      {/* 4. Progress / Overview */}
+      {/* 4. Stats */}
       <button
         className={`mobile-nav-btn ${activeTab === 'overview' ? 'active' : ''}`}
         onClick={() => onChangeTab('overview')}
       >
-        <PieChart size={22} strokeWidth={activeTab === 'overview' ? 2.5 : 2} />
-        <span>Progress</span>
+        <PieChart size={20} strokeWidth={activeTab === 'overview' ? 2.5 : 2} />
+        <span>Pacing</span>
       </button>
 
-      {/* 5. AI Assistant / Coach */}
+      {/* 5. Coach */}
       <button
         className={`mobile-nav-btn ${activeTab === 'coach' ? 'active' : ''}`}
         onClick={() => onChangeTab('coach')}
       >
-        <Bot size={22} strokeWidth={activeTab === 'coach' ? 2.5 : 2} />
+        <Bot size={20} strokeWidth={activeTab === 'coach' ? 2.5 : 2} />
         <span>Coach</span>
       </button>
     </nav>

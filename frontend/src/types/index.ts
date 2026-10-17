@@ -3,13 +3,19 @@
 export interface Profile {
   id: string;
   full_name: string;
+  email?: string;
+  phone?: string;
   avatar_url?: string;
   target_role: string;
+  target_timeline_months?: number; // e.g. 3, 6, 9, 12
+  experience_level?: 'beginner' | 'switcher' | 'junior' | 'mid';
   plan: 'free' | 'premium';
   daily_minutes: number;
   ai_prompts_left: number;
   streak_days: number;
   created_at: string;
+  is_guest?: boolean;
+  has_completed_onboarding?: boolean;
 }
 
 export interface Role {
@@ -33,20 +39,25 @@ export interface Milestone {
   end_date: string;
   status: 'todo' | 'doing' | 'done';
   effort_hours?: number;
+  week_range?: string; // e.g. "Week 1 - 3"
+  skills_covered?: string[];
 }
+
+export type TaskActionType = 'Learn' | 'Build' | 'Practice' | 'Checkpoint';
 
 export interface Task {
   id: string;
   milestone_id: string;
   user_id: string;
   title: string;
-  subject: string; // e.g. 'Data Structures', 'Discrete Mathematics', 'Problem Solving'
-  type: 'Study' | 'Review' | 'Practice';
+  subject: string; // e.g. 'Frontend Architecture', 'PostgreSQL RLS', 'System Design'
+  type: TaskActionType;
   due_date: string;
   est_minutes: number;
   progress_pct: number; // 0 to 100
   done_at?: string | null;
   quiz?: TaskQuiz;
+  deliverable?: string; // e.g. 'Build and test JWT + RLS policy in Supabase'
 }
 
 export interface QuizOption {
@@ -143,6 +154,17 @@ export interface CVData {
     institution: string;
     year: string;
   }[];
+}
+
+export interface AppNotification {
+  id: string;
+  title: string;
+  message: string;
+  time: string;
+  type: 'reminder' | 'milestone' | 'streak' | 'system';
+  read: boolean;
+  actionLabel?: string;
+  actionTab?: ActiveNavTab;
 }
 
 export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills';
