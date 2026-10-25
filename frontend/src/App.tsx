@@ -10,6 +10,7 @@ import { OnboardingGoalModal } from './features/onboarding/OnboardingGoalModal';
 import { NotificationCenterModal } from './features/notifications/NotificationCenterModal';
 import { AuthScreen } from './features/auth/AuthScreen';
 import { OverviewAnalyticsView } from './components/OverviewAnalyticsView';
+import { ProfileAccountView } from './components/ProfileAccountView';
 import { AICoachView } from './features/coach/AICoachView';
 import { InterviewSimulatorView } from './components/InterviewSimulatorView';
 import { CVBuilderView } from './components/CVBuilderView';
@@ -17,6 +18,7 @@ import { SkillGapView } from './components/SkillGapView';
 import { QuickActionSheetModal } from './components/QuickActionSheetModal';
 import { ProfileSettingsModal } from './components/ProfileSettingsModal';
 import { SignOutModal } from './components/SignOutModal';
+import confetti from 'canvas-confetti';
 import {
   initialCoachMessages,
 } from './lib/mockData';
@@ -208,16 +210,20 @@ export function App() {
 
   // Re-planning Action handler
   const handleApplyPlannerAction = (action: 'behind' | 'early' | 'pause') => {
-    const updated = applyQuickPlannerAction(milestones, action);
-    setMilestones(updated);
+    const result = applyQuickPlannerAction(milestones, tasks, action);
+    setMilestones(result.updatedMilestones);
+    setTasks(result.updatedTasks);
 
-    const msgs: Record<string, string> = {
-      behind: 'Milestone shifted by +3 days. Uncompleted tasks rebalanced.',
-      early: 'Stage marked complete! Next milestone pulled forward.',
-      pause: 'Roadmap paused: dates shifted by +7 days without breaking streak.',
-    };
+    if (action === 'early') {
+      confetti({
+        particleCount: 50,
+        spread: 75,
+        origin: { x: 0.5, y: 0.4 },
+        colors: ['#10B981', '#38BDF8', '#2563EB', '#F59E0B'],
+      });
+    }
 
-    showToast(`📅 Planner Updated: ${msgs[action]}`);
+    showToast(`📅 Planner Updated: ${result.message}`);
   };
 
   // Coach Send Message handler
@@ -347,7 +353,7 @@ export function App() {
           onOpenRoleModal={() => setIsRoleModalOpen(true)}
           theme={theme}
           onToggleTheme={toggleTheme}
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSettings={() => setActiveTab('profile')}
           onSignOut={handleRequestSignOut}
         />
 
@@ -358,7 +364,7 @@ export function App() {
             profile={profile}
             theme={theme}
             onToggleTheme={toggleTheme}
-            onOpenProfile={() => setIsSettingsOpen(true)}
+            onOpenProfile={() => setActiveTab('profile')}
             onOpenNotifications={() => setIsNotificationsOpen(true)}
             onOpenGoalSettings={() => setIsRoleModalOpen(true)}
             onSignOut={handleRequestSignOut}
@@ -394,7 +400,15 @@ export function App() {
 
           {/* VIEW: Overview / Analytics */}
           {activeTab === 'overview' && (
-            <OverviewAnalyticsView onBack={() => setActiveTab('home')} />
+            <OverviewAnalyticsView
+              milestones={milestones}
+              tasks={tasks}
+              profile={profile}
+              onBack={() => setActiveTab('home')}
+              onNavigateToTab={(tab) => setActiveTab(tab as ActiveNavTab)}
+              onApplyPlannerAction={handleApplyPlannerAction}
+              onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+            />
           )}
 
           {/* VIEW: AI Career Coach */}
@@ -433,6 +447,29 @@ export function App() {
               onAddSkillToRoadmap={(sk) => showToast(`🎯 Queued "${sk}" into next roadmap stage!`)}
             />
           )}
+
+          {/* VIEW: Separate Dedicated Account & Professional Profile */}
+          {activeTab === 'profile' && (
+            <ProfileAccountView
+              profile={profile}
+              milestones={milestones}
+              tasks={tasks}
+              theme={theme}
+              onUpdateProfile={(updated) => {
+                setProfile((p) => {
+                  if (!p) return p;
+                  const res = { ...p, ...updated };
+                  authService.saveSession(res);
+                  return res;
+                });
+              }}
+              onToggleTheme={toggleTheme}
+              onOpenRoleModal={() => setIsRoleModalOpen(true)}
+              onSignOut={handleRequestSignOut}
+              onNavigateToTab={setActiveTab}
+              onToast={showToast}
+            />
+          )}
         </main>
       </div>
 
@@ -466,12 +503,17 @@ export function App() {
         <RoleQuestSelectorModal
           currentRoleSlug={profile.target_role.toLowerCase().replace(/[^a-z0-9]/g, '-')}
           onClose={() => setIsRoleModalOpen(false)}
-          onSelectNewPlan={(roleTitle, _targetDate, dailyMins, newMilestones) => {
+          onSelectNewPlan={(roleTitle, targetDate, dailyMins, newMilestones) => {
             setProfile((prev) => {
               if (!prev) return prev;
+              const targetDateObj = new Date(targetDate);
+              const daysDiff = Math.max(14, Math.ceil((targetDateObj.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+              const months = Math.max(1, Math.round(daysDiff / 30));
               const updated = {
                 ...prev,
                 target_role: roleTitle,
+                target_timeline_months: months,
+                target_completion_date: targetDate,
                 daily_minutes: dailyMins,
               };
               authService.saveSession(updated);

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Calendar,
   Clock,
@@ -14,6 +14,11 @@ import {
   ShieldCheck,
   CalendarDays,
   SlidersHorizontal,
+  Target,
+  Lightbulb,
+  ListChecks,
+  Timer,
+  Check,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { Milestone, Task, Profile, TaskActionType } from '../../types';
@@ -59,6 +64,155 @@ const typeConfig: Record<TaskActionType, { label: string; color: string; bg: str
   },
 };
 
+// ─── Goal Detail Guide Generator ───────────────────────────────────────────────
+export interface GoalGuide {
+  tagline: string;
+  steps: Array<{ title: string; hint: string }>;
+  deliverable: string;
+  tip: string;
+  sprintTime: string;
+}
+
+export function getGoalGuide(task: Task, roleName: string): GoalGuide {
+  const title = (task.title || '').toLowerCase();
+  const type = task.type || 'Learn';
+
+  // 1. User Research & Empathy
+  if (title.includes('interview') || title.includes('empathy') || title.includes('journey') || title.includes('research')) {
+    return {
+      tagline: 'Uncover genuine user motivations, emotional highs, and critical workflow friction points.',
+      steps: [
+        { title: 'Draft Non-Leading Protocol', hint: 'Write 5 open-ended questions targeting user workflow friction and pain points.' },
+        { title: 'Run Active Listening Sessions', hint: 'Interview 3 participants; capture exact verbatim quotes and behavioral blockers.' },
+        { title: 'Synthesize Journey Flow', hint: 'Cluster observations in FigJam into timeline stages: Awareness, Trial, Friction, Drop-off.' },
+      ],
+      deliverable: task.deliverable || 'User Journey Flow with synthesized friction points and opportunity statements',
+      tip: 'Listen 80% of the time. Never pitch or justify your solution during user empathy sessions.',
+      sprintTime: '20m Protocol · 45m Interviews · 15m Synthesis',
+    };
+  }
+
+  // 2. Figma, Components & Design Tokens
+  if (title.includes('figma') || title.includes('component') || title.includes('auto-layout') || title.includes('token') || title.includes('variant')) {
+    return {
+      tagline: 'Engineer a scalable, modular design system using Figma’s modern constraints and variables.',
+      steps: [
+        { title: 'Configure Spatial & Color Tokens', hint: 'Establish 8pt spatial padding, border radius, and semantic color variables.' },
+        { title: 'Build Atomic Master Components', hint: 'Wrap layers in nested auto-layout (Shift+A); set Hug vertically and Fill horizontally.' },
+        { title: 'Configure Component Props & States', hint: 'Add component properties and multi-state variants (default, hover, active, disabled).' },
+      ],
+      deliverable: task.deliverable || 'Production-grade component library with responsive auto-layout variants',
+      tip: 'Avoid ungrouped layers. Nest auto-layout frames with 0px padding to create resilient responsive cards.',
+      sprintTime: '15m Tokens · 40m Component Build · 15m Variant Testing',
+    };
+  }
+
+  // 3. Wireframing, Prototyping & Visual Hierarchy
+  if (title.includes('wireframe') || title.includes('prototype') || title.includes('smart animate') || title.includes('typography')) {
+    return {
+      tagline: 'Map visual screen hierarchy and rapid interactive user flows without color bias.',
+      steps: [
+        { title: 'Define Screen Hierarchy', hint: 'Prioritize key elements: Hero CTA, primary content cards, auxiliary actions.' },
+        { title: 'Construct Grayscale Skeletons', hint: 'Build 8 responsive grayscale wireframes adhering strictly to an 8pt layout grid.' },
+        { title: 'Connect Smart Animate Links', hint: 'Hook up clickable prototype links, modal overlays, and fluid drawer transitions.' },
+      ],
+      deliverable: task.deliverable || 'Interactive clickable prototype covering primary user happy-path',
+      tip: 'Keep wireframes strictly grayscale (black/white/gray) so feedback focuses on UX structure rather than colors.',
+      sprintTime: '15m IA Sketch · 45m Wireframing · 20m Smart Animate',
+    };
+  }
+
+  // 4. Capstone Projects (E-Commerce, Food Delivery, Dashboards)
+  if (title.includes('project') || title.includes('e-commerce') || title.includes('delivery') || title.includes('dashboard') || title.includes('capstone')) {
+    return {
+      tagline: 'Construct high-fidelity, data-dense product screens with realistic edge-case states.',
+      steps: [
+        { title: 'Analyze Conversion Funnels', hint: 'Map user journey from discovery to checkout/cart; eliminate redundant input fields.' },
+        { title: 'Design High-Fidelity UI', hint: 'Apply typographic hierarchy, visual weight, crisp icons, and realistic dummy data.' },
+        { title: 'Handle Edge Cases', hint: 'Design empty search states, loading skeletons, and validation error messages.' },
+      ],
+      deliverable: task.deliverable || 'Complete end-to-end multi-screen mobile/desktop product UI deck',
+      tip: 'Recruiters evaluate how you handle edge cases (empty states, errors, long names) more than pretty hero screens.',
+      sprintTime: '20m Flow Audit · 60m UI Polish · 20m Edge-Case Handling',
+    };
+  }
+
+  // 5. Code, Database, RLS & APIs
+  if (title.includes('html') || title.includes('css') || title.includes('code') || title.includes('dev') || title.includes('api') || title.includes('database')) {
+    return {
+      tagline: 'Ensure technical feasibility, token alignment, and clean developer handoff.',
+      steps: [
+        { title: 'Inspect Layout Constraints', hint: 'Review flexbox, grid alignment, and media query breakpoints.' },
+        { title: 'Prepare Dev Mode Specs', hint: 'Document component token names, padding redlines, and exportable SVG assets.' },
+        { title: 'Verify Edge Cases in Code', hint: 'Test responsive shrinkage, long text wrapping, and zero-state rendering.' },
+      ],
+      deliverable: task.deliverable || 'Production-ready Dev Mode handoff deck with token specifications',
+      tip: 'Speak the language of developers. Spec components using flex-direction, gap, and padding units.',
+      sprintTime: '15m Spec Audit · 40m Dev Token Setup · 15m Walkthrough',
+    };
+  }
+
+  // 6. Checkpoints & Portfolio Deliverables
+  if (type === 'Checkpoint' || title.includes('checkpoint') || title.includes('publish') || title.includes('portfolio') || title.includes('case')) {
+    return {
+      tagline: 'Audit quality criteria, package high-impact artifacts, and lock in stage progression.',
+      steps: [
+        { title: 'Audit Quality Standards', hint: 'Review your deliverables against WCAG 2.2 AA accessibility and stage specs.' },
+        { title: 'Package Case Teardown', hint: 'Export high-res mockups, record a 60-second video walkthrough, and write 3 key takeaways.' },
+        { title: 'Publish & Lock Progress', hint: 'Save artifact to your portfolio archive and submit for review or stage sign-off.' },
+      ],
+      deliverable: task.deliverable || 'Verified stage case study artifact package and presentation deck',
+      tip: 'Treat every checkpoint as an interview case study. State the problem, your decisions, and the measurable outcome.',
+      sprintTime: '20m Quality Audit · 35m Case Packaging · 15m Final Review',
+    };
+  }
+
+  // Fallback based on type
+  if (type === 'Build') {
+    return {
+      tagline: 'Translate conceptual requirements into tangible, production-grade assets.',
+      steps: [
+        { title: 'Setup Scaffold', hint: 'Establish layout boundaries, token variables, and base components.' },
+        { title: 'Execute Core Build', hint: 'Assemble layout elements, enforce visual hierarchy, and test variants.' },
+        { title: 'Self-Review & Polish', hint: 'Check responsive adaptability, spacing rhythm, and asset exports.' },
+      ],
+      deliverable: task.deliverable || `Completed ${roleName} production artifact`,
+      tip: 'Ship a solid v1 within the timebox. Iterate on micro-details after the core structure is locked.',
+      sprintTime: '15m Setup · 45m Core Build · 15m Polish',
+    };
+  }
+
+  if (type === 'Practice') {
+    return {
+      tagline: 'Sharpen design muscle memory through timed problem-solving drills.',
+      steps: [
+        { title: 'Set Strict Constraint', hint: 'Set a 45-minute sprint timer to build real-world speed and urgency.' },
+        { title: 'Execute Rapidly', hint: 'Draft solutions using keyboard shortcuts; avoid second-guessing.' },
+        { title: 'Benchmark Against Standard', hint: 'Compare your output side-by-side with industry gold-standard references.' },
+      ],
+      deliverable: task.deliverable || 'Completed timed sprint solution and critique notes',
+      tip: 'Speed comes from pattern recognition. Familiarize yourself with standard design patterns.',
+      sprintTime: '10m Warmup · 30m Speed Drill · 10m Review',
+    };
+  }
+
+  // Default Learn
+  return {
+    tagline: 'Master the foundational mental models, specifications, and industry best practices.',
+    steps: [
+      { title: 'Deconstruct Principles', hint: 'Study reference material, pattern libraries, and official specifications.' },
+      { title: 'Extract Key Takeaways', hint: 'Summarize 3 core principles into your personal design notes workspace.' },
+      { title: 'Apply in Micro-Exercise', hint: 'Build a quick 1-frame sketch demonstrating the concept in action.' },
+    ],
+    deliverable: task.deliverable || 'Synthesized concept breakdown and structured reference notes',
+    tip: 'Focus on understanding the tradeoffs behind design decisions, not just memorizing rules.',
+    sprintTime: '20m Deep Study · 30m Synthesis · 10m Micro-Exercise',
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
 export const WeeklyScheduleView: React.FC<Props> = ({
   milestones,
   tasks,
@@ -71,6 +225,26 @@ export const WeeklyScheduleView: React.FC<Props> = ({
   const [activeTab, setActiveTab] = useState<ScheduleTab>('focus');
   const [selectedMilestoneId, setSelectedMilestoneId] = useState<string | null>(null);
   const [expandedMilestones, setExpandedMilestones] = useState<Record<string, boolean>>({});
+  const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({});
+  const [checkedSubSteps, setCheckedSubSteps] = useState<Record<string, boolean>>({});
+  const [selectedDayFilter, setSelectedDayFilter] = useState<string | null>(null);
+  const [pacingFeedback, setPacingFeedback] = useState<string | null>(null);
+
+  const handlePacingAction = (action: 'behind' | 'early' | 'pause') => {
+    if (action === 'early') {
+      setSelectedMilestoneId(null);
+    }
+    onApplyPlannerAction?.(action);
+    const feedbackMessages: Record<string, string> = {
+      behind: '+3 Days Added · Deadlines Rebalanced',
+      early: 'Stage Completed Early · Next Stage Unlocked! 🚀',
+      pause: '+7 Days Paused · Streak Protected ⏸️',
+    };
+    setPacingFeedback(feedbackMessages[action]);
+    setTimeout(() => {
+      setPacingFeedback(null);
+    }, 4500);
+  };
 
   // 1. Identify active stage (first milestone with incomplete tasks)
   const activeMilestoneIndex = useMemo(() => {
@@ -111,45 +285,134 @@ export const WeeklyScheduleView: React.FC<Props> = ({
     setExpandedMilestones((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  // Toggle task goal detail expansion
+  const toggleTaskExpanded = (taskId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+
+  // Expand / Collapse all tasks in current view
+  const areAllExpanded = useMemo(() => {
+    if (currentTasks.length === 0) return false;
+    return currentTasks.every((t) => expandedTasks[t.id]);
+  }, [currentTasks, expandedTasks]);
+
+  const toggleExpandAll = () => {
+    if (areAllExpanded) {
+      setExpandedTasks({});
+    } else {
+      const all: Record<string, boolean> = {};
+      currentTasks.forEach((t) => {
+        all[t.id] = true;
+      });
+      setExpandedTasks(all);
+    }
+  };
+
+  // Toggle sub-step check
+  const toggleSubStep = (stepKey: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckedSubSteps((prev) => ({ ...prev, [stepKey]: !prev[stepKey] }));
+  };
+
   // Handle task click with celebratory micro-interaction
-  const handleTaskCheck = (task: Task, e: React.MouseEvent) => {
+  const handleTaskCheck = useCallback((task: Task, e: React.MouseEvent) => {
     const wasDone = task.done_at != null;
     onToggleTaskComplete(task.id);
     if (!wasDone) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       confetti({
-        particleCount: 32,
-        spread: 55,
+        particleCount: 36,
+        spread: 60,
         origin: {
           x: (rect.left + rect.width / 2) / window.innerWidth,
           y: (rect.top + rect.height / 2) / window.innerHeight,
         },
-        colors: ['#8EA95B', '#2563EB', '#10B981', '#38BDF8'],
+        colors: ['#10B981', '#38BDF8', '#2563EB', '#F59E0B'],
       });
     }
-  };
+  }, [onToggleTaskComplete]);
 
   const dailyMinutes = profile?.daily_minutes || 60;
   const roleName = profile?.target_role || 'Career Quest';
 
+  // Filtered goals for focus view
+  const displayedTasks = useMemo(() => {
+    if (!selectedDayFilter) return currentTasks;
+    return currentTasks.filter((_, idx) => {
+      const dayName = DAY_NAMES[idx % DAY_NAMES.length];
+      return dayName === selectedDayFilter;
+    });
+  }, [currentTasks, selectedDayFilter]);
+
+  // SVG Radial Gauge Geometry
+  const gaugeRadius = 24;
+  const gaugeCircumference = 2 * Math.PI * gaugeRadius;
+  const gaugeOffset = gaugeCircumference - (currentStagePct / 100) * gaugeCircumference;
+
   return (
     <div className="ws-page-container">
-      {/* ── Top Header Bar ── */}
+      {/* ════════════════════════════════════════════════════════════════════════
+          GRAPHICAL HEADER DASHBOARD
+      ════════════════════════════════════════════════════════════════════════ */}
       <header className="ws-header-card">
-        <div className="ws-header-top">
-          <div className="ws-header-title-block">
+        <div className="ws-header-grid">
+          {/* Left: Role Info & Sprint Context */}
+          <div className="ws-header-main">
             <div className="ws-badge-row">
               <span className="ws-badge-kicker">WEEKLY EXECUTION SCHEDULE</span>
               <span className="ws-badge-timeline">
-                <Clock size={11} /> {dailyMinutes}m/day · 5d/week · {totalEffortHours}h curriculum
+                <Clock size={11} /> {dailyMinutes}m/day · 5d/week · {totalEffortHours}h total
               </span>
             </div>
             <h1 className="ws-header-role">{roleName}</h1>
             <p className="ws-header-sub">
-              Target stage: <strong>{currentMilestone?.title || 'Foundations'}</strong> ({currentStagePct}% complete)
+              Active Focus: <strong>{currentMilestone?.title || 'Foundations'}</strong>
             </p>
           </div>
 
+          {/* Center: Graphical SVG Progress Ring */}
+          <div className="ws-header-gauge-block">
+            <div className="ws-gauge-wrapper" title={`Stage Progress: ${currentStagePct}%`}>
+              <svg className="ws-radial-gauge" viewBox="0 0 60 60" width="60" height="60" aria-hidden="true">
+                <defs>
+                  <linearGradient id="ws-gauge-grad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#38BDF8" />
+                    <stop offset="100%" stopColor="#2563EB" />
+                  </linearGradient>
+                </defs>
+                <circle
+                  className="ws-gauge-bg"
+                  cx="30"
+                  cy="30"
+                  r={gaugeRadius}
+                  strokeWidth="5"
+                  fill="none"
+                />
+                <circle
+                  className="ws-gauge-bar"
+                  cx="30"
+                  cy="30"
+                  r={gaugeRadius}
+                  strokeWidth="5"
+                  strokeDasharray={gaugeCircumference}
+                  strokeDashoffset={gaugeOffset}
+                  strokeLinecap="round"
+                  fill="none"
+                  stroke="url(#ws-gauge-grad)"
+                />
+              </svg>
+              <div className="ws-gauge-center">
+                <span className="ws-gauge-val">{currentStagePct}%</span>
+              </div>
+            </div>
+            <div className="ws-gauge-meta">
+              <span className="ws-gauge-label">STAGE {String(activeMilestoneIndex + 1).padStart(2, '0')}</span>
+              <span className="ws-gauge-sub">{currentStageCompletedCount}/{currentTasks.length} Done</span>
+            </div>
+          </div>
+
+          {/* Right: Quick Settings Controls */}
           <div className="ws-header-actions">
             <button
               type="button"
@@ -174,25 +437,25 @@ export const WeeklyScheduleView: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Minimalist Progress Meter */}
+        {/* Minimalist Overall Progress Meter */}
         <div className="ws-progress-meter">
           <div className="ws-meter-track">
             <div className="ws-meter-fill" style={{ width: `${progressPct}%` }} />
           </div>
           <div className="ws-meter-label">
-            <span>Overall Roadmap Progress: <strong>{completedTasks}/{totalTasks} Goals</strong></span>
-            <span className="ws-meter-pct">{progressPct}% Complete</span>
+            <span>Overall Career Progress: <strong>{completedTasks}/{totalTasks} Goals Completed</strong></span>
+            <span className="ws-meter-pct">{progressPct}% Overall</span>
           </div>
         </div>
 
-        {/* ── Agile Planner Action Chips (Section 6 Docx Zero-Cost Rebalancing) ── */}
+        {/* ── Agile Planner Action Chips ── */}
         <div className="ws-rebalance-strip">
           <span className="ws-rebalance-label">Pacing Actions:</span>
           <button
             type="button"
             className="ws-action-chip behind"
-            onClick={() => onApplyPlannerAction?.('behind')}
-            title="Shift dates by +3 days without stress"
+            onClick={() => handlePacingAction('behind')}
+            title="Shift timeline by +3 days without stress"
           >
             <Clock size={12} className="ws-chip-icon" />
             <span>I'm Behind (+3d)</span>
@@ -200,8 +463,8 @@ export const WeeklyScheduleView: React.FC<Props> = ({
           <button
             type="button"
             className="ws-action-chip early"
-            onClick={() => onApplyPlannerAction?.('early')}
-            title="Pull forward next week's tasks early"
+            onClick={() => handlePacingAction('early')}
+            title="Advance early into upcoming stage goals"
           >
             <FastForward size={12} className="ws-chip-icon" />
             <span>Finished Early</span>
@@ -209,12 +472,19 @@ export const WeeklyScheduleView: React.FC<Props> = ({
           <button
             type="button"
             className="ws-action-chip pause"
-            onClick={() => onApplyPlannerAction?.('pause')}
-            title="Pause roadmap for 7 days without breaking streak"
+            onClick={() => handlePacingAction('pause')}
+            title="Pause schedule for 7 days without breaking streak"
           >
             <Pause size={12} className="ws-chip-icon" />
             <span>Pause Week (+7d)</span>
           </button>
+
+          {pacingFeedback && (
+            <span className="ws-pacing-feedback-badge" role="status" aria-live="polite">
+              <Check size={11} className="ws-feedback-icon" />
+              <span>{pacingFeedback}</span>
+            </span>
+          )}
         </div>
       </header>
 
@@ -228,7 +498,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
           onClick={() => setActiveTab('focus')}
         >
           <Calendar size={14} />
-          <span>This Week's Focus</span>
+          <span>Weekly Sprint</span>
         </button>
         <button
           type="button"
@@ -253,11 +523,59 @@ export const WeeklyScheduleView: React.FC<Props> = ({
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════════
-          VIEW 1: THIS WEEK'S FOCUS (Minimalist Day-by-Day Sessions)
+          VIEW 1: THIS WEEK'S FOCUS (GRAPHICAL GOAL CARDS WITH EXPANDABLE GUIDES)
       ════════════════════════════════════════════════════════════════════════ */}
       {activeTab === 'focus' && currentMilestone && (
         <section className="ws-focus-section" aria-label="This week's focus">
-          {/* Active Stage Card Banner */}
+          {/* Graphical Day Momentum Strip */}
+          <div className="ws-day-track-bar">
+            <div className="ws-day-track-label">
+              <span className="ws-track-kicker">7-DAY MOMENTUM TRACK</span>
+              <span className="ws-track-sub">Tap any day to focus · {currentStageCompletedCount} of {currentTasks.length} goals cleared</span>
+            </div>
+
+            <div className="ws-day-pills">
+              {DAY_NAMES.slice(0, 5).map((day, idx) => {
+                const assignedTask = currentTasks[idx];
+                const isTaskDone = assignedTask?.done_at != null;
+                const isDayActive = selectedDayFilter === day;
+                const isCurrentToday = !isTaskDone && assignedTask != null && (idx === 0 || currentTasks[idx - 1]?.done_at != null);
+
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    className={`ws-day-pill-btn ${isTaskDone ? 'done' : ''} ${isDayActive ? 'active' : ''} ${isCurrentToday ? 'today' : ''}`}
+                    onClick={() => setSelectedDayFilter(selectedDayFilter === day ? null : day)}
+                    title={`Filter by ${day}`}
+                  >
+                    <span className="ws-day-pill-code">{day.slice(0, 3).toUpperCase()}</span>
+                    <span className="ws-day-pill-icon">
+                      {isTaskDone ? (
+                        <Check size={11} strokeWidth={3} />
+                      ) : isCurrentToday ? (
+                        <span className="ws-pulse-dot" />
+                      ) : (
+                        idx + 1
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {selectedDayFilter && (
+                <button
+                  type="button"
+                  className="ws-clear-filter-btn"
+                  onClick={() => setSelectedDayFilter(null)}
+                >
+                  Show All 5 Days
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Stage Banner Summary & Expand All Control */}
           <div className="ws-stage-banner">
             <div className="ws-stage-banner-header">
               <div>
@@ -266,9 +584,23 @@ export const WeeklyScheduleView: React.FC<Props> = ({
                 </span>
                 <h2 className="ws-stage-banner-title">{currentMilestone.title}</h2>
               </div>
-              <div className="ws-stage-metric">
-                <span className="ws-metric-val">{currentStageCompletedCount}/{currentTasks.length}</span>
-                <span className="ws-metric-sub">Tasks Done</span>
+
+              <div className="ws-stage-banner-right">
+                <button
+                  type="button"
+                  className="ws-expand-all-btn"
+                  onClick={toggleExpandAll}
+                  title={areAllExpanded ? 'Collapse all goal guides' : 'Expand all goal guides'}
+                >
+                  <ChevronDown
+                    size={14}
+                    style={{
+                      transform: areAllExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s ease',
+                    }}
+                  />
+                  <span>{areAllExpanded ? 'Collapse Guides' : 'Expand All Guides'}</span>
+                </button>
               </div>
             </div>
 
@@ -282,51 +614,172 @@ export const WeeklyScheduleView: React.FC<Props> = ({
             )}
           </div>
 
-          {/* Daily Schedule Blocks */}
-          <div className="ws-daily-grid">
-            {currentTasks.map((task, idx) => {
+          {/* ── EXPANDABLE GOAL CARDS WITH SMART WRITING & GUIDES ── */}
+          <div className="ws-goals-list">
+            {displayedTasks.map((task, idx) => {
               const isDone = task.done_at != null;
-              const dayName = DAY_NAMES[idx % DAY_NAMES.length];
+              const originalIndex = currentTasks.findIndex((t) => t.id === task.id);
+              const dayName = DAY_NAMES[(originalIndex >= 0 ? originalIndex : idx) % DAY_NAMES.length];
               const taskType = (task.type || 'Learn') as TaskActionType;
               const typeMeta = typeConfig[taskType] || typeConfig.Learn;
+              const isExpanded = Boolean(expandedTasks[task.id]);
+              const guide = getGoalGuide(task, roleName);
 
               return (
-                <div
+                <article
                   key={task.id}
-                  className={`ws-day-card ${isDone ? 'completed' : ''}`}
-                  onClick={(e) => handleTaskCheck(task, e)}
-                  tabIndex={0}
-                  role="button"
-                  aria-pressed={isDone}
-                  onKeyDown={(e) => e.key === 'Enter' && handleTaskCheck(task, e as unknown as React.MouseEvent)}
+                  className={`ws-goal-card ${isDone ? 'completed' : ''} ${isExpanded ? 'expanded' : ''}`}
                 >
-                  <div className="ws-day-header">
-                    <div className="ws-day-kicker">
-                      <span className="ws-day-name">{dayName}</span>
-                      <span className="ws-day-time">{task.est_minutes || dailyMinutes} min session</span>
+                  {/* Card Header & Compact Overview */}
+                  <div
+                    className="ws-goal-header"
+                    onClick={() => toggleTaskExpanded(task.id)}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isExpanded}
+                    onKeyDown={(e) => e.key === 'Enter' && toggleTaskExpanded(task.id)}
+                  >
+                    <div className="ws-goal-header-left">
+                      {/* Tactile Direct Checkbox */}
+                      <button
+                        type="button"
+                        className={`ws-goal-checkbox ${isDone ? 'checked' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTaskCheck(task, e);
+                        }}
+                        title={isDone ? 'Mark as incomplete' : 'Mark goal complete'}
+                        aria-label={`Mark ${task.title} complete`}
+                      >
+                        {isDone ? <Check size={13} strokeWidth={3} /> : null}
+                      </button>
+
+                      <div className="ws-goal-meta-block">
+                        <div className="ws-goal-kicker-row">
+                          <span className="ws-day-chip">{dayName.slice(0, 3).toUpperCase()}</span>
+                          <span
+                            className="ws-type-chip"
+                            style={{ color: typeMeta.color, background: typeMeta.bg }}
+                          >
+                            {typeMeta.icon}
+                            {typeMeta.label}
+                          </span>
+                          <span className="ws-time-chip">
+                            <Timer size={11} /> {task.est_minutes || dailyMinutes}m sprint
+                          </span>
+                          {isDone && <span className="ws-done-tag">✓ Done</span>}
+                        </div>
+
+                        <h3 className={`ws-goal-title ${isDone ? 'done' : ''}`}>{task.title}</h3>
+                      </div>
                     </div>
 
-                    <span
-                      className="ws-type-tag"
-                      style={{ color: typeMeta.color, background: typeMeta.bg }}
-                    >
-                      {typeMeta.icon}
-                      {typeMeta.label}
-                    </span>
+                    {/* Right: Expand / Arrow Down Button */}
+                    <div className="ws-goal-header-right">
+                      <button
+                        type="button"
+                        className={`ws-expand-arrow-btn ${isExpanded ? 'open' : ''}`}
+                        onClick={(e) => toggleTaskExpanded(task.id, e)}
+                        title={isExpanded ? 'Hide goal details' : 'Show goal details & step guide'}
+                        aria-label={isExpanded ? 'Collapse goal details' : 'Expand goal details'}
+                      >
+                        <ChevronDown size={18} className="ws-expand-icon" />
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="ws-task-row">
-                    <div className={`ws-custom-check ${isDone ? 'checked' : ''}`} aria-hidden="true">
-                      {isDone ? '✓' : ''}
+                  {/* ── EXPANDED GOAL DETAIL DRAWER (STEP-BY-STEP GUIDE) ── */}
+                  {isExpanded && (
+                    <div className="ws-goal-drawer">
+                      {/* Smart Executive Summary */}
+                      <div className="ws-guide-banner">
+                        <p className="ws-guide-summary">{guide.tagline}</p>
+                      </div>
+
+                      {/* 3 Step-by-Step Tactical Steps */}
+                      <div className="ws-guide-section">
+                        <div className="ws-guide-section-header">
+                          <div className="ws-guide-section-title">
+                            <ListChecks size={13} className="ws-guide-sec-icon" />
+                            <span>Step-by-Step Action Guide</span>
+                          </div>
+                          <span className="ws-guide-steps-count">3 Tactical Steps</span>
+                        </div>
+
+                        <div className="ws-steps-list">
+                          {guide.steps.map((step, sIdx) => {
+                            const stepKey = `${task.id}-step-${sIdx}`;
+                            const isStepDone = isDone || Boolean(checkedSubSteps[stepKey]);
+
+                            return (
+                              <div
+                                key={stepKey}
+                                className={`ws-step-row ${isStepDone ? 'step-done' : ''}`}
+                                onClick={(e) => toggleSubStep(stepKey, e)}
+                                role="checkbox"
+                                aria-checked={isStepDone}
+                                tabIndex={0}
+                                onKeyDown={(e) => e.key === 'Enter' && toggleSubStep(stepKey, e as unknown as React.MouseEvent)}
+                              >
+                                <span className={`ws-step-check ${isStepDone ? 'checked' : ''}`}>
+                                  {isStepDone ? <Check size={11} strokeWidth={3} /> : sIdx + 1}
+                                </span>
+                                <div className="ws-step-content">
+                                  <span className="ws-step-title">{step.title}</span>
+                                  <span className="ws-step-hint">{step.hint}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Target Deliverable Callout */}
+                      <div className="ws-deliverable-card">
+                        <div className="ws-deliv-badge">
+                          <Target size={13} />
+                        </div>
+                        <div className="ws-deliv-body">
+                          <span className="ws-deliv-label">KEY DELIVERABLE TO PRODUCE</span>
+                          <span className="ws-deliv-text">{guide.deliverable}</span>
+                        </div>
+                      </div>
+
+                      {/* Coach Pro-Tip & Sprint Time Split */}
+                      <div className="ws-guide-meta-row">
+                        <div className="ws-tip-pill">
+                          <Lightbulb size={13} className="ws-tip-icon" />
+                          <span><strong>Pro Tip:</strong> {guide.tip}</span>
+                        </div>
+                        <div className="ws-sprint-pill">
+                          <Clock size={12} />
+                          <span>{guide.sprintTime}</span>
+                        </div>
+                      </div>
+
+                      {/* Action Footer: Complete Goal Button */}
+                      <div className="ws-drawer-footer">
+                        <button
+                          type="button"
+                          className={`ws-btn-complete-goal ${isDone ? 'done' : ''}`}
+                          onClick={(e) => handleTaskCheck(task, e)}
+                        >
+                          {isDone ? (
+                            <>
+                              <CheckCircle2 size={15} />
+                              <span>Goal Completed · Click to Reopen</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check size={15} strokeWidth={2.5} />
+                              <span>Mark Goal as Finished</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                    <div className="ws-task-body">
-                      <p className={`ws-task-text ${isDone ? 'done' : ''}`}>{task.title}</p>
-                      {isDone && (
-                        <span className="ws-task-completed-label">✓ Completed & Recorded</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  )}
+                </article>
               );
             })}
           </div>
@@ -334,7 +787,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
       )}
 
       {/* ════════════════════════════════════════════════════════════════════════
-          VIEW 2: ALL STAGES (Minimalist Chronological List)
+          VIEW 2: ALL STAGES (CHRONOLOGICAL ROADMAP WITH EXPANDABLE GOALS)
       ════════════════════════════════════════════════════════════════════════ */}
       {activeTab === 'all-stages' && (
         <section className="ws-stages-section" aria-label="All roadmap stages">
@@ -345,6 +798,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
               const isFinished = mTasks.length > 0 && mDone === mTasks.length;
               const isCurrent = idx === activeMilestoneIndex;
               const isExpanded = expandedMilestones[m.id] ?? isCurrent;
+              const pct = mTasks.length > 0 ? Math.round((mDone / mTasks.length) * 100) : 0;
 
               return (
                 <div
@@ -379,13 +833,18 @@ export const WeeklyScheduleView: React.FC<Props> = ({
                       <div className="ws-stage-meta-row">
                         <span>{m.effort_hours || 25}h Effort</span>
                         <span>·</span>
-                        <span>{mDone}/{mTasks.length} Tasks Complete</span>
+                        <span>{mDone}/{mTasks.length} Goals Complete ({pct}%)</span>
                         {m.week_range && (
                           <>
                             <span>·</span>
                             <span>{m.week_range}</span>
                           </>
                         )}
+                      </div>
+
+                      {/* Linear Mini Progress Bar */}
+                      <div className="ws-stage-linear-bar">
+                        <div className="ws-linear-fill" style={{ width: `${pct}%` }} />
                       </div>
                     </div>
 
@@ -403,23 +862,53 @@ export const WeeklyScheduleView: React.FC<Props> = ({
                   {/* Expanded Task Checklist */}
                   {isExpanded && (
                     <div className="ws-stage-tasks-drawer">
-                      <ul className="ws-drawer-task-list">
+                      <div className="ws-drawer-goals-list">
                         {mTasks.map((t) => {
                           const done = t.done_at != null;
+                          const isTaskExp = Boolean(expandedTasks[t.id]);
+                          const guide = getGoalGuide(t, roleName);
+
                           return (
-                            <li
-                              key={t.id}
-                              className={`ws-drawer-item ${done ? 'done' : ''}`}
-                              onClick={(e) => handleTaskCheck(t, e)}
-                            >
-                              <span className={`ws-custom-check sm ${done ? 'checked' : ''}`}>
-                                {done ? '✓' : ''}
-                              </span>
-                              <span className="ws-drawer-item-title">{t.title}</span>
-                            </li>
+                            <div key={t.id} className={`ws-drawer-goal-box ${done ? 'done' : ''}`}>
+                              <div
+                                className="ws-drawer-goal-header"
+                                onClick={() => toggleTaskExpanded(t.id)}
+                              >
+                                <button
+                                  type="button"
+                                  className={`ws-goal-checkbox sm ${done ? 'checked' : ''}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleTaskCheck(t, e);
+                                  }}
+                                  title={done ? 'Mark incomplete' : 'Mark complete'}
+                                >
+                                  {done ? <Check size={11} strokeWidth={3} /> : null}
+                                </button>
+                                <span className={`ws-drawer-goal-title ${done ? 'done' : ''}`}>{t.title}</span>
+                                <button
+                                  type="button"
+                                  className={`ws-expand-arrow-btn sm ${isTaskExp ? 'open' : ''}`}
+                                  onClick={(e) => toggleTaskExpanded(t.id, e)}
+                                  title="View goal details"
+                                >
+                                  <ChevronDown size={14} className="ws-expand-icon" />
+                                </button>
+                              </div>
+
+                              {isTaskExp && (
+                                <div className="ws-drawer-goal-details">
+                                  <p className="ws-drawer-tagline">{guide.tagline}</p>
+                                  <div className="ws-drawer-deliv">
+                                    <Target size={12} />
+                                    <span>{guide.deliverable}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
-                      </ul>
+                      </div>
 
                       {m.skills_covered && m.skills_covered.length > 0 && (
                         <div className="ws-skill-pills mt-2">
@@ -438,16 +927,16 @@ export const WeeklyScheduleView: React.FC<Props> = ({
       )}
 
       {/* ════════════════════════════════════════════════════════════════════════
-          VIEW 3: WEEKLY CALENDAR MATRIX
+          VIEW 3: WEEKLY HABIT CALENDAR MATRIX
       ════════════════════════════════════════════════════════════════════════ */}
       {activeTab === 'calendar' && (
         <section className="ws-calendar-section" aria-label="Weekly matrix">
           <div className="ws-matrix-card">
             <div className="ws-matrix-header">
               <div>
-                <h3 className="ws-matrix-title">Weekly Habit Pacing</h3>
+                <h3 className="ws-matrix-title">Weekly Habit Rhythm</h3>
                 <p className="ws-matrix-sub">
-                  Recommended daily rhythm for <strong>{roleName}</strong> based on your {dailyMinutes} min/day commitment.
+                  Recommended daily habit pacing for <strong>{roleName}</strong> ({dailyMinutes} min/day commitment).
                 </p>
               </div>
               <div className="ws-streak-pill">
@@ -473,7 +962,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
                       {assignedTask ? (
                         <>
                           <div className="ws-slot-status">
-                            {isDone ? '✓ Completed' : 'Scheduled'}
+                            {isDone ? '✓ Completed' : 'Scheduled Goal'}
                           </div>
                           <div className="ws-slot-title">{assignedTask.title}</div>
                         </>
@@ -510,7 +999,7 @@ const weeklyScheduleStyles = String.raw`
   }
 }
 
-/* ── HEADER CARD ── */
+/* ── HEADER DASHBOARD ── */
 .ws-header-card {
   background: var(--md-surface, #FFFFFF);
   border: 1px solid var(--md-outline, #E2E8F0);
@@ -521,17 +1010,17 @@ const weeklyScheduleStyles = String.raw`
   transition: background 0.25s ease, border-color 0.25s ease;
 }
 
-.ws-header-top {
+.ws-header-grid {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 18px;
 }
 
-.ws-header-title-block {
-  flex: 1 1 320px;
+.ws-header-main {
+  flex: 1 1 280px;
 }
 
 .ws-badge-row {
@@ -546,7 +1035,7 @@ const weeklyScheduleStyles = String.raw`
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.8px;
-  color: var(--cp-olive, #8EA95B);
+  color: #2563EB;
   text-transform: uppercase;
 }
 
@@ -564,7 +1053,7 @@ const weeklyScheduleStyles = String.raw`
 
 .ws-header-role {
   font-size: clamp(20px, 2.5vw, 26px);
-  font-weight: 800;
+  font-weight: 850;
   margin: 0 0 4px 0;
   color: var(--md-text-primary, #0F172A);
   letter-spacing: -0.02em;
@@ -578,6 +1067,72 @@ const weeklyScheduleStyles = String.raw`
 
 .ws-header-sub strong {
   color: var(--md-text-primary, #0F172A);
+}
+
+/* Graphical Gauge */
+.ws-header-gauge-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--md-surface-variant, #F8FAFC);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 14px;
+  padding: 8px 14px;
+}
+
+.ws-gauge-wrapper {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ws-radial-gauge {
+  transform: rotate(-90deg);
+  width: 54px;
+  height: 54px;
+}
+
+.ws-gauge-bg {
+  stroke: var(--md-outline, #E2E8F0);
+}
+
+.ws-gauge-bar {
+  transition: stroke-dashoffset 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ws-gauge-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ws-gauge-val {
+  font-size: 12px;
+  font-weight: 850;
+  color: var(--md-text-primary, #0F172A);
+}
+
+.ws-gauge-meta {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-gauge-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #2563EB;
+}
+
+.ws-gauge-sub {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--md-text-secondary, #64748B);
 }
 
 .ws-header-actions {
@@ -605,7 +1160,6 @@ const weeklyScheduleStyles = String.raw`
   border: 1px solid var(--md-outline, #E2E8F0);
   color: var(--md-text-primary, #0F172A);
 }
-
 .ws-btn-adjust:hover {
   background: var(--md-outline, #E2E8F0);
 }
@@ -616,7 +1170,6 @@ const weeklyScheduleStyles = String.raw`
   color: #FFFFFF;
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
 }
-
 .ws-btn-coach:hover {
   background: #1D4ED8;
   transform: translateY(-1px);
@@ -638,7 +1191,7 @@ const weeklyScheduleStyles = String.raw`
 
 .ws-meter-fill {
   height: 100%;
-  background: linear-gradient(90deg, #8EA95B, #10B981);
+  background: linear-gradient(90deg, #38BDF8, #2563EB, #10B981);
   border-radius: 9999px;
   transition: width 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -708,6 +1261,38 @@ const weeklyScheduleStyles = String.raw`
   background: rgba(99, 102, 241, 0.08);
 }
 
+.ws-pacing-feedback-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 750;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  animation: wsBadgeFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme='dark'] .ws-pacing-feedback-badge,
+.dark .ws-pacing-feedback-badge {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34D399;
+  border-color: rgba(52, 211, 153, 0.4);
+}
+
+@keyframes wsBadgeFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* ── VIEW SWITCHER ── */
 .ws-view-switcher {
   display: flex;
@@ -742,257 +1327,668 @@ const weeklyScheduleStyles = String.raw`
   box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
 
+/* ── GRAPHICAL DAY MOMENTUM BAR ── */
+.ws-day-track-bar {
+  background: var(--md-surface, #FFFFFF);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 16px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ws-day-track-label {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-track-kicker {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: #2563EB;
+}
+
+.ws-track-sub {
+  font-size: 12px;
+  color: var(--md-text-secondary, #64748B);
+}
+
+.ws-day-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ws-day-pill-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 44px;
+  height: 48px;
+  border-radius: 10px;
+  border: 1px solid var(--md-outline, #E2E8F0);
+  background: var(--md-surface-variant, #F8FAFC);
+  color: var(--md-text-secondary, #64748B);
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ws-day-pill-btn:hover {
+  transform: translateY(-2px);
+  border-color: #2563EB;
+}
+
+.ws-day-pill-btn.active {
+  background: #2563EB;
+  border-color: #2563EB;
+  color: #FFFFFF;
+}
+
+.ws-day-pill-btn.done {
+  border-color: #10B981;
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+}
+
+.ws-day-pill-btn.done.active {
+  background: #10B981;
+  color: #FFFFFF;
+}
+
+.ws-day-pill-btn.today {
+  border-color: #38BDF8;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+}
+
+.ws-day-pill-code {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.ws-day-pill-icon {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ws-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #38BDF8;
+  animation: wsPulse 1.8s infinite;
+}
+
+@keyframes wsPulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.4); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+.ws-clear-filter-btn {
+  background: transparent;
+  border: 1px dashed var(--md-outline, #CBD5E1);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #2563EB;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ws-clear-filter-btn:hover {
+  border-color: #2563EB;
+  background: rgba(37, 99, 235, 0.05);
+}
+
 /* ── STAGE BANNER ── */
 .ws-stage-banner {
   background: var(--md-surface, #FFFFFF);
   border: 1px solid var(--md-outline, #E2E8F0);
   border-radius: 16px;
-  padding: 18px 20px;
-  margin-bottom: 14px;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  transition: background 0.25s ease, border-color 0.25s ease;
 }
 
 .ws-stage-banner-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .ws-stage-pill {
   font-size: 9.5px;
   font-weight: 800;
   letter-spacing: 0.8px;
-  color: var(--cp-olive, #8EA95B);
-  display: block;
-  margin-bottom: 2px;
+  color: #2563EB;
+  text-transform: uppercase;
 }
 
 .ws-stage-banner-title {
-  margin: 0;
-  font-size: 17px;
+  margin: 2px 0 0;
+  font-size: clamp(16px, 2vw, 20px);
   font-weight: 800;
-  color: var(--md-text-primary, #0F172A);
   letter-spacing: -0.01em;
+  color: var(--md-text-primary, #0F172A);
 }
 
-.ws-stage-metric {
-  text-align: right;
-  flex-shrink: 0;
-}
-
-.ws-metric-val {
-  font-size: 18px;
-  font-weight: 900;
-  color: #10B981;
-  display: block;
-}
-
-.ws-metric-sub {
-  font-size: 10.5px;
+.ws-expand-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--md-surface-variant, #F1F5F9);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--md-text-secondary, #64748B);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ws-expand-all-btn:hover {
+  background: var(--md-outline, #E2E8F0);
+  color: var(--md-text-primary, #0F172A);
 }
 
 .ws-skill-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .ws-skill-pill {
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   background: var(--md-surface-variant, #F1F5F9);
   color: var(--md-text-secondary, #64748B);
-  padding: 3px 8px;
+  padding: 2px 8px;
   border-radius: 6px;
 }
 
-.ws-skill-pill.sm {
-  font-size: 9.5px;
-  padding: 2px 6px;
-}
-
-/* ── DAILY CARDS GRID ── */
-.ws-daily-grid {
+/* ── EXPANDABLE GOAL CARDS ── */
+.ws-goals-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
-.ws-day-card {
+.ws-goal-card {
   background: var(--md-surface, #FFFFFF);
   border: 1px solid var(--md-outline, #E2E8F0);
-  border-radius: 14px;
-  padding: 14px 16px;
+  border-radius: 16px;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.ws-goal-card:hover {
+  border-color: #93C5FD;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.06);
+}
+
+.ws-goal-card.expanded {
+  border-color: #60A5FA;
+  box-shadow: 0 6px 20px rgba(37, 99, 235, 0.08);
+}
+
+.ws-goal-card.completed {
+  border-left: 3px solid #10B981;
+}
+
+.ws-goal-header {
+  padding: 14px 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
-  transition: all 0.15s ease;
+  user-select: none;
 }
 
-.ws-day-card:hover {
-  border-color: #CBD5E1;
-  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.06);
+.ws-goal-header-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
 }
 
-.ws-day-card.completed {
-  background: rgba(16, 185, 129, 0.03);
-  border-color: rgba(16, 185, 129, 0.25);
+.ws-goal-checkbox {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: 7px;
+  border: 2px solid var(--md-outline, #CBD5E1);
+  background: var(--md-surface, #FFFFFF);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #FFFFFF;
+  cursor: pointer;
+  margin-top: 2px;
+  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.ws-day-header {
+.ws-goal-checkbox:hover {
+  border-color: #2563EB;
+}
+
+.ws-goal-checkbox.checked {
+  background: #10B981;
+  border-color: #10B981;
+}
+
+.ws-goal-meta-block {
+  flex: 1;
+}
+
+.ws-goal-kicker-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.ws-day-chip {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--md-text-muted, #94A3B8);
+}
+
+.ws-type-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 1.5px 7px;
+  border-radius: 5px;
+}
+
+.ws-time-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--md-text-muted, #94A3B8);
+}
+
+.ws-done-tag {
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #10B981;
+  background: rgba(16, 185, 129, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.ws-goal-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--md-text-primary, #0F172A);
+  letter-spacing: -0.01em;
+}
+
+.ws-goal-title.done {
+  color: var(--md-text-muted, #94A3B8);
+  text-decoration: line-through;
+}
+
+.ws-expand-arrow-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--md-outline, #E2E8F0);
+  background: var(--md-surface-variant, #F8FAFC);
+  color: var(--md-text-secondary, #64748B);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ws-expand-arrow-btn:hover {
+  background: #EFF6FF;
+  border-color: #93C5FD;
+  color: #2563EB;
+  transform: translateY(-1px);
+}
+
+.ws-expand-icon {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.ws-expand-arrow-btn.open .ws-expand-icon {
+  transform: rotate(180deg);
+}
+
+/* ── GOAL DETAIL DRAWER ── */
+.ws-goal-drawer {
+  padding: 0 18px 18px 18px;
+  border-top: 1px solid var(--md-outline, #F1F5F9);
+  animation: wsDrawerSlide 0.22s ease-out;
+}
+
+@keyframes wsDrawerSlide {
+  0% { opacity: 0; transform: translateY(-6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.ws-guide-banner {
+  background: rgba(37, 99, 235, 0.04);
+  border-left: 3px solid #2563EB;
+  border-radius: 0 8px 8px 0;
+  padding: 8px 12px;
+  margin: 12px 0 14px;
+}
+
+.ws-guide-summary {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--md-text-primary, #1E293B);
+}
+
+.ws-guide-section {
+  margin-bottom: 14px;
+}
+
+.ws-guide-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8px;
 }
 
-.ws-day-kicker {
+.ws-guide-section-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.ws-day-name {
-  font-size: 12.5px;
-  font-weight: 800;
-  color: var(--md-text-primary, #0F172A);
-}
-
-.ws-day-time {
+  gap: 5px;
   font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: var(--md-text-secondary, #475569);
+  text-transform: uppercase;
+}
+
+.ws-guide-sec-icon {
+  color: #2563EB;
+}
+
+.ws-guide-steps-count {
+  font-size: 10.5px;
+  font-weight: 600;
   color: var(--md-text-muted, #94A3B8);
 }
 
-.ws-type-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.4px;
+.ws-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.ws-task-row {
+.ws-step-row {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  padding: 8px 12px;
+  background: var(--md-surface-variant, #F8FAFC);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.ws-custom-check {
-  flex-shrink: 0;
+.ws-step-row:hover {
+  background: #EFF6FF;
+  border-color: #BFDBFE;
+}
+
+.ws-step-row.step-done {
+  background: rgba(16, 185, 129, 0.05);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.ws-step-check {
   width: 18px;
   height: 18px;
+  min-width: 18px;
   border-radius: 5px;
-  border: 1.5px solid var(--md-outline-variant, #CBD5E1);
+  border: 1.5px solid var(--md-outline, #CBD5E1);
   background: var(--md-surface, #FFFFFF);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 900;
-  color: #FFFFFF;
-  margin-top: 2px;
-  transition: all 0.15s ease;
-}
-
-.ws-custom-check.sm {
-  width: 15px;
-  height: 15px;
   font-size: 9.5px;
+  font-weight: 800;
+  color: var(--md-text-secondary, #64748B);
+  margin-top: 1px;
 }
 
-.ws-custom-check.checked {
+.ws-step-check.checked {
   background: #10B981;
   border-color: #10B981;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.35);
+  color: #FFFFFF;
 }
 
-.ws-task-body {
-  flex: 1;
+.ws-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.ws-task-text {
-  margin: 0;
-  font-size: 13.5px;
-  line-height: 1.45;
+.ws-step-title {
+  font-size: 12.5px;
+  font-weight: 700;
   color: var(--md-text-primary, #0F172A);
-  font-weight: 500;
+}
+
+.ws-step-row.step-done .ws-step-title {
+  text-decoration: line-through;
+  color: var(--md-text-muted, #94A3B8);
+}
+
+.ws-step-hint {
+  font-size: 11px;
+  color: var(--md-text-secondary, #64748B);
+  line-height: 1.35;
+}
+
+/* Deliverable Card */
+.ws-deliverable-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.ws-deliv-badge {
+  color: #059669;
+  margin-top: 2px;
+}
+
+.ws-deliv-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.ws-deliv-label {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  color: #059669;
+}
+
+.ws-deliv-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--md-text-primary, #0F172A);
+  margin-top: 1px;
+}
+
+/* Coach Pro-Tip & Sprint Time */
+.ws-guide-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.ws-tip-pill {
+  flex: 1 1 240px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--md-text-secondary, #475569);
+  line-height: 1.4;
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+.ws-tip-icon {
+  color: #D97706;
+  min-width: 13px;
+  margin-top: 2px;
+}
+
+.ws-sprint-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--md-text-secondary, #64748B);
+  background: var(--md-surface-variant, #F1F5F9);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* Drawer Footer */
+.ws-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.ws-btn-complete-goal {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  background: #2563EB;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
   transition: all 0.15s ease;
 }
 
-.ws-task-text.done {
-  color: var(--md-text-muted, #94A3B8);
-  text-decoration: line-through;
+.ws-btn-complete-goal:hover {
+  background: #1D4ED8;
+  transform: translateY(-1px);
 }
 
-.ws-task-completed-label {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 10.5px;
-  font-weight: 700;
-  color: #10B981;
+.ws-btn-complete-goal.done {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  box-shadow: none;
+}
+.ws-btn-complete-goal.done:hover {
+  background: rgba(16, 185, 129, 0.2);
+  transform: none;
 }
 
-/* ── STAGES LIST (VIEW 2) ── */
+/* ── VIEW 2: ALL STAGES STYLES ── */
 .ws-stages-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .ws-stage-row-card {
   background: var(--md-surface, #FFFFFF);
   border: 1px solid var(--md-outline, #E2E8F0);
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
+}
+
+.ws-stage-row-card:hover {
+  border-color: #93C5FD;
 }
 
 .ws-stage-row-card.current {
-  border-left: 4px solid var(--cp-olive, #8EA95B);
-  background: rgba(142, 169, 91, 0.03);
+  border-color: #2563EB;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.08);
 }
 
 .ws-stage-row-card.finished {
-  border-left: 4px solid #10B981;
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .ws-stage-row-summary {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 14px;
+  padding: 16px 20px;
   cursor: pointer;
   user-select: none;
 }
 
 .ws-stage-num-badge {
-  flex-shrink: 0;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 10px;
   background: var(--md-surface-variant, #F1F5F9);
   color: var(--md-text-primary, #0F172A);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 800;
 }
 
 .ws-stage-row-card.current .ws-stage-num-badge {
-  background: var(--cp-olive, #8EA95B);
+  background: #2563EB;
   color: #FFFFFF;
 }
 
 .ws-stage-row-card.finished .ws-stage-num-badge {
-  background: rgba(16, 185, 129, 0.12);
-  color: #10B981;
+  background: #10B981;
+  color: #FFFFFF;
 }
 
 .ws-stage-info {
@@ -1009,26 +2005,26 @@ const weeklyScheduleStyles = String.raw`
 
 .ws-stage-headline h3 {
   margin: 0;
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--md-text-primary, #0F172A);
 }
 
 .ws-active-pill {
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 800;
-  background: var(--cp-olive, #8EA95B);
+  background: #2563EB;
   color: #FFFFFF;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border-radius: 9999px;
 }
 
 .ws-done-pill {
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 800;
-  background: rgba(16, 185, 129, 0.15);
-  color: #10B981;
-  padding: 1px 6px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  padding: 1px 7px;
   border-radius: 9999px;
 }
 
@@ -1036,73 +2032,128 @@ const weeklyScheduleStyles = String.raw`
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--md-text-secondary, #64748B);
+  margin-bottom: 6px;
 }
 
-.ws-stage-chevron {
-  color: var(--md-text-muted, #94A3B8);
+.ws-stage-linear-bar {
+  width: 100%;
+  height: 4px;
+  background: var(--md-surface-variant, #F1F5F9);
+  border-radius: 9999px;
+  overflow: hidden;
+}
+
+.ws-linear-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #38BDF8, #10B981);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
 }
 
 .ws-stage-tasks-drawer {
-  padding: 0 16px 14px 60px;
-  border-top: 1px solid var(--md-outline, #E2E8F0);
-  background: var(--md-surface, #FFFFFF);
+  padding: 12px 20px 18px;
+  border-top: 1px solid var(--md-outline, #F1F5F9);
+  background: var(--md-surface-variant, #FAFAFA);
 }
 
-.ws-drawer-task-list {
-  list-style: none;
-  margin: 8px 0 0 0;
-  padding: 0;
+.ws-drawer-goals-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-.ws-drawer-item {
+.ws-drawer-goal-box {
+  background: var(--md-surface, #FFFFFF);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.ws-drawer-goal-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
-  padding: 3px 0;
 }
 
-.ws-drawer-item-title {
-  font-size: 12.5px;
+.ws-goal-checkbox.sm {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  border-radius: 5px;
+}
+
+.ws-drawer-goal-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--md-text-primary, #0F172A);
 }
 
-.ws-drawer-item.done .ws-drawer-item-title {
-  color: var(--md-text-muted, #94A3B8);
+.ws-drawer-goal-title.done {
   text-decoration: line-through;
+  color: var(--md-text-muted, #94A3B8);
 }
 
-/* ── MATRIX VIEW (VIEW 3) ── */
+.ws-expand-arrow-btn.sm {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.ws-drawer-goal-details {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--md-outline, #E2E8F0);
+}
+
+.ws-drawer-tagline {
+  margin: 0 0 6px;
+  font-size: 11.5px;
+  color: var(--md-text-secondary, #475569);
+  line-height: 1.4;
+}
+
+.ws-drawer-deliv {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #059669;
+  background: rgba(16, 185, 129, 0.08);
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+
+/* ── VIEW 3: MATRIX STYLES ── */
 .ws-matrix-card {
   background: var(--md-surface, #FFFFFF);
   border: 1px solid var(--md-outline, #E2E8F0);
-  border-radius: 20px;
+  border-radius: 18px;
   padding: 22px;
-  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
 }
 
 .ws-matrix-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 20px;
 }
 
 .ws-matrix-title {
-  margin: 0 0 3px 0;
+  margin: 0;
   font-size: 17px;
   font-weight: 800;
   color: var(--md-text-primary, #0F172A);
 }
 
 .ws-matrix-sub {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 12.5px;
   color: var(--md-text-secondary, #64748B);
 }
@@ -1115,162 +2166,188 @@ const weeklyScheduleStyles = String.raw`
   color: #EA580C;
   font-size: 12px;
   font-weight: 800;
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: 9999px;
-  flex-shrink: 0;
+  border: 1px solid rgba(249, 115, 22, 0.2);
 }
 
 .ws-matrix-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 8px;
-}
-@media (max-width: 768px) {
-  .ws-matrix-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
+  grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+  gap: 10px;
 }
 
 .ws-matrix-col {
-  background: var(--md-surface-variant, #F1F5F9);
+  background: var(--md-surface-variant, #F8FAFC);
   border: 1px solid var(--md-outline, #E2E8F0);
   border-radius: 12px;
-  padding: 10px 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .ws-matrix-day-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
 }
 
 .ws-matrix-day-abbr {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 800;
   color: var(--md-text-primary, #0F172A);
 }
 
 .ws-matrix-day-mins {
   font-size: 10px;
-  font-weight: 600;
-  color: var(--md-text-secondary, #64748B);
+  font-weight: 700;
+  color: var(--md-text-muted, #94A3B8);
 }
 
 .ws-matrix-slot {
-  background: var(--md-surface, #FFFFFF);
-  border: 1px solid var(--md-outline, #E2E8F0);
   border-radius: 8px;
   padding: 8px;
-  min-height: 85px;
+  font-size: 11px;
+  min-height: 80px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
 }
 
 .ws-matrix-slot.completed {
-  border-color: rgba(16, 185, 129, 0.4);
-  background: rgba(16, 185, 129, 0.05);
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #047857;
+}
+
+.ws-matrix-slot.active {
+  background: #FFFFFF;
+  border: 1px solid #93C5FD;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.08);
+}
+
+.ws-matrix-slot.rest {
+  background: transparent;
+  border: 1px dashed var(--md-outline, #CBD5E1);
+  color: var(--md-text-muted, #94A3B8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 .ws-slot-status {
   font-size: 9.5px;
   font-weight: 800;
-  color: #10B981;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
 }
 
 .ws-slot-title {
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--md-text-primary, #0F172A);
-  line-height: 1.35;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-}
-
-.ws-slot-rest {
   font-size: 11px;
-  color: var(--md-text-muted, #94A3B8);
-  font-style: italic;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--md-text-primary, #0F172A);
 }
 
-/* ── DARK MODE TOKENS OVERRIDE ── */
-:root.dark .ws-page-container,
-[data-theme='dark'] .ws-page-container,
-body.dark .ws-page-container {
-  color: #F8FAFC;
-}
-
+/* ═══════════════════════════════════════════════════════════════════════════════
+   DARK MODE OVERRIDES
+═══════════════════════════════════════════════════════════════════════════════ */
 :root.dark .ws-header-card,
 [data-theme='dark'] .ws-header-card,
 body.dark .ws-header-card,
 :root.dark .ws-view-switcher,
 [data-theme='dark'] .ws-view-switcher,
 body.dark .ws-view-switcher,
+:root.dark .ws-day-track-bar,
+[data-theme='dark'] .ws-day-track-bar,
+body.dark .ws-day-track-bar,
 :root.dark .ws-stage-banner,
 [data-theme='dark'] .ws-stage-banner,
 body.dark .ws-stage-banner,
-:root.dark .ws-day-card,
-[data-theme='dark'] .ws-day-card,
-body.dark .ws-day-card,
+:root.dark .ws-goal-card,
+[data-theme='dark'] .ws-goal-card,
+body.dark .ws-goal-card,
 :root.dark .ws-stage-row-card,
 [data-theme='dark'] .ws-stage-row-card,
 body.dark .ws-stage-row-card,
 :root.dark .ws-matrix-card,
 [data-theme='dark'] .ws-matrix-card,
-body.dark .ws-matrix-card,
-:root.dark .ws-matrix-slot,
-[data-theme='dark'] .ws-matrix-slot,
-body.dark .ws-matrix-slot {
-  background: #111827;
-  border-color: #2B3545;
+body.dark .ws-matrix-card {
+  background: #0F172A;
+  border-color: #1E293B;
+  color: #F8FAFC;
 }
 
-:root.dark .ws-btn-adjust,
-[data-theme='dark'] .ws-btn-adjust,
-body.dark .ws-btn-adjust,
-:root.dark .ws-tab-btn.active,
-[data-theme='dark'] .ws-tab-btn.active,
-body.dark .ws-tab-btn.active,
-:root.dark .ws-skill-pill,
-[data-theme='dark'] .ws-skill-pill,
-body.dark .ws-skill-pill,
+:root.dark .ws-header-gauge-block,
+[data-theme='dark'] .ws-header-gauge-block,
+body.dark .ws-header-gauge-block,
+:root.dark .ws-day-pill-btn,
+[data-theme='dark'] .ws-day-pill-btn,
+body.dark .ws-day-pill-btn,
+:root.dark .ws-expand-arrow-btn,
+[data-theme='dark'] .ws-expand-arrow-btn,
+body.dark .ws-expand-arrow-btn,
+:root.dark .ws-step-row,
+[data-theme='dark'] .ws-step-row,
+body.dark .ws-step-row,
+:root.dark .ws-drawer-goal-box,
+[data-theme='dark'] .ws-drawer-goal-box,
+body.dark .ws-drawer-goal-box,
 :root.dark .ws-matrix-col,
 [data-theme='dark'] .ws-matrix-col,
-body.dark .ws-matrix-col,
-:root.dark .ws-stage-num-badge,
-[data-theme='dark'] .ws-stage-num-badge,
-body.dark .ws-stage-num-badge {
+body.dark .ws-matrix-col {
   background: #1E293B;
   border-color: #334155;
   color: #F8FAFC;
 }
 
-:root.dark .ws-stage-tasks-drawer,
-[data-theme='dark'] .ws-stage-tasks-drawer,
-body.dark .ws-stage-tasks-drawer {
-  background: #0F172A;
-  border-color: #1E293B;
+:root.dark .ws-tab-btn.active,
+[data-theme='dark'] .ws-tab-btn.active,
+body.dark .ws-tab-btn.active {
+  background: #1E293B;
+  color: #60A5FA;
 }
 
-:root.dark .ws-custom-check,
-[data-theme='dark'] .ws-custom-check,
-body.dark .ws-custom-check {
+:root.dark .ws-goal-checkbox,
+[data-theme='dark'] .ws-goal-checkbox,
+body.dark .ws-goal-checkbox,
+:root.dark .ws-step-check,
+[data-theme='dark'] .ws-step-check,
+body.dark .ws-step-check {
   background: #0F172A;
   border-color: #475569;
 }
 
-:root.dark .ws-custom-check.checked,
-[data-theme='dark'] .ws-custom-check.checked,
-body.dark .ws-custom-check.checked {
+:root.dark .ws-goal-checkbox.checked,
+[data-theme='dark'] .ws-goal-checkbox.checked,
+body.dark .ws-goal-checkbox.checked,
+:root.dark .ws-step-check.checked,
+[data-theme='dark'] .ws-step-check.checked,
+body.dark .ws-step-check.checked {
   background: #10B981;
   border-color: #10B981;
+}
+
+:root.dark .ws-guide-banner,
+[data-theme='dark'] .ws-guide-banner,
+body.dark .ws-guide-banner {
+  background: rgba(37, 99, 235, 0.12);
+}
+
+:root.dark .ws-guide-summary,
+[data-theme='dark'] .ws-guide-summary,
+body.dark .ws-guide-summary {
+  color: #E2E8F0;
+}
+
+:root.dark .ws-stage-tasks-drawer,
+[data-theme='dark'] .ws-stage-tasks-drawer,
+body.dark .ws-stage-tasks-drawer {
+  background: #0B1120;
+  border-color: #1E293B;
 }
 
 :root.dark .ws-header-role,
@@ -1279,12 +2356,15 @@ body.dark .ws-header-role,
 :root.dark .ws-stage-banner-title,
 [data-theme='dark'] .ws-stage-banner-title,
 body.dark .ws-stage-banner-title,
-:root.dark .ws-day-name,
-[data-theme='dark'] .ws-day-name,
-body.dark .ws-day-name,
-:root.dark .ws-task-text,
-[data-theme='dark'] .ws-task-text,
-body.dark .ws-task-text,
+:root.dark .ws-goal-title,
+[data-theme='dark'] .ws-goal-title,
+body.dark .ws-goal-title,
+:root.dark .ws-step-title,
+[data-theme='dark'] .ws-step-title,
+body.dark .ws-step-title,
+:root.dark .ws-deliv-text,
+[data-theme='dark'] .ws-deliv-text,
+body.dark .ws-deliv-text,
 :root.dark .ws-stage-headline h3,
 [data-theme='dark'] .ws-stage-headline h3,
 body.dark .ws-stage-headline h3,
@@ -1295,5 +2375,20 @@ body.dark .ws-matrix-title,
 [data-theme='dark'] .ws-slot-title,
 body.dark .ws-slot-title {
   color: #F8FAFC;
+}
+
+:root.dark .ws-matrix-slot.active,
+[data-theme='dark'] .ws-matrix-slot.active,
+body.dark .ws-matrix-slot.active {
+  background: #1E293B;
+  border-color: #3B82F6;
+}
+
+:root.dark .ws-matrix-slot.completed,
+[data-theme='dark'] .ws-matrix-slot.completed,
+body.dark .ws-matrix-slot.completed {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: #10B981;
+  color: #34D399;
 }
 `;

@@ -917,45 +917,197 @@ export function generateTasksForMilestones(
   return tasks;
 }
 
+export interface PlannerActionResult {
+  updatedMilestones: Milestone[];
+  updatedTasks: Task[];
+  message: string;
+}
+
+function addDaysToDateStr(dateStr: string, days: number): string {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+  } catch {
+    return dateStr;
+  }
+}
+
 /**
  * Handles Zero-Cost Re-planning Actions:
- * - 'behind': shifts active milestone by +3 days
- * - 'early': completes active milestone and pulls next forward
- * - 'pause': shifts all upcoming milestones by +7 days
+ * - 'behind': shifts active milestone and subsequent milestones by +3 days, extending task deadlines
+ * - 'early': marks active milestone tasks completed, completes the milestone, and pulls next milestone forward
+ * - 'pause': shifts all upcoming milestones and tasks by +7 days without penalty
  */
 export function applyQuickPlannerAction(
   milestones: Milestone[],
+  tasks: Task[],
   actionType: 'behind' | 'early' | 'pause'
-): Milestone[] {
-  return milestones.map((m) => {
-    if (actionType === 'pause' && m.status !== 'done') {
-      const start = new Date(m.start_date);
-      start.setDate(start.getDate() + 7);
-      const end = new Date(m.end_date);
-      end.setDate(end.getDate() + 7);
-      return {
-        ...m,
-        start_date: start.toISOString().split('T')[0],
-        end_date: end.toISOString().split('T')[0],
-      };
-    }
+): PlannerActionResult {
+  if (milestones.length === 0) {
+    return { updatedMilestones: milestones, updatedTasks: tasks, message: 'No milestones found.' };
+  }
 
-    if (actionType === 'behind' && m.status === 'doing') {
-      const end = new Date(m.end_date);
-      end.setDate(end.getDate() + 3);
-      return {
-        ...m,
-        end_date: end.toISOString().split('T')[0],
-      };
-    }
-
-    if (actionType === 'early' && m.status === 'doing') {
-      return {
-        ...m,
-        status: 'done',
-      };
-    }
-
-    return m;
+  // 1. Identify active milestone (first milestone with incomplete tasks)
+  const activeIdx = milestones.findIndex((m) => {
+    const mTasks = tasks.filter((t) => t.milestone_id === m.id);
+    return mTasks.length > 0 && mTasks.some((t) => t.done_at == null);
   });
+  if (activeIdx === -1) {
+    return {
+      updatedMilestones: milestones,
+      updatedTasks: tasks,
+      message: 'All roadmap stages are already 100% completed! 🏆',
+    };
+  }
+  const currentIdx = activeIdx;
+  const activeMilestone = milestones[currentIdx];
+
+  // 2. Action: 'early' (Finished Early)
+  if (actionType === 'early') {
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.split('T')[0];
+
+    // Complete all remaining tasks for the active milestone
+    const updatedTasks = tasks.map((t) => {
+      if (t.milestone_id === activeMilestone.id && t.done_at == null) {
+        return {
+          ...t,
+          done_at: nowIso,
+          progress_pct: 100,
+        };
+      }
+      return t;
+    });
+
+    // Mark current milestone done; pull next forward if exists
+    const nextMilestone = milestones[currentIdx + 1];
+    const updatedMilestones = milestones.map((m, idx) => {
+      if (idx === currentIdx) {
+        return { ...m, status: 'done' as const };
+      }
+      if (idx === currentIdx + 1) {
+        const origStart = new Date(m.start_date).getTime();
+        const origEnd = new Date(m.end_date).getTime();
+        const durationDays = !isNaN(origStart) && !isNaN(origEnd) && origEnd > origStart
+          ? Math.max(3, Math.round((origEnd - origStart) / (1000 * 60 * 60 * 24)))
+          : 7;
+        return {
+          ...m,
+          status: 'doing' as const,
+          start_date: todayStr,
+          end_date: addDaysToDateStr(todayStr, durationDays),
+        };
+      }
+      return m;
+    });
+
+    // Rebalance due dates of next stage tasks starting from today
+    let finalUpdatedTasks = updatedTasks;
+    if (nextMilestone) {
+      const nextTasks = updatedTasks.filter((t) => t.milestone_id === nextMilestone.id);
+      const taskCount = nextTasks.length;
+      finalUpdatedTasks = updatedTasks.map((t) => {
+        if (t.milestone_id === nextMilestone.id && t.done_at == null) {
+          const taskIdx = nextTasks.findIndex((nt) => nt.id === t.id);
+          const daysOffset = Math.floor(taskIdx * (7 / Math.max(1, taskCount))) + 1;
+          return {
+            ...t,
+            due_date: addDaysToDateStr(todayStr, daysOffset),
+          };
+        }
+        return t;
+      });
+    }
+
+    const isLast = currentIdx >= milestones.length - 1;
+    const msg = isLast
+      ? '🏆 Amazing! Final stage completed early! You conquered your entire career roadmap!'
+      : `🚀 Stage ${currentIdx + 1} completed early! Stage ${currentIdx + 2} pulled forward.`;
+
+    return {
+      updatedMilestones,
+      updatedTasks: finalUpdatedTasks,
+      message: msg,
+    };
+  }
+
+  // 3. Action: 'behind' (I'm Behind +3d)
+  if (actionType === 'behind') {
+    const daysToAdd = 3;
+
+    // Shift active milestone end date, and shift start & end of all subsequent milestones
+    const updatedMilestones = milestones.map((m, idx) => {
+      if (idx === currentIdx) {
+        return {
+          ...m,
+          end_date: addDaysToDateStr(m.end_date, daysToAdd),
+        };
+      }
+      if (idx > currentIdx) {
+        return {
+          ...m,
+          start_date: addDaysToDateStr(m.start_date, daysToAdd),
+          end_date: addDaysToDateStr(m.end_date, daysToAdd),
+        };
+      }
+      return m;
+    });
+
+    // Shift task due dates for active and future milestones
+    const shiftedMilestoneIds = new Set(milestones.slice(currentIdx).map((m) => m.id));
+    const updatedTasks = tasks.map((t) => {
+      if (shiftedMilestoneIds.has(t.milestone_id) && t.done_at == null) {
+        return {
+          ...t,
+          due_date: addDaysToDateStr(t.due_date, daysToAdd),
+        };
+      }
+      return t;
+    });
+
+    return {
+      updatedMilestones,
+      updatedTasks,
+      message: `📅 Stage ${currentIdx + 1} extended by +3 days. Upcoming dates rebalanced without stress!`,
+    };
+  }
+
+  // 4. Action: 'pause' (Pause Week +7d)
+  if (actionType === 'pause') {
+    const daysToAdd = 7;
+
+    // Shift start & end of active and all subsequent milestones
+    const updatedMilestones = milestones.map((m, idx) => {
+      if (idx >= currentIdx) {
+        return {
+          ...m,
+          start_date: addDaysToDateStr(m.start_date, daysToAdd),
+          end_date: addDaysToDateStr(m.end_date, daysToAdd),
+        };
+      }
+      return m;
+    });
+
+    // Shift uncompleted tasks due dates
+    const shiftedMilestoneIds = new Set(milestones.slice(currentIdx).map((m) => m.id));
+    const updatedTasks = tasks.map((t) => {
+      if (shiftedMilestoneIds.has(t.milestone_id) && t.done_at == null) {
+        return {
+          ...t,
+          due_date: addDaysToDateStr(t.due_date, daysToAdd),
+        };
+      }
+      return t;
+    });
+
+    return {
+      updatedMilestones,
+      updatedTasks,
+      message: '⏸️ Schedule paused for 7 days. Dates shifted without breaking your streak.',
+    };
+  }
+
+  return { updatedMilestones: milestones, updatedTasks: tasks, message: 'No changes applied.' };
 }
