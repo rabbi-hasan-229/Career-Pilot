@@ -35,6 +35,20 @@ interface Props {
   ) => void;
 }
 
+const PRESET_TIMELINES = [
+  { label: '3 Mo', months: 3, fullLabel: '3 Months (Fast Track)' },
+  { label: '6 Mo', months: 6, fullLabel: '6 Months (Recommended Standard)' },
+  { label: '9 Mo', months: 9, fullLabel: '9 Months (Steady Pace)' },
+  { label: '12 Mo', months: 12, fullLabel: '12 Months (1 Year Comprehensive)' },
+  { label: '18+ Mo', months: 18, fullLabel: '18 Months (Extended Mastery)' },
+];
+
+function calculateTargetDate(months: number): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split('T')[0];
+}
+
 export const RoleQuestSelectorModal: React.FC<Props> = ({
   currentRoleSlug,
   onClose,
@@ -48,12 +62,24 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const dateInputRef = useRef<HTMLInputElement>(null);
 
-  // Default target date: 90 days from now (lazy initialized)
-  const [targetDateStr, setTargetDateStr] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 90);
-    return d.toISOString().split('T')[0];
+  // Timeline preset: 3, 6, 9, 12, 18 months or 'custom'
+  const [selectedTimelinePreset, setSelectedTimelinePreset] = useState<number | 'custom'>(6);
+
+  // Default target date: 6 months from now
+  const [targetDateStr, setTargetDateStr] = useState<string>(() => {
+    return calculateTargetDate(6);
   });
+
+  const handleSelectPreset = (months: number) => {
+    setSelectedTimelinePreset(months);
+    setTargetDateStr(calculateTargetDate(months));
+  };
+
+  const handleCustomDateChange = (newDate: string) => {
+    if (!newDate) return;
+    setTargetDateStr(newDate);
+    setSelectedTimelinePreset('custom');
+  };
 
   // Filter 200+ careers
   const filteredCareers = useMemo(() => {
@@ -98,7 +124,10 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
   }, [targetDateStr, selectedRole.effortHours, dailyMinutes]);
 
   const handleConfirm = () => {
-    const months = Math.max(1, Math.round(totalDays / 30));
+    const months =
+      typeof selectedTimelinePreset === 'number'
+        ? selectedTimelinePreset
+        : Math.max(1, Math.round(totalDays / 30));
     const milestones = generateRoadmapForRole(selectedRole.title, months, dailyMinutes);
     onSelectNewPlan(selectedRole.title, targetDateStr, dailyMinutes, milestones);
   };
@@ -641,26 +670,110 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
               className="career-controls-row"
               style={{
                 display: 'grid',
-                gridTemplateColumns: '1.1fr 1fr',
+                gridTemplateColumns: '1.2fr 1fr',
                 gap: '16px',
                 marginBottom: '16px',
               }}
             >
-              {/* Target Completion Deadline */}
+              {/* Target Completion (Presets + Custom Deadline) */}
               <div>
-                <label
+                <div
                   style={{
-                    display: 'block',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    color: '#64748B',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
                     marginBottom: '6px',
                   }}
                 >
-                  Target Completion Deadline
-                </label>
+                  <label
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      color: '#64748B',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    Target Completion Deadline
+                  </label>
+                  <span
+                    style={{
+                      fontSize: '10.5px',
+                      fontWeight: 700,
+                      color: selectedTimelinePreset === 'custom' ? '#D97706' : '#2563EB',
+                      background: selectedTimelinePreset === 'custom' ? '#FEF3C7' : '#EFF6FF',
+                      padding: '2px 7px',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    {selectedTimelinePreset === 'custom'
+                      ? 'Custom Deadline'
+                      : `${selectedTimelinePreset} Months (${totalDays}d)`}
+                  </span>
+                </div>
+
+                {/* Preset Time Buttons (3, 6, 9, 12, 18+ Months & Custom) */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(6, 1fr)',
+                    gap: '4px',
+                    marginBottom: '8px',
+                  }}
+                >
+                  {PRESET_TIMELINES.map((preset) => {
+                    const isSelected = selectedTimelinePreset === preset.months;
+                    return (
+                      <button
+                        key={preset.months}
+                        type="button"
+                        onClick={() => handleSelectPreset(preset.months)}
+                        title={preset.fullLabel}
+                        style={{
+                          padding: '7px 0',
+                          borderRadius: '8px',
+                          border: isSelected ? '1.5px solid #1D4ED8' : '1px solid #E2E8F0',
+                          background: isSelected ? '#0F2744' : '#F8FAFC',
+                          color: isSelected ? '#FFFFFF' : '#334155',
+                          fontWeight: isSelected ? 800 : 700,
+                          fontSize: '11px',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          textAlign: 'center',
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+
+                  {/* Custom Date Option */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedTimelinePreset('custom');
+                      dateInputRef.current?.showPicker?.();
+                    }}
+                    title="Choose custom calendar deadline"
+                    style={{
+                      padding: '7px 0',
+                      borderRadius: '8px',
+                      border:
+                        selectedTimelinePreset === 'custom' ? '1.5px solid #D97706' : '1px solid #E2E8F0',
+                      background: selectedTimelinePreset === 'custom' ? '#D97706' : '#F8FAFC',
+                      color: selectedTimelinePreset === 'custom' ? '#FFFFFF' : '#334155',
+                      fontWeight: selectedTimelinePreset === 'custom' ? 800 : 700,
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      textAlign: 'center',
+                    }}
+                  >
+                    Custom
+                  </button>
+                </div>
+
+                {/* Date Display and Picker Card */}
                 <div
                   onClick={() => dateInputRef.current?.showPicker?.()}
                   style={{
@@ -668,25 +781,48 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                     alignItems: 'center',
                     justifyContent: 'space-between',
                     background: '#FFFFFF',
-                    border: '1px solid #E2E8F0',
+                    border: `1.5px solid ${selectedTimelinePreset === 'custom' ? '#F59E0B' : '#E2E8F0'}`,
                     borderRadius: '10px',
-                    padding: '9px 12px',
+                    padding: '8px 12px',
                     cursor: 'pointer',
                     position: 'relative',
+                    boxShadow:
+                      selectedTimelinePreset === 'custom' ? '0 0 0 2px rgba(245, 158, 11, 0.15)' : 'none',
+                    transition: 'all 0.15s ease',
                   }}
                 >
-                  <Calendar size={16} color="#2563EB" />
-                  <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F172A' }}>
-                    {formatDisplayDate(targetDateStr)}
-                  </span>
-                  <Calendar size={16} color="#94A3B8" />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Calendar
+                      size={15}
+                      color={selectedTimelinePreset === 'custom' ? '#D97706' : '#2563EB'}
+                    />
+                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#0F172A' }}>
+                      {formatDisplayDate(targetDateStr)}
+                    </span>
+                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>
+                      ({totalWeeks.toFixed(1)} wks · {totalDays} days)
+                    </span>
+                  </div>
 
-                  {/* Hidden Native Date Input */}
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: '#2563EB',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                    }}
+                  >
+                    Change date
+                  </span>
+
                   <input
                     ref={dateInputRef}
                     type="date"
+                    min={new Date().toISOString().split('T')[0]}
                     value={targetDateStr}
-                    onChange={(e) => setTargetDateStr(e.target.value)}
+                    onChange={(e) => handleCustomDateChange(e.target.value)}
                     style={{
                       position: 'absolute',
                       opacity: 0,
@@ -702,20 +838,47 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
 
               {/* Daily Study Commitment */}
               <div>
-                <label
+                <div
                   style={{
-                    display: 'block',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    color: '#64748B',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.04em',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
                     marginBottom: '6px',
                   }}
                 >
-                  Daily Study Commitment
-                </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                  <label
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      color: '#64748B',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    Daily Study Commitment
+                  </label>
+                  <span
+                    style={{
+                      fontSize: '10.5px',
+                      fontWeight: 700,
+                      color: '#166534',
+                      background: '#F0FDF4',
+                      padding: '2px 7px',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    {dailyMinutes} mins / day
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(4, 1fr)',
+                    gap: '6px',
+                    marginBottom: '8px',
+                  }}
+                >
                   {[30, 60, 90, 120].map((mins) => {
                     const isSelected = dailyMinutes === mins;
                     return (
@@ -724,13 +887,13 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                         type="button"
                         onClick={() => setDailyMinutes(mins)}
                         style={{
-                          padding: '8px 0',
+                          padding: '7px 0',
                           borderRadius: '8px',
-                          border: 'none',
-                          background: isSelected ? '#0F2744' : '#F1F5F9',
+                          border: isSelected ? '1.5px solid #1D4ED8' : '1px solid #E2E8F0',
+                          background: isSelected ? '#0F2744' : '#F8FAFC',
                           color: isSelected ? '#FFFFFF' : '#334155',
-                          fontWeight: 700,
-                          fontSize: '12px',
+                          fontWeight: isSelected ? 800 : 700,
+                          fontSize: '11px',
                           cursor: 'pointer',
                           transition: 'all 0.15s ease',
                         }}
@@ -739,6 +902,27 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Commitment Summary Card */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: '10px',
+                    padding: '8px 12px',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Sparkles size={14} color="#2563EB" />
+                    <span style={{ fontSize: '11.5px', color: '#334155', fontWeight: 600 }}>
+                      Study Pace: <strong>{((dailyMinutes * 5) / 60).toFixed(1)} hrs</strong> / weekday
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '10.5px', color: '#64748B' }}>5 days/week</span>
                 </div>
               </div>
             </div>

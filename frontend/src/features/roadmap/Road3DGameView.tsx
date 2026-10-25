@@ -20,20 +20,20 @@ type IconName = 'user' | 'monitor' | 'star' | 'bag' | 'team' | 'target' | 'spark
 const MILESTONE_ICONS: IconName[] = ['user', 'monitor', 'star', 'bag', 'team', 'target', 'layers', 'spark', 'flag', 'trophy'];
 
 // ─── Sizing Constants ──────────────────────────────────────────────────────────
-// Desktop Coordinate System (generous, wide, readable)
-const DESKTOP_REF_WIDTH = 960;
-const DESKTOP_START_Y = 195;
-const DESKTOP_STEP_Y = 220;
-const DESKTOP_LEFT_PIN_X = 365;
-const DESKTOP_RIGHT_PIN_X = 595;
-const DESKTOP_CARD_WIDTH = 325;
-const DESKTOP_LEFT_CARD_X = 22;
-const DESKTOP_RIGHT_CARD_X = 615;
+// Desktop Coordinate System (generous, wide, readable, stage cards clearly beside stoppages)
+const DESKTOP_REF_WIDTH = 1200;
+const DESKTOP_START_Y = 230;
+const DESKTOP_STEP_Y = 250;
+const DESKTOP_LEFT_PIN_X = 480;
+const DESKTOP_RIGHT_PIN_X = 720;
+const DESKTOP_CARD_WIDTH = 370;
+const DESKTOP_LEFT_CARD_X = 35;
+const DESKTOP_RIGHT_CARD_X = 795;
 
 // Mobile Coordinate System (edge-to-edge, compact, readable, clean gap between pin and card)
 const MOBILE_REF_WIDTH = 420;
-const MOBILE_START_Y = 165;
-const MOBILE_STEP_Y = 240;
+const MOBILE_START_Y = 180;
+const MOBILE_STEP_Y = 250;
 const MOBILE_LEFT_PIN_X = 176;
 const MOBILE_RIGHT_PIN_X = 244;
 const MOBILE_CARD_WIDTH = 150;
@@ -73,31 +73,36 @@ function playCarHorn() {
   }
 }
 
-// ─── S-Curve Road Path Generator ───────────────────────────────────────────────
-function generateRoadPath(count: number, isMobile: boolean): { path: string; totalHeight: number } {
+// ─── Road Geometry & Bézier Mathematics ────────────────────────────────────────
+export interface BezierSegment {
+  p0: { x: number; y: number };
+  p1: { x: number; y: number };
+  p2: { x: number; y: number };
+  p3: { x: number; y: number };
+}
+
+export function getRoadSegments(count: number, isMobile: boolean): BezierSegment[] {
   const refWidth = isMobile ? MOBILE_REF_WIDTH : DESKTOP_REF_WIDTH;
   const startY = isMobile ? MOBILE_START_Y : DESKTOP_START_Y;
   const stepY = isMobile ? MOBILE_STEP_Y : DESKTOP_STEP_Y;
   const leftX = isMobile ? MOBILE_LEFT_PIN_X : DESKTOP_LEFT_PIN_X;
   const rightX = isMobile ? MOBILE_RIGHT_PIN_X : DESKTOP_RIGHT_PIN_X;
   const centerX = refWidth / 2;
+  const topRoadY = startY - (isMobile ? 75 : 95);
 
-  // Road start at top center (underneath header banner)
-  const topRoadY = startY - (isMobile ? 70 : 85);
-  let d = `M ${centerX} ${topRoadY}`;
+  const segments: BezierSegment[] = [];
+  if (count === 0) return segments;
 
-  if (count === 0) {
-    d += ` L ${centerX} ${topRoadY + 200}`;
-    return { path: d, totalHeight: topRoadY + 240 };
-  }
+  // Segment 0: Top entrance to milestone 0
+  const initDy = startY - topRoadY;
+  segments.push({
+    p0: { x: centerX, y: topRoadY },
+    p1: { x: centerX + (isMobile ? 18 : 36), y: topRoadY + initDy * 0.42 },
+    p2: { x: rightX + (isMobile ? 8 : 20), y: startY - initDy * 0.42 },
+    p3: { x: rightX, y: startY },
+  });
 
-  // Curve to first milestone pin (index 0 is on the right side)
-  const firstPinX = rightX;
-  const firstPinY = startY;
-  const initDy = firstPinY - topRoadY;
-  d += ` C ${centerX + (isMobile ? 18 : 45)} ${topRoadY + initDy * 0.42}, ${firstPinX + (isMobile ? 8 : 28)} ${firstPinY - initDy * 0.42}, ${firstPinX} ${firstPinY}`;
-
-  // Winding S-curve through all milestones
+  // Segments 1 to count - 1: S-curves connecting milestone i to milestone i + 1
   for (let i = 0; i < count - 1; i += 1) {
     const fromX = i % 2 === 0 ? rightX : leftX;
     const fromY = startY + i * stepY;
@@ -105,24 +110,93 @@ function generateRoadPath(count: number, isMobile: boolean): { path: string; tot
     const toY = startY + (i + 1) * stepY;
     const dy = toY - fromY;
 
-    // Control points curve outward around each milestone apex
-    const cp1X = fromX + (fromX > centerX ? (isMobile ? 14 : 38) : (isMobile ? -14 : -38));
+    const cp1X = fromX + (fromX > centerX ? (isMobile ? 14 : 26) : (isMobile ? -14 : -26));
     const cp1Y = fromY + dy * 0.46;
-    const cp2X = toX + (toX > centerX ? (isMobile ? 14 : 38) : (isMobile ? -14 : -38));
+    const cp2X = toX + (toX > centerX ? (isMobile ? 14 : 26) : (isMobile ? -14 : -26));
     const cp2Y = toY - dy * 0.46;
 
-    d += ` C ${cp1X} ${cp1Y}, ${cp2X} ${cp2Y}, ${toX} ${toY}`;
+    segments.push({
+      p0: { x: fromX, y: fromY },
+      p1: { x: cp1X, y: cp1Y },
+      p2: { x: cp2X, y: cp2Y },
+      p3: { x: toX, y: toY },
+    });
   }
 
-  // Smooth tail off the bottom of the board
+  // Final Segment: Tail exit past the last milestone
   const lastIndex = count - 1;
   const lastPinX = lastIndex % 2 === 0 ? rightX : leftX;
   const lastPinY = startY + lastIndex * stepY;
-  const exitY = lastPinY + (isMobile ? 90 : 120);
+  const exitY = lastPinY + (isMobile ? 150 : 200);
 
-  d += ` C ${lastPinX + (lastPinX > centerX ? (isMobile ? 8 : 20) : (isMobile ? -8 : -20))} ${lastPinY + 45}, ${centerX} ${exitY - 30}, ${centerX} ${exitY}`;
+  segments.push({
+    p0: { x: lastPinX, y: lastPinY },
+    p1: { x: lastPinX + (lastPinX > centerX ? (isMobile ? 8 : 16) : (isMobile ? -8 : -16)), y: lastPinY + 45 },
+    p2: { x: centerX, y: exitY - 30 },
+    p3: { x: centerX, y: exitY },
+  });
 
-  return { path: d, totalHeight: exitY + 30 };
+  return segments;
+}
+
+export function evalBezier(seg: BezierSegment, t: number): { x: number; y: number; angle: number } {
+  const clampedT = Math.max(0, Math.min(1, t));
+  const mt = 1 - clampedT;
+  const mt2 = mt * mt;
+  const mt3 = mt2 * mt;
+  const t2 = clampedT * clampedT;
+  const t3 = t2 * clampedT;
+
+  const x = mt3 * seg.p0.x + 3 * mt2 * clampedT * seg.p1.x + 3 * mt * t2 * seg.p2.x + t3 * seg.p3.x;
+  const y = mt3 * seg.p0.y + 3 * mt2 * clampedT * seg.p1.y + 3 * mt * t2 * seg.p2.y + t3 * seg.p3.y;
+
+  // Tangent derivative B'(t) = (dx, dy)
+  const dx = 3 * mt2 * (seg.p1.x - seg.p0.x) + 6 * mt * clampedT * (seg.p2.x - seg.p1.x) + 3 * t2 * (seg.p3.x - seg.p2.x);
+  const dy = 3 * mt2 * (seg.p1.y - seg.p0.y) + 6 * mt * clampedT * (seg.p2.y - seg.p1.y) + 3 * t2 * (seg.p3.y - seg.p2.y);
+
+  // Exact forward car heading angle (Car SVG points UP at 0deg; road goes DOWN in +Y space)
+  const angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI + 90);
+
+  return { x, y, angle };
+}
+
+export function getParkingPosition(seg: BezierSegment, targetDist: number): { x: number; y: number; angle: number; t: number } {
+  let low = 0.2;
+  let high = 0.98;
+  for (let iter = 0; iter < 14; iter++) {
+    const mid = (low + high) / 2;
+    const pt = evalBezier(seg, mid);
+    const d = Math.hypot(pt.x - seg.p3.x, pt.y - seg.p3.y);
+    if (d > targetDist) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  const bestT = (low + high) / 2;
+  const res = evalBezier(seg, bestT);
+  return { ...res, t: bestT };
+}
+
+// ─── S-Curve Road Path Generator ───────────────────────────────────────────────
+function generateRoadPath(count: number, isMobile: boolean): { path: string; totalHeight: number } {
+  const segments = getRoadSegments(count, isMobile);
+  const refWidth = isMobile ? MOBILE_REF_WIDTH : DESKTOP_REF_WIDTH;
+  const startY = isMobile ? MOBILE_START_Y : DESKTOP_START_Y;
+  const topRoadY = startY - (isMobile ? 75 : 95);
+
+  if (segments.length === 0) {
+    const d = `M ${refWidth / 2} ${topRoadY} L ${refWidth / 2} ${topRoadY + 200}`;
+    return { path: d, totalHeight: topRoadY + 240 };
+  }
+
+  let d = `M ${segments[0].p0.x} ${segments[0].p0.y}`;
+  for (const seg of segments) {
+    d += ` C ${seg.p1.x} ${seg.p1.y}, ${seg.p2.x} ${seg.p2.y}, ${seg.p3.x} ${seg.p3.y}`;
+  }
+
+  const lastSeg = segments[segments.length - 1];
+  return { path: d, totalHeight: lastSeg.p3.y + (isMobile ? 70 : 90) };
 }
 
 // ─── Pilot Roadster (High-Tech Highway Car) ────────────────────────────────────
@@ -374,51 +448,104 @@ export const Road3DGameView: React.FC<Props> = ({
     }
   }, [activeStoppageIndex, showAnnouncement]);
 
-  // Car Road Position & Tangent Heading Angle
-  const carPosition = useMemo(() => {
-    if (milestones.length === 0) {
-      return { x: refWidth / 2, y: startY, angle: 0, index: 0, isFinished: false };
-    }
-
-    const idx = Math.min(activeStoppageIndex, milestones.length - 1);
-    const isAllComplete = milestones.every((m) => {
+  // ── Road Bézier Segments & Car Progression Along the Asphalt ─────────────
+  const isAllComplete = useMemo(() => {
+    if (milestones.length === 0) return false;
+    return milestones.every((m) => {
       const mTasks = tasks.filter((t) => t.milestone_id === m.id);
       return mTasks.length > 0 && mTasks.every((t) => t.done_at != null);
     });
+  }, [milestones, tasks]);
 
-    const pinX = idx % 2 === 0 ? rightPinX : leftPinX;
-    const pinY = startY + idx * stepY;
+  const segments = useMemo(() => {
+    return getRoadSegments(milestones.length, isMobile);
+  }, [milestones.length, isMobile]);
 
-    // Road tangent calculation to steer the car forward along curves
-    let nextX: number;
-    let nextY: number;
+  const targetDist = isMobile ? 38 : 52;
 
-    if (idx < milestones.length - 1) {
-      nextX = (idx + 1) % 2 === 0 ? rightPinX : leftPinX;
-      nextY = startY + (idx + 1) * stepY;
-    } else {
-      nextX = pinX;
-      nextY = pinY + 120;
+  const targetU = useMemo(() => {
+    if (milestones.length === 0 || segments.length === 0) return 0;
+    if (isAllComplete) {
+      // Park victorious on the exit segment past the final milestone
+      return segments.length - 1 + 0.65;
+    }
+    const idx = Math.min(activeStoppageIndex, milestones.length - 1);
+    const parkInfo = getParkingPosition(segments[idx], targetDist);
+    return idx + parkInfo.t;
+  }, [milestones.length, segments, isAllComplete, activeStoppageIndex, targetDist]);
+
+  const [carProgress, setCarProgress] = useState<number>(() => targetU);
+  const currentProgressRef = useRef<number>(targetU);
+
+  // Smoothly drive the car along the exact curved road whenever the target stoppage changes
+  useEffect(() => {
+    const startU = currentProgressRef.current;
+    if (Math.abs(targetU - startU) < 0.001) return;
+
+    const diff = Math.abs(targetU - startU);
+    // Smooth duration proportional to distance along the curves
+    const duration = Math.min(1800, Math.max(900, diff * 750));
+    let startTimestamp: number | null = null;
+    let rafId: number;
+
+    const step = (now: number) => {
+      if (startTimestamp === null) startTimestamp = now;
+      const elapsed = now - startTimestamp;
+      const rawProgress = Math.min(1, elapsed / duration);
+      // Smooth cubic ease-in-out
+      const ease = rawProgress < 0.5
+        ? 4 * rawProgress * rawProgress * rawProgress
+        : 1 - Math.pow(-2 * rawProgress + 2, 3) / 2;
+
+      const currentU = startU + (targetU - startU) * ease;
+      currentProgressRef.current = currentU;
+      setCarProgress(currentU);
+
+      if (rawProgress < 1) {
+        rafId = requestAnimationFrame(step);
+      }
+    };
+
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [targetU]);
+
+  // ── Auto-scroll to Current Stage on Mount / Route Switch ───────────────────
+  const currentStopRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // Scroll to current active stoppage smoothly
+    const timer = setTimeout(() => {
+      if (currentStopRef.current) {
+        currentStopRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+          inline: 'nearest',
+        });
+      }
+    }, 280);
+
+    return () => clearTimeout(timer);
+  }, [activeStoppageIndex]);
+
+  // Car Road Position & Tangent Heading Angle (evaluated directly on the cubic Bézier curve)
+  const carPosition = useMemo(() => {
+    if (segments.length === 0) {
+      return { x: refWidth / 2, y: startY, angle: 180, index: 0, isFinished: false };
     }
 
-    const dx = nextX - pinX;
-    const dy = nextY - pinY;
-    // Standard car SVG points UP. Road goes downward.
-    const angle = Math.round((Math.atan2(dy, dx) * 180) / Math.PI - 90);
-
-    // Offset car to center lane of asphalt
-    const offsetTowardsCenter = isMobile
-      ? idx % 2 === 0 ? -16 : 16
-      : idx % 2 === 0 ? -26 : 26;
+    const s = Math.min(Math.floor(carProgress), segments.length - 1);
+    const t = Math.max(0, Math.min(1, carProgress - s));
+    const pt = evalBezier(segments[s], t);
 
     return {
-      x: pinX + offsetTowardsCenter,
-      y: pinY,
-      angle,
-      index: idx,
+      x: pt.x,
+      y: pt.y,
+      angle: pt.angle,
+      index: activeStoppageIndex,
       isFinished: isAllComplete,
     };
-  }, [activeStoppageIndex, milestones, tasks, refWidth, startY, stepY, rightPinX, leftPinX, isMobile]);
+  }, [carProgress, segments, refWidth, startY, activeStoppageIndex, isAllComplete]);
 
   // Percentage Helpers
   const toPctX = (px: number) => `${(px / refWidth) * 100}%`;
@@ -438,10 +565,11 @@ export const Road3DGameView: React.FC<Props> = ({
                 {roleHeader.line1.split('/')[0]}/
                 <span className="rp-header-accent">{roleHeader.line1.split('/')[1]}</span>
               </>
-            ) : roleHeader.line1}
+            ) : roleHeader.line1}{' '}
+            <span className="rp-header-title-light">{roleHeader.line2}</span>
           </div>
-          <div className="rp-header-subtitle">
-            {roleHeader.line2}
+          <div className="rp-header-guide-sub">
+            Step-by-Step Guide to Becoming a <strong>Job-Ready {roleName}</strong>
           </div>
           <div className="rp-header-progress">
             {milestones.length} milestones ·{' '}
@@ -505,19 +633,6 @@ export const Road3DGameView: React.FC<Props> = ({
           style={{ aspectRatio: `${refWidth} / ${posterHeight}` }}
           aria-label={`${roleName} career roadmap with ${milestones.length} milestones`}
         >
-          {/* ── Poster Heading Banner ── */}
-          <header className="rp-roadmap-heading">
-            <div className="rp-wordmark">
-              {roleHeader.slash ? (
-                <><span>{roleHeader.line1.split('/')[0]}</span><i>/</i><b>{roleHeader.line1.split('/')[1]}</b></>
-              ) : (
-                <><span>{roleHeader.line1}</span></>
-              )}
-            </div>
-            <h1>{roleHeader.line2}</h1>
-            <div className="rp-title-rule" />
-            <p>Step-by-Step Guide to Becoming a <strong>Job-Ready {roleName}</strong></p>
-          </header>
 
           {/* ── SVG Road Art (3D Asphalt Highway) ── */}
           <svg
@@ -579,13 +694,21 @@ export const Road3DGameView: React.FC<Props> = ({
             />
 
             {/* Connector lines from road/pins to goal cards */}
-            {milestones.map((_, index) => {
+            {milestones.map((milestone, index) => {
               const rightSide = index % 2 === 0;
               const pinX = rightSide ? rightPinX : leftPinX;
               const pinY = startY + index * stepY;
               const cardX = rightSide ? rightCardX : leftCardX + cardWidth;
               const path = `M ${pinX} ${pinY} L ${cardX} ${pinY}`;
-              return <path key={`connector-${index}`} className="rp-connector" d={path} />;
+              const milestoneTasks = getTasksForMilestone(milestone.id);
+              const isCompleted = milestoneTasks.length > 0 && milestoneTasks.every((t) => t.done_at != null);
+              return (
+                <path
+                  key={`connector-${index}`}
+                  className={`rp-connector ${isCompleted ? 'completed' : ''}`}
+                  d={path}
+                />
+              );
             })}
           </svg>
 
@@ -612,38 +735,55 @@ export const Road3DGameView: React.FC<Props> = ({
             const pinX = rightSide ? rightPinX : leftPinX;
             const pinY = startY + index * stepY;
             const cardX = rightSide ? rightCardX : leftCardX;
-            const cardTopY = pinY - (isMobile ? 65 : 85);
             const iconName = MILESTONE_ICONS[index % MILESTONE_ICONS.length];
             const milestoneTasks = getTasksForMilestone(milestone.id);
             const doneCount = milestoneTasks.filter((t) => t.done_at != null).length;
-            const isCurrentStoppage = index === carPosition.index;
+            const isCompleted = milestoneTasks.length > 0 && doneCount === milestoneTasks.length;
+            const isCurrentStoppage = index === activeStoppageIndex && !isAllComplete;
+            const isTargetStop = isAllComplete ? index === milestones.length - 1 : isCurrentStoppage;
 
             const cardStyle: CSSProperties = {
               left: toPctX(cardX),
-              top: toPctY(cardTopY),
+              top: toPctY(pinY),
               width: toPctW(cardWidth),
+              transform: 'translateY(-50%)',
             };
 
             return (
               <div className="rp-goal-layer" key={`${index}-${milestone.id}`}>
                 {/* Milestone Pin on the road apex */}
                 <div
-                  className={`rp-milestone ${index % 2 === 0 ? 'blue' : 'purple'} ${isCurrentStoppage ? 'current-stoppage' : ''}`}
+                  ref={isTargetStop ? currentStopRef : null}
+                  className={`rp-milestone ${index % 2 === 0 ? 'blue' : 'purple'} ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
                   style={{
                     left: toPctX(pinX),
                     top: toPctY(pinY),
                   }}
-                  aria-label={`Step ${String(index + 1).padStart(2, '0')}`}
+                  aria-label={`Stage ${String(index + 1).padStart(2, '0')}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
                 >
-                  <span>{String(index + 1).padStart(2, '0')}</span>
-                  {isCurrentStoppage && (
-                    <span className="rp-stoppage-pill">CURRENT STOP</span>
+                  <span className="rp-milestone-num">{String(index + 1).padStart(2, '0')}</span>
+
+                  {/* Completed Checkmark Badge */}
+                  {isCompleted && (
+                    <span className="rp-milestone-completed-badge" aria-label="Completed" title="Completed Stage">
+                      <svg viewBox="0 0 16 16" fill="none" className="rp-badge-check-svg">
+                        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
                   )}
+
+                  {/* Stoppage Pill */}
+                  {isCurrentStoppage ? (
+                    <span className="rp-stoppage-pill">CURRENT STOP</span>
+                  ) : isCompleted ? (
+                    <span className="rp-stoppage-pill completed">COMPLETED</span>
+                  ) : null}
+
                   <i className="rp-milestone-stem" />
                 </div>
 
                 {/* Goal Info Card */}
-                <article className={`rp-goal-copy ${rightSide ? 'right' : 'left'}`} style={cardStyle}>
+                <article className={`rp-goal-copy ${rightSide ? 'right' : 'left'} ${isCompleted ? 'completed' : ''}`} style={cardStyle}>
                   <div className="rp-card-header">
                     <div className="rp-card-title-group">
                       <span className="rp-card-step-kicker">STAGE {String(index + 1).padStart(2, '0')}</span>
@@ -950,9 +1090,9 @@ body.dark .rp-page,
 /* ── HEADER BAR ── */
 .rp-header-bar {
   width: 100%;
-  max-width: 1040px;
+  max-width: 1380px;
   margin: 0 auto;
-  padding: 10px 4px 16px;
+  padding: 8px 4px 18px;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -960,18 +1100,31 @@ body.dark .rp-page,
   gap: 14px;
 }
 .rp-header-info {
-  flex: 1 1 320px;
+  flex: 1 1 340px;
 }
 .rp-header-title {
-  font-size: clamp(26px, 3.5vw, 38px);
+  font-size: clamp(26px, 3.2vw, 36px);
   font-weight: 950;
   letter-spacing: -0.03em;
-  line-height: 1.05;
+  line-height: 1.1;
   color: var(--rp-header-title);
   transition: color 0.25s ease;
 }
 .rp-header-accent {
   color: var(--rp-header-accent);
+}
+.rp-header-title-light {
+  font-weight: 800;
+  color: var(--rp-header-subtitle);
+}
+.rp-header-guide-sub {
+  font-size: 13.5px;
+  color: var(--rp-header-progress);
+  margin-top: 4px;
+}
+.rp-header-guide-sub strong {
+  color: var(--rp-header-title);
+  font-weight: 700;
 }
 .rp-header-subtitle {
   font-size: clamp(15px, 2vw, 20px);
@@ -1093,7 +1246,7 @@ body.dark .rp-page,
 /* ── POSTER SHELL & BOARD ── */
 .rp-poster-shell {
   width: 100%;
-  max-width: 1040px;
+  max-width: 1380px;
   margin: 0 auto;
 }
 
@@ -1253,6 +1406,12 @@ body.dark .rp-page,
   opacity: .85;
   transition: stroke 0.25s ease;
 }
+.rp-connector.completed {
+  stroke: #10B981;
+  stroke-width: 2px;
+  stroke-dasharray: none;
+  opacity: 0.95;
+}
 
 /* ── PILOT ROADSTER VEHICLE ── */
 .rp-car-vehicle {
@@ -1260,9 +1419,7 @@ body.dark .rp-page,
   z-index: 6;
   pointer-events: auto;
   cursor: pointer;
-  transition: left 1.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-              top 1.2s cubic-bezier(0.34, 1.56, 0.64, 1),
-              transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  will-change: left, top, transform;
 }
 
 .rp-car-wrapper {
@@ -1332,7 +1489,7 @@ body.dark .rp-page,
 
 .rp-milestone {
   position: absolute;
-  z-index: 4;
+  z-index: 8; /* Positioned above car (z-index: 6) so stoppage number is NEVER covered */
   transform: translate(-50%, -50%);
   display: flex;
   align-items: center;
@@ -1373,9 +1530,71 @@ body.dark .rp-page,
     border-width: 2.5px;
   }
 }
-.rp-milestone span {
+
+.rp-milestone-num {
   position: relative;
-  z-index: 2;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* Completed Stoppage Pin Styling */
+.rp-milestone.completed {
+  border-color: #10B981 !important;
+  color: #047857;
+  background: #F0FDF4;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.45), 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+:root.dark .rp-milestone.completed,
+[data-theme='dark'] .rp-milestone.completed,
+body.dark .rp-milestone.completed,
+.dark .rp-milestone.completed {
+  border-color: #10B981 !important;
+  color: #6EE7B7;
+  background: #064E3B;
+  box-shadow: 0 0 18px rgba(16, 185, 129, 0.55), 0 4px 14px rgba(0, 0, 0, 0.7);
+}
+
+.rp-milestone-completed-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #10B981;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.55), 0 0 0 2px var(--rp-board-bg);
+  z-index: 5;
+  animation: rpBadgePop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+@media (max-width: 680px) {
+  .rp-milestone-completed-badge {
+    top: -5px;
+    right: -5px;
+    width: 15px;
+    height: 15px;
+  }
+}
+.rp-badge-check-svg {
+  width: 11px;
+  height: 11px;
+}
+@media (max-width: 680px) {
+  .rp-badge-check-svg {
+    width: 9px;
+    height: 9px;
+  }
+}
+@keyframes rpBadgePop {
+  0% { transform: scale(0); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* Current Stoppage Pulse Beacon */
@@ -1396,7 +1615,7 @@ body.dark .rp-page,
 
 .rp-stoppage-pill {
   position: absolute;
-  top: -18px;
+  bottom: -18px;
   left: 50%;
   transform: translateX(-50%);
   background: #2563EB;
@@ -1404,17 +1623,23 @@ body.dark .rp-page,
   font-size: 7.5px;
   font-weight: 800;
   letter-spacing: 0.6px;
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: 9999px;
   white-space: nowrap;
   box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+  z-index: 4;
 }
 @media (max-width: 680px) {
   .rp-stoppage-pill {
-    top: -15px;
+    bottom: -15px;
     font-size: 6.5px;
     padding: 1px 4px;
   }
+}
+
+.rp-stoppage-pill.completed {
+  background: #10B981;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.4);
 }
 
 .rp-milestone-stem {
@@ -1440,6 +1665,10 @@ body.dark .rp-page,
 .rp-milestone.purple .rp-milestone-stem {
   color: var(--rp-pin-purple);
 }
+.rp-milestone.completed .rp-milestone-stem {
+  color: #10B981 !important;
+  background: linear-gradient(180deg, #10B981 30%, transparent 100%) !important;
+}
 
 /* ── GOAL COPY CARDS ── */
 .rp-goal-copy {
@@ -1462,6 +1691,18 @@ body.dark .rp-page,
 .rp-goal-copy:hover {
   border-color: var(--rp-card-hover-border);
   box-shadow: var(--rp-card-hover-shadow);
+  transform: translateY(calc(-50% - 2px));
+}
+.rp-goal-copy.completed {
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.1);
+}
+:root.dark .rp-goal-copy.completed,
+[data-theme='dark'] .rp-goal-copy.completed,
+body.dark .rp-goal-copy.completed,
+.dark .rp-goal-copy.completed {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.15);
 }
 .rp-card-header {
   display: flex;
@@ -1700,7 +1941,7 @@ body.dark .rp-page,
 /* ── GOAL EDITOR / FOOTER SECTION ── */
 .rp-goal-editor {
   width: 100%;
-  max-width: 1040px;
+  max-width: 1380px;
   margin: 24px auto 0;
   padding: 20px 8px 8px;
   border-top: 1px solid var(--rp-footer-border);
