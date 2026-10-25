@@ -7,7 +7,8 @@ export interface Profile {
   phone?: string;
   avatar_url?: string;
   target_role: string;
-  target_timeline_months?: number; // e.g. 3, 6, 9, 12
+  target_timeline_months?: number; // e.g. 3, 6, 9, 12, 18
+  target_completion_date?: string; // ISO date string e.g. '2027-04-17'
   experience_level?: 'beginner' | 'switcher' | 'junior' | 'mid';
   plan: 'free' | 'premium';
   daily_minutes: number;
@@ -16,6 +17,17 @@ export interface Profile {
   created_at: string;
   is_guest?: boolean;
   has_completed_onboarding?: boolean;
+  bio?: string;
+  username?: string;
+  location?: string;
+  portfolio_url?: string;
+  github_url?: string;
+  linkedin_url?: string;
+  notification_daily_reminder?: boolean;
+  notification_milestone_alerts?: boolean;
+  notification_weekly_digest?: boolean;
+  learning_style?: 'hands_on' | 'balanced' | 'fast_track';
+  two_factor_enabled?: boolean;
 }
 
 export interface Role {
@@ -167,4 +179,4 @@ export interface AppNotification {
   actionTab?: ActiveNavTab;
 }
 
-export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills';
+export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills' | 'profile';

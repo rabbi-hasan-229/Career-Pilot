@@ -6,6 +6,7 @@ import {
   TrendingUp,
   Compass,
   ArrowRight,
+  User,
 } from 'lucide-react';
 import type { ActiveNavTab } from '../types';
 
@@ -195,6 +196,39 @@ export const QuickActionSheetModal: React.FC<Props> = ({
                   </div>
                   <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
                     Compare against live industry vacancies in SQL
+                  </div>
+                </div>
+              </div>
+              <ArrowRight size={16} color="var(--md-text-muted)" />
+            </button>
+
+            <button
+              onClick={() => {
+                onSelectTab('profile');
+                onClose();
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 14px',
+                borderRadius: '14px',
+                border: '1px solid var(--md-outline)',
+                background: 'var(--md-surface-variant)',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ background: 'rgba(37, 99, 235, 0.15)', padding: '10px', borderRadius: '12px', color: '#2563EB' }}>
+                  <User size={18} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
+                    Account & Professional Profile
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
+                    Career persona, pacing goals, plan tier & telemetry
                   </div>
                 </div>
               </div>

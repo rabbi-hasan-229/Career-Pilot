@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   Home,
   Calendar,
@@ -13,6 +12,7 @@ import {
   Settings,
   LogOut,
   ShieldCheck,
+  User,
 } from 'lucide-react';
 import type { ActiveNavTab, Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
@@ -49,6 +49,7 @@ export const DesktopSidebar: React.FC<Props> = ({
     { id: 'interview' as ActiveNavTab, label: 'Interview Simulator', icon: Mic2 },
     { id: 'cv' as ActiveNavTab, label: 'CV & Resume Builder', icon: FileText },
     { id: 'skills' as ActiveNavTab, label: 'Skill Gap & Matching', icon: TrendingUp },
+    { id: 'profile' as ActiveNavTab, label: 'Account & Profile', icon: User },
   ];
 
   return (
@@ -268,11 +269,30 @@ export const DesktopSidebar: React.FC<Props> = ({
           justifyContent: 'space-between',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+        <div
+          onClick={() => onChangeTab('profile')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            overflow: 'hidden',
+            cursor: 'pointer',
+            flex: 1,
+            padding: '2px',
+            borderRadius: '8px',
+          }}
+          title="View Account & Profile"
+        >
           <img
             src={profile.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
             alt={profile.full_name}
-            style={{ width: '26px', height: '26px', borderRadius: '50%', flexShrink: 0 }}
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '50%',
+              flexShrink: 0,
+              border: activeTab === 'profile' ? '2px solid #2563EB' : '1px solid var(--md-outline)',
+            }}
           />
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
