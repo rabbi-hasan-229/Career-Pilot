@@ -1,5 +1,10 @@
-import type { Milestone, Task, TaskActionType } from '../../types';
+import type { Milestone, Profile, Task, TaskActionType } from '../../types';
+import { addDaysToDateOnly, addMonthsToDateOnly, daysBetweenDateOnly, getLocalDateOnly } from '../../lib/dateOnly';
 import { getOrCreateCareerBlueprint } from './careerCatalog';
+import type { CareerCategory } from './careerCatalog';
+import type { CareerOption } from './careerCatalog';
+import type { RolePlanOutline } from './careerCatalog';
+import { getCheckpointQuizTemplateId } from './checkpointQuizCatalog';
 
 export interface PlanCalculationResult {
   totalEffortHours: number;
@@ -35,12 +40,12 @@ const UI_UX_24_WEEKS: WeeklyCurriculumItem[] = [
     ],
   },
   {
-    title: 'LEARN ESSENTIAL TOOLS · Figma, Adobe XD & Canva',
-    skills: ['Figma 2024', 'Adobe XD', 'Canva', 'Design Tokens', 'Auto-Layout'],
+    title: 'LEARN ESSENTIAL TOOLS · Figma, Design Tokens & Auto Layout',
+    skills: ['Figma', 'Design Tokens', 'Component Libraries', 'Auto Layout'],
     tasks: [
       { title: 'Master Figma workspace: nested auto-layout, boolean vectors, variables, and styles', type: 'Learn', estMinutes: 60 },
       { title: 'Build responsive button, input, and card component libraries with multi-state variants', type: 'Build', estMinutes: 75 },
-      { title: 'Recreate high-conversion mobile UI screens in Adobe XD & Canva for cross-tool fluency', type: 'Practice', estMinutes: 45 },
+      { title: 'Recreate a mobile product flow in Figma and review it for hierarchy, accessibility, and interaction states', type: 'Practice', estMinutes: 45 },
       { title: 'Week 2 Checkpoint: Publish verified multi-platform component library in Figma', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
@@ -80,8 +85,8 @@ const UI_UX_24_WEEKS: WeeklyCurriculumItem[] = [
     tasks: [
       { title: 'Complete daily UI challenge: rapid design problem-solving under 45-minute timed sprint', type: 'Practice', estMinutes: 45 },
       { title: 'Deploy live responsive personal design portfolio on custom domain showcasing top 3 projects', type: 'Build', estMinutes: 90 },
-      { title: 'Participate in design communities, connect with 10 design leads on LinkedIn & secure internship calls', type: 'Learn', estMinutes: 60 },
-      { title: 'Week 6 Checkpoint: Submit 15 tailored junior/mid product designer applications with customized decks', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Explore design communities and prepare a concise, respectful outreach note that links to relevant portfolio work', type: 'Learn', estMinutes: 60 },
+      { title: 'Week 6 Checkpoint: Prepare a role-specific application package with a reviewed resume and selected case studies', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
   {
@@ -250,18 +255,18 @@ const UI_UX_24_WEEKS: WeeklyCurriculumItem[] = [
     tasks: [
       { title: 'Rewrite resume bullets using Action + Context + Quantifiable Metric format', type: 'Learn', estMinutes: 60 },
       { title: 'Optimize LinkedIn profile headline, featured section & case study links', type: 'Build', estMinutes: 75 },
-      { title: 'Identify top 30 target companies actively hiring UI/UX & Product Designers', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 23 Checkpoint: Pass 90+ ATS score on resume scanner', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Build a focused list of organizations whose open roles match your experience and portfolio evidence', type: 'Practice', estMinutes: 60 },
+      { title: 'Week 23 Checkpoint: Review a role-specific resume for truthful claims, relevant evidence, and readable structure', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
   {
-    title: 'Job-Ready Launch: 20+ Targeted Applications & Outreach',
+    title: 'Career Launch: Targeted Applications & Outreach',
     skills: ['Job Applications', 'Cold Outreach', 'Referral Networking', 'Interview Sprint'],
     tasks: [
-      { title: 'Submit 20 tailored applications with personalized portfolio teaser links', type: 'Learn', estMinutes: 60 },
-      { title: 'Send 10 thoughtful LinkedIn messages to design leads and engineering managers', type: 'Build', estMinutes: 90 },
+      { title: 'Select suitable roles and tailor an application using relevant portfolio evidence', type: 'Learn', estMinutes: 60 },
+      { title: 'Draft a thoughtful outreach message that explains your interest and links to relevant work', type: 'Build', estMinutes: 90 },
       { title: 'Prepare answers for top 10 behavioral & design philosophy interview questions', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 24 Checkpoint: Complete final mock interview and secure initial screenings', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Week 24 Checkpoint: Complete a final mock interview and document the next improvements for your job search', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
 ];
@@ -287,7 +292,7 @@ const SOFTWARE_WEB_24_WEEKS: WeeklyCurriculumItem[] = [
       { title: 'Analyze microtask vs macrotask execution order in V8 engine', type: 'Learn', estMinutes: 60 },
       { title: 'Build high-concurrency async batch worker pool with rate limiting', type: 'Build', estMinutes: 90 },
       { title: 'Profile memory leaks and heap allocations using Chrome DevTools', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 2 Checkpoint: Pass 1,000 req/sec benchmark with zero memory leak', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Week 2 Checkpoint: Run a repeatable load and memory profile, then document the baseline, limits, and next optimization', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
   {
@@ -297,7 +302,7 @@ const SOFTWARE_WEB_24_WEEKS: WeeklyCurriculumItem[] = [
       { title: 'Master Server vs Client Component boundaries and data serialization', type: 'Learn', estMinutes: 60 },
       { title: 'Build async Server Action mutation flow with useOptimistic UI updates', type: 'Build', estMinutes: 90 },
       { title: 'Implement streaming UI skeletons with nested Suspense boundaries', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 3 Checkpoint: Deploy streaming React 19 app with sub-100ms FCP', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Week 3 Checkpoint: Deploy a small React application, measure its loading experience, and record evidence-based improvements', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
   {
@@ -317,7 +322,7 @@ const SOFTWARE_WEB_24_WEEKS: WeeklyCurriculumItem[] = [
       { title: 'Audit keyboard navigation, focus trap and ARIA attributes on modals', type: 'Learn', estMinutes: 60 },
       { title: 'Build accessible command menu (Cmd+K) with Radix UI and Tailwind CSS', type: 'Build', estMinutes: 90 },
       { title: 'Stress test layouts on ultra-wide desktop and mobile touch devices', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 5 Checkpoint: Pass automated Axe accessibility audit with 100%', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Week 5 Checkpoint: Review key flows with an automated accessibility scan and keyboard checks; document and prioritize findings', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
   {
@@ -501,13 +506,13 @@ const SOFTWARE_WEB_24_WEEKS: WeeklyCurriculumItem[] = [
     ],
   },
   {
-    title: 'Job-Ready Launch: 25+ Targeted Applications & Referral Outreach',
+    title: 'Career Launch: Targeted Applications & Referral Outreach',
     skills: ['Job Outreach', 'Networking', 'Salary Negotiation', 'Behavioral Interviews'],
     tasks: [
-      { title: 'Submit 25 customized applications to high-growth engineering teams', type: 'Learn', estMinutes: 60 },
-      { title: 'Reach out to 15 engineering managers and alumni for warm referrals', type: 'Build', estMinutes: 90 },
+      { title: 'Identify suitable engineering roles and tailor an application around relevant project evidence', type: 'Learn', estMinutes: 60 },
+      { title: 'Draft a concise outreach note for an engineering peer, alumni contact, or recruiter', type: 'Build', estMinutes: 90 },
       { title: 'Rehearse STAR behavioral interview responses for leadership questions', type: 'Practice', estMinutes: 60 },
-      { title: 'Week 24 Checkpoint: Complete first round screenings and secure interviews', type: 'Checkpoint', estMinutes: 60 },
+      { title: 'Week 24 Checkpoint: Complete a mock interview and write a practical follow-up plan for your search', type: 'Checkpoint', estMinutes: 60 },
     ],
   },
 ];
@@ -570,7 +575,7 @@ function generateDynamic24Weeks(roleTitle: string, skills: string[]): WeeklyCurr
         { title: `Implement strict schema validation on all inputs and data payloads`, type: 'Learn', estMinutes: 60 },
         { title: `Construct resilient error boundaries and recovery fallback mechanisms`, type: 'Build', estMinutes: 75 },
         { title: `Write negative test cases covering edge-case failures and exceptions`, type: 'Practice', estMinutes: 45 },
-        { title: `Week 5 Checkpoint: Pass 100% of invalid input fuzz testing cases`, type: 'Checkpoint', estMinutes: 60 },
+        { title: `Week 5 Checkpoint: Run a focused invalid-input and boundary-case review; record coverage and unresolved risks`, type: 'Checkpoint', estMinutes: 60 },
       ],
     },
     {
@@ -756,70 +761,254 @@ function generateDynamic24Weeks(roleTitle: string, skills: string[]): WeeklyCurr
         { title: `Write comprehensive case study articles detailing problem, trade-offs & results`, type: 'Learn', estMinutes: 60 },
         { title: `Polish GitHub README with architecture diagrams and live demo URLs`, type: 'Build', estMinutes: 90 },
         { title: `Optimize resume bullets with quantifiable engineering impact metrics`, type: 'Practice', estMinutes: 60 },
-        { title: `Week 23 Checkpoint: Pass 90+ ATS score on resume scanner`, type: 'Checkpoint', estMinutes: 60 },
+        { title: `Week 23 Checkpoint: Review a role-specific resume for truthful claims, relevant evidence, and readable structure`, type: 'Checkpoint', estMinutes: 60 },
       ],
     },
     {
-      title: `Job-Ready Launch: 25+ Targeted Company Applications & Outreach`,
+      title: `Career Launch: Targeted Applications & Outreach`,
       skills: ['Job Outreach', 'Networking', 'Interview Sprints', 'Employment'],
       tasks: [
-        { title: `Submit 25 customized job applications with personalized portfolio links`, type: 'Learn', estMinutes: 60 },
-        { title: `Send 15 direct outreach messages to engineering managers and recruiters`, type: 'Build', estMinutes: 90 },
+        { title: `Identify suitable roles and tailor applications with relevant portfolio evidence`, type: 'Learn', estMinutes: 60 },
+        { title: `Draft a concise, respectful outreach message that reflects your experience and interests`, type: 'Build', estMinutes: 90 },
         { title: `Rehearse STAR behavioral interview responses for technical leadership`, type: 'Practice', estMinutes: 60 },
-        { title: `Week 24 Checkpoint: Complete first-round screenings and secure interviews`, type: 'Checkpoint', estMinutes: 60 },
+        { title: `Week 24 Checkpoint: Complete a mock interview and document your next job-search actions`, type: 'Checkpoint', estMinutes: 60 },
       ],
     },
   ];
 }
 
+type CareerPracticePlaybook = {
+  focus: [string, string, string, string];
+  build: string;
+  practice: string;
+  evidence: string;
+};
+
+const careerPracticePlaybooks: Partial<Record<CareerOption['category'], CareerPracticePlaybook>> = {
+  'Software & Web': {
+    focus: ['Language, platform, and engineering foundations', 'Role-specific architecture and feature delivery', 'Quality, security, and production reliability', 'Portfolio capstone and technical communication'],
+    build: 'Implement a role-relevant feature with {skill}; include a clear interface, validation, and a maintainable code structure',
+    practice: 'Add automated checks for important success, failure, and boundary cases; review performance and security trade-offs',
+    evidence: 'Share a working code artifact with tests, setup instructions, an architecture note, and a short demonstration',
+  },
+  'UI/UX & Product Design': {
+    focus: ['User context, research, and design foundations', 'Interaction architecture and high-fidelity craft', 'Accessibility, usability validation, and iteration', 'Portfolio case study and stakeholder handoff'],
+    build: 'Create a role-relevant design artifact using {skill}, including states, responsive behavior, and the reasoning behind key decisions',
+    practice: 'Evaluate the work against an accessibility or usability criterion, collect feedback, and document one evidence-led revision',
+    evidence: 'Present the artifact as a case study with user context, design decisions, validation evidence, and implementation handoff notes',
+  },
+  'AI & Data Science': {
+    focus: ['Data foundations and problem framing', 'Baseline analysis and model selection', 'Evaluation, validation, and responsible use', 'Reproducible delivery and communication'],
+    build: 'Create a reproducible analysis or model workflow using {skill}, with documented inputs and assumptions',
+    practice: 'Compare the result with a simple baseline, inspect failure cases, and record what should improve',
+    evidence: 'Present the result, evaluation method, limitations, and a reproducible run of the workflow',
+  },
+  'Cloud & DevOps': {
+    focus: ['Cloud foundations and environment setup', 'Infrastructure as code and deployment workflows', 'Observability, resilience, and cost controls', 'Release operations and incident readiness'],
+    build: 'Provision or deploy a small service using {skill}, with configuration stored and repeatable',
+    practice: 'Exercise rollback, access boundaries, and service health signals; document the observed behavior',
+    evidence: 'Demonstrate a repeatable deployment with architecture notes, health signals, and recovery steps',
+  },
+  Cybersecurity: {
+    focus: ['Security foundations and authorized lab setup', 'Threat modeling and defensive controls', 'Detection, investigation, and response', 'Risk reporting and remediation verification'],
+    build: 'Apply {skill} in an authorized lab or isolated sample system and preserve the findings',
+    practice: 'Review the control against a stated threat, validate the result, and record remaining risk',
+    evidence: 'Submit a scoped security report with evidence, impact, remediation, and a verification result',
+  },
+  'Mobile & Multiplatform': {
+    focus: ['Platform foundations and development workflow', 'Application structure and state management', 'Network, storage, and device capabilities', 'Accessibility, quality, and store readiness'],
+    build: 'Implement a representative mobile feature using {skill} and the selected platform conventions',
+    practice: 'Check behavior across device sizes, network states, accessibility settings, and failure cases',
+    evidence: 'Demo the feature with source code, a test summary, and notes on platform-specific decisions',
+  },
+  'Game Dev & 3D': {
+    focus: ['Engine workflow and interactive fundamentals', 'Gameplay systems and content pipelines', 'Rendering, physics, and performance', 'Playtesting, polish, and release packaging'],
+    build: 'Implement a small playable interaction using {skill} in a versioned prototype',
+    practice: 'Playtest the interaction, inspect performance and usability, then document one iteration',
+    evidence: 'Share a playable build or capture with design notes, test observations, and known limitations',
+  },
+  'Product & Agile Leadership': {
+    focus: ['Customer problems and product context', 'Discovery, prioritization, and product decisions', 'Delivery planning and cross-functional execution', 'Outcome measurement and strategy communication'],
+    build: 'Create a decision artifact using {skill}, such as a research synthesis, prioritized backlog, or experiment brief',
+    practice: 'Review the decision against user evidence, business goals, and delivery constraints; revise assumptions',
+    evidence: 'Present the decision, supporting evidence, success measure, and next action to a stakeholder audience',
+  },
+  'QA & Reliability': {
+    focus: ['Quality strategy and risk analysis', 'Test design and automation foundations', 'Service integration and reliability signals', 'Release confidence and defect learning'],
+    build: 'Create a risk-based test or reliability check using {skill}, with clear setup and expected outcomes',
+    practice: 'Run the check against positive, negative, and boundary cases; triage and document any failures',
+    evidence: 'Deliver a test report with coverage, defects found, residual risks, and release recommendation',
+  },
+  'FinTech & Web3': {
+    focus: ['Financial domain, controls, and user flows', 'Transaction modeling and secure implementation', 'Reconciliation, auditability, and exception handling', 'Risk review and operational readiness'],
+    build: 'Prototype a bounded financial workflow using {skill}, with explicit states and an audit trail',
+    practice: 'Review invalid, duplicate, delayed, and reversed transactions; document control behavior',
+    evidence: 'Demonstrate the workflow with reconciliation evidence, risk notes, and recovery behavior',
+  },
+  'Hardware & Robotics': {
+    focus: ['System fundamentals and safe bench setup', 'Embedded control and component integration', 'Sensing, actuation, and validation', 'Reliability, calibration, and technical handoff'],
+    build: 'Implement a small isolated prototype using {skill} and document its interfaces and constraints',
+    practice: 'Measure behavior under normal and boundary conditions, then capture results and calibration notes',
+    evidence: 'Demo the prototype with a system diagram, measured results, and a safety and limitations summary',
+  },
+  'Enterprise & Applied Tech': {
+    focus: ['Business domain and operating workflows', 'Platform configuration and data foundations', 'Integration, reporting, and access controls', 'Deployment, adoption, and operational support'],
+    build: 'Configure a representative business workflow using {skill}, with roles and data boundaries defined',
+    practice: 'Walk through a standard and exception scenario; review permissions, data quality, and handoffs',
+    evidence: 'Present the workflow, configuration choices, validation record, and user-facing operating guide',
+  },
+};
+
+function generateCareerCurriculum(blueprint: CareerOption): WeeklyCurriculumItem[] {
+  const playbook = careerPracticePlaybooks[blueprint.category];
+  if (!playbook) return generateDynamic24Weeks(blueprint.title, blueprint.skills);
+
+  const defaultSkills = blueprint.skills.length ? blueprint.skills : [blueprint.title];
+  return Array.from({ length: 24 }, (_, weekIndex) => {
+    const phaseIndex = Math.floor(weekIndex / 6);
+    const weekInPhase = (weekIndex % 6) + 1;
+    const stage = blueprint.stages[phaseIndex];
+    const stageSkills = stage?.skills.length ? stage.skills : defaultSkills;
+    const skill = stageSkills[(weekInPhase - 1) % stageSkills.length] || defaultSkills[0];
+    const supportingSkill = stageSkills[weekInPhase % stageSkills.length] || skill;
+    const buildWithSkill = playbook.build.replaceAll('{skill}', skill);
+    const practiceWithSupportingSkill = playbook.practice.replaceAll('{skill}', supportingSkill);
+    const weekPlan = [
+      {
+        focus: 'Baseline and foundations',
+        learn: `Map the purpose, core concepts, prerequisites, and success criteria for ${skill} in ${blueprint.title}`,
+        build: `Complete a bounded baseline exercise with ${skill} and save the result as a starting artifact`,
+        practice: `List assumptions, dependencies, and the first knowledge gaps revealed by the ${skill} exercise`,
+        checkpoint: `Record the baseline artifact, success criteria, and one measurable improvement goal for ${skill}`,
+      },
+      {
+        focus: 'Guided practice',
+        learn: `Explain the core workflow and accepted practices for ${skill}; compare them with the week-one baseline`,
+        build: buildWithSkill,
+        practice: practiceWithSupportingSkill,
+        checkpoint: `Demonstrate the first working ${skill} artifact and explain the key decisions behind it`,
+      },
+      {
+        focus: 'Applied exercise',
+        learn: `Study common patterns and trade-offs when applying ${skill} to a realistic ${blueprint.title} scenario`,
+        build: `Extend the ${skill} artifact to handle a second realistic scenario and document its expected behavior`,
+        practice: `Validate the extended ${skill} work against a realistic scenario and capture any gaps found`,
+        checkpoint: `Show how the ${skill} artifact addresses an end-to-end scenario, including its result and limitations`,
+      },
+      {
+        focus: 'Quality and review',
+        learn: `Review the reliability, safety, accessibility, or quality risks relevant to ${skill} in this role stage`,
+        build: `Refine the ${skill} artifact to address its highest-priority quality or risk finding`,
+        practice: practiceWithSupportingSkill,
+        checkpoint: `Submit validation evidence for ${skill} and list remaining issues in priority order`,
+      },
+      {
+        focus: 'Integrated deliverable',
+        learn: `Plan how ${skill} and ${supportingSkill} work together across the full role workflow`,
+        build: `Integrate ${skill} with ${supportingSkill} in one coherent, role-relevant deliverable`,
+        practice: `Review the integrated deliverable for handoff gaps, failure cases, and consistency between ${skill} and ${supportingSkill}`,
+        checkpoint: `Demonstrate an integrated outcome that uses both ${skill} and ${supportingSkill}`,
+      },
+      {
+        focus: 'Demonstration and reflection',
+        learn: `Review the stage outcomes for ${blueprint.title} and identify what evidence demonstrates progress with ${skill}`,
+        build: `Package a complete stage deliverable demonstrating ${skill}, with context and clear usage or review instructions`,
+        practice: `Collect peer or self-review feedback, address the most important issue, and record a follow-up action`,
+        checkpoint: playbook.evidence.replaceAll('{skill}', skill),
+      },
+    ][weekInPhase - 1];
+
+    return {
+      title: `${stage?.title || `Phase ${phaseIndex + 1}`} · ${stage?.focus || playbook.focus[phaseIndex]} · ${weekPlan.focus}`,
+      skills: [...new Set([skill, supportingSkill])],
+      tasks: [
+        { title: weekPlan.learn, type: 'Learn', estMinutes: 60 },
+        { title: weekPlan.build, type: 'Build', estMinutes: 90 },
+        { title: weekPlan.practice, type: 'Practice', estMinutes: 60 },
+        { title: `Checkpoint: ${weekPlan.checkpoint}`, type: 'Checkpoint', estMinutes: 60 },
+      ],
+    };
+  });
+}
+
 /**
- * Returns an array of exactly `totalWeeks` realistic 1-week goals tailored for the chosen career.
+ * Returns a sequential weekly curriculum adapted to the learner's experience.
  */
 export function getWeeklyCurriculum(
   roleTitle: string,
-  totalWeeks: number
+  totalWeeks: number,
+  experienceLevel: NonNullable<Profile['experience_level']> = 'beginner',
+  roleCategory?: CareerCategory,
+  roleOutline?: RolePlanOutline
 ): WeeklyCurriculumItem[] {
-  const blueprint = getOrCreateCareerBlueprint(roleTitle);
-  const isUIUX =
-    roleTitle.toLowerCase().includes('ui') ||
-    roleTitle.toLowerCase().includes('ux') ||
-    roleTitle.toLowerCase().includes('design');
-  const isSoftwareWeb =
-    blueprint.category === 'Software & Web' ||
-    roleTitle.toLowerCase().includes('full stack') ||
-    roleTitle.toLowerCase().includes('frontend') ||
-    roleTitle.toLowerCase().includes('backend') ||
-    roleTitle.toLowerCase().includes('web');
-
-  // Base 24-week master template
-  const master24: WeeklyCurriculumItem[] = isUIUX
+  const baseBlueprint = getOrCreateCareerBlueprint(roleTitle, roleCategory);
+  const useRoleOutline = roleOutline?.role_title.trim().toLowerCase() === roleTitle.trim().toLowerCase()
+    && roleOutline.milestones.length === 4;
+  const blueprint: CareerOption = useRoleOutline
+    ? {
+      ...baseBlueprint,
+      effortHours: roleOutline.total_hours,
+      skills: [...new Set(roleOutline.milestones.flatMap((milestone) => milestone.skills))],
+      stages: roleOutline.milestones.map((milestone) => ({
+        title: milestone.title,
+        focus: milestone.focus,
+        skills: milestone.skills,
+        effortHours: milestone.effort_hours,
+      })),
+    }
+    : baseBlueprint;
+  // Keep the authored flagship plans for their matching roles; other roles use
+  // their own staged skills and domain playbook instead of inheriting them.
+  const master24: WeeklyCurriculumItem[] = blueprint.slug === 'product-designer'
     ? UI_UX_24_WEEKS
-    : isSoftwareWeb
+    : blueprint.slug === 'full-stack-engineer'
     ? SOFTWARE_WEB_24_WEEKS
-    : generateDynamic24Weeks(blueprint.title, blueprint.skills);
+    : generateCareerCurriculum(blueprint);
 
-  // If exactly 24 weeks, return master
-  if (totalWeeks === 24) {
-    return master24;
+  const foundationWeeksToSkip: Record<NonNullable<Profile['experience_level']>, number> = {
+    beginner: 0,
+    switcher: 1,
+    junior: 4,
+    mid: 8,
+  };
+  const curriculum = master24.slice(foundationWeeksToSkip[experienceLevel]);
+  if (experienceLevel === 'switcher') {
+    curriculum.unshift({
+      title: `Career transition bridge · ${blueprint.title}`,
+      skills: blueprint.skills.slice(0, 3),
+      tasks: [
+        { title: `Review the target role's core responsibilities and identify related experience you already have`, type: 'Learn', estMinutes: 60 },
+        { title: `Map three previous projects or accomplishments to skills required for ${blueprint.title}`, type: 'Build', estMinutes: 75 },
+        { title: `Choose one transferable strength and practice explaining it with a role-specific example`, type: 'Practice', estMinutes: 45 },
+        { title: `Checkpoint: Create a skills-gap plan that separates existing strengths from new learning goals`, type: 'Checkpoint', estMinutes: 60 },
+      ],
+    });
+  }
+  const requestedWeeks = Math.max(1, Math.floor(totalWeeks));
+
+  if (requestedWeeks === curriculum.length) {
+    return curriculum;
   }
 
-  // If fewer weeks (e.g. 12 weeks for 3 months), sample proportionally
-  if (totalWeeks < 24) {
+  // Shorter timelines sample the learner-appropriate sequence from start to finish.
+  if (requestedWeeks < curriculum.length) {
     const sampled: WeeklyCurriculumItem[] = [];
-    for (let w = 0; w < totalWeeks; w++) {
-      const srcIdx = Math.min(23, Math.round((w / (totalWeeks - 1 || 1)) * 23));
-      sampled.push(master24[srcIdx] || master24[0]);
+    for (let w = 0; w < requestedWeeks; w++) {
+      const srcIdx = Math.min(
+        curriculum.length - 1,
+        Math.round((w / (requestedWeeks - 1 || 1)) * (curriculum.length - 1))
+      );
+      sampled.push(curriculum[srcIdx] || curriculum[0]);
     }
     return sampled;
   }
 
-  // If more weeks (e.g. 36 or 48 weeks for 9 or 12 months), expand gracefully
-  const expanded: WeeklyCurriculumItem[] = [...master24];
-  const extraWeeksNeeded = totalWeeks - 24;
+  const expanded: WeeklyCurriculumItem[] = [...curriculum];
+  const extraWeeksNeeded = requestedWeeks - curriculum.length;
 
   for (let i = 0; i < extraWeeksNeeded; i++) {
-    const cycleIdx = i % master24.length;
-    const baseItem = master24[cycleIdx];
+    const cycleIdx = i % curriculum.length;
+    const baseItem = curriculum[cycleIdx];
     expanded.push({
       title: `Advanced Deep-Dive: ${baseItem.title}`,
       skills: [...baseItem.skills, 'Production Mastery'],
@@ -830,36 +1019,136 @@ export function getWeeklyCurriculum(
     });
   }
 
-  return expanded.slice(0, totalWeeks);
+  return expanded.slice(0, requestedWeeks);
+}
+
+function allocateCurriculumEffort(
+  curriculum: WeeklyCurriculumItem[],
+  totalEffortHours: number,
+  roleOutline?: RolePlanOutline
+): WeeklyCurriculumItem[] {
+  const rawMinutes = curriculum.flatMap((week) => week.tasks.map((task) => task.estMinutes || 60));
+  const rawTotal = rawMinutes.reduce((sum, minutes) => sum + minutes, 0);
+  const targetMinutes = Math.max(1, Math.round(totalEffortHours * 60));
+  if (rawTotal <= 0 || rawMinutes.length === 0) return curriculum;
+
+  const hasMatchingOutline = roleOutline?.milestones.length === 4;
+  if (hasMatchingOutline && curriculum.length > 0) {
+    const defaultWeeklyWeight = roleOutline.total_hours / 24;
+    const weeklyWeights = curriculum.map((week) => {
+      const stage = roleOutline.milestones.find((item) => week.title.includes(`${item.title} ·`));
+      return stage ? stage.effort_hours / 6 : defaultWeeklyWeight;
+    });
+    const totalWeight = weeklyWeights.reduce((sum, weight) => sum + weight, 0);
+    let allocatedWeeks = 0;
+    return curriculum.map((week, weekIndex) => {
+      const weekMinutes = weekIndex === curriculum.length - 1
+        ? targetMinutes - allocatedWeeks
+        : Math.max(1, Math.round(targetMinutes * weeklyWeights[weekIndex] / totalWeight));
+      allocatedWeeks += weekMinutes;
+      const rawWeekTotal = week.tasks.reduce((sum, task) => sum + (task.estMinutes || 60), 0);
+      let allocatedTasks = 0;
+      return {
+        ...week,
+        tasks: week.tasks.map((task, taskIndex) => {
+          const isLast = taskIndex === week.tasks.length - 1;
+          const minutes = isLast
+            ? weekMinutes - allocatedTasks
+            : Math.max(1, Math.round((task.estMinutes || 60) * weekMinutes / rawWeekTotal));
+          allocatedTasks += minutes;
+          return { ...task, estMinutes: minutes };
+        }),
+      };
+    });
+  }
+
+  let allocated = 0;
+  return curriculum.map((week, weekIndex) => ({
+    ...week,
+    tasks: week.tasks.map((task, index) => {
+      const isLast = weekIndex === curriculum.length - 1 && index === week.tasks.length - 1;
+      const minutes = isLast
+        ? targetMinutes - allocated
+        : Math.max(1, Math.round((task.estMinutes || 60) * targetMinutes / rawTotal));
+      allocated += minutes;
+      return { ...task, estMinutes: minutes };
+    }),
+  }));
 }
 
 /**
- * Generates the sequential 1-Week Goals for the chosen career and timeline:
- * Exactly 1 week per goal, no matter the timeline size!
- * e.g., 3 months = 12 weekly goals; 6 months = 24 weekly goals.
+ * Calculates time allocation and feasibility using deterministic proportional effort formulas.
+ */
+export function calculateProportionalPlan(
+  roleTitle: string,
+  targetDateStr: string,
+  dailyMinutes: number,
+  experienceLevel: NonNullable<Profile['experience_level']> = 'beginner',
+  roleCategory?: CareerCategory,
+  roleOutline?: RolePlanOutline
+): PlanCalculationResult {
+  const today = getLocalDateOnly();
+  const days = Math.max(14, daysBetweenDateOnly(today, targetDateStr));
+  const weeks = days / 7;
+  const blueprint = getOrCreateCareerBlueprint(roleTitle, roleCategory);
+  const effort = roleOutline?.total_hours ?? blueprint.effortHours;
+  const available = (days * (5 / 7) * dailyMinutes) / 60;
+  const overloaded = available < effort;
+  const reqMins = Math.ceil((effort * 60) / (days * (5 / 7)));
+  const milestones = generateRoadmapForRole(
+    roleTitle,
+    Math.max(1, Math.round(days / 30)),
+    dailyMinutes,
+    targetDateStr,
+    experienceLevel,
+    roleCategory,
+    roleOutline
+  );
+
+  return {
+    totalEffortHours: effort,
+    totalDays: days,
+    totalWeeks: weeks,
+    isOverloaded: overloaded,
+    requiredDailyMinutes: reqMins,
+    milestones,
+  };
+}
+
+/**
+ * Generates sequential, roughly weekly goals that cover the selected calendar
+ * interval. The final milestone ends on the user's requested completion date.
  */
 export function generateRoadmapForRole(
   roleTitle: string,
   timelineMonths: number = 6,
-  dailyMinutes: number = 60
+  _dailyMinutes: number = 60,
+  targetDate?: string,
+  experienceLevel: NonNullable<Profile['experience_level']> = 'beginner',
+  roleCategory?: CareerCategory,
+  roleOutline?: RolePlanOutline
 ): Milestone[] {
-  const blueprint = getOrCreateCareerBlueprint(roleTitle);
-  // Total weeks determined by timeline: 1 week per goal!
-  const totalWeeks = Math.max(4, Math.round(timelineMonths * 4));
-  const weeklyCurriculum = getWeeklyCurriculum(roleTitle, totalWeeks);
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const effortHoursPerWeek = Math.max(3, Math.round((dailyMinutes * 7) / 60));
+  const blueprint = getOrCreateCareerBlueprint(roleTitle, roleCategory);
+  const totalEffortHours = roleOutline?.role_title.trim().toLowerCase() === roleTitle.trim().toLowerCase()
+    && roleOutline.milestones.length === 4
+    ? roleOutline.total_hours
+    : blueprint.effortHours;
+  const today = getLocalDateOnly();
+  const requestedTargetDate = targetDate || addMonthsToDateOnly(today, timelineMonths);
+  const durationDays = Math.max(1, daysBetweenDateOnly(today, requestedTargetDate) + 1);
+  const totalWeeks = Math.max(1, Math.round(durationDays / 7));
+  const weeklyCurriculum = allocateCurriculumEffort(
+    getWeeklyCurriculum(roleTitle, totalWeeks, experienceLevel, blueprint.category, roleOutline),
+    totalEffortHours,
+    roleOutline
+  );
 
   return weeklyCurriculum.map((item, idx) => {
     const weekNum = idx + 1;
-    const startDate = new Date(today);
-    startDate.setDate(startDate.getDate() + idx * 7);
-
-    const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + 6); // Exactly 7 days (e.g. Mon - Sun)
+    const startOffset = Math.round((idx * durationDays) / totalWeeks);
+    const endOffset = Math.max(startOffset, Math.round(((idx + 1) * durationDays) / totalWeeks) - 1);
+    const startDate = addDaysToDateOnly(today, startOffset);
+    const endDate = addDaysToDateOnly(today, endOffset);
 
     // First week is doing by default, rest are todo
     const status: Milestone['status'] = idx === 0 ? 'doing' : 'todo';
@@ -870,10 +1159,10 @@ export function generateRoadmapForRole(
       user_id: 'usr_current',
       title: item.title,
       position: weekNum,
-      start_date: startDate.toISOString().split('T')[0],
-      end_date: endDate.toISOString().split('T')[0],
+      start_date: startDate,
+      end_date: endDate,
       status,
-      effort_hours: effortHoursPerWeek,
+      effort_hours: Math.round(item.tasks.reduce((sum, task) => sum + (task.estMinutes || 60), 0) / 6) / 10,
       week_range: `Week ${weekNum}`,
       skills_covered: item.skills,
     };
@@ -886,21 +1175,34 @@ export function generateRoadmapForRole(
  */
 export function generateTasksForMilestones(
   milestones: Milestone[],
-  roleTitle: string
+  roleTitle: string,
+  experienceLevel: NonNullable<Profile['experience_level']> = 'beginner',
+  roleCategory?: CareerCategory,
+  roleOutline?: RolePlanOutline
 ): Task[] {
   const totalWeeks = milestones.length;
-  const weeklyCurriculum = getWeeklyCurriculum(roleTitle, totalWeeks);
+  const blueprint = getOrCreateCareerBlueprint(roleTitle, roleCategory);
+  const totalEffortHours = roleOutline?.role_title.trim().toLowerCase() === roleTitle.trim().toLowerCase()
+    && roleOutline.milestones.length === 4
+    ? roleOutline.total_hours
+    : blueprint.effortHours;
+  const weeklyCurriculum = allocateCurriculumEffort(
+    getWeeklyCurriculum(roleTitle, totalWeeks, experienceLevel, blueprint.category, roleOutline),
+    totalEffortHours,
+    roleOutline
+  );
   const tasks: Task[] = [];
 
   milestones.forEach((m, mIdx) => {
     const curriculumItem = weeklyCurriculum[mIdx] || weeklyCurriculum[0];
 
     curriculumItem.tasks.forEach((tTemplate, tIdx) => {
-      // First 2 tasks in week 1 are marked done initially so the user has immediate visual momentum
-      const isInitialDone = mIdx === 0 && tIdx < 2;
-
+      const id = `t_${m.id}_${tIdx + 1}`;
+      const quizTemplateId = tTemplate.type === 'Checkpoint'
+        ? getCheckpointQuizTemplateId(blueprint.slug, mIdx, milestones.length, blueprint.category)
+        : undefined;
       tasks.push({
-        id: `t_${m.id}_${tIdx + 1}`,
+        id,
         milestone_id: m.id,
         user_id: m.user_id,
         title: tTemplate.title,
@@ -908,8 +1210,9 @@ export function generateTasksForMilestones(
         type: tTemplate.type,
         due_date: m.end_date,
         est_minutes: tTemplate.estMinutes || 60,
-        progress_pct: isInitialDone ? 100 : 0,
-        done_at: isInitialDone ? new Date().toISOString() : null,
+        progress_pct: 0,
+        done_at: null,
+        quiz_template_id: quizTemplateId,
       });
     });
   });
@@ -924,14 +1227,7 @@ export interface PlannerActionResult {
 }
 
 function addDaysToDateStr(dateStr: string, days: number): string {
-  try {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    d.setDate(d.getDate() + days);
-    return d.toISOString().split('T')[0];
-  } catch {
-    return dateStr;
-  }
+  return addDaysToDateOnly(dateStr, days);
 }
 
 /**
@@ -964,72 +1260,42 @@ export function applyQuickPlannerAction(
   const currentIdx = activeIdx;
   const activeMilestone = milestones[currentIdx];
 
-  // 2. Action: 'early' (Finished Early)
+  // 2. Action: 'early' (pull remaining dates forward without completing work)
   if (actionType === 'early') {
-    const nowIso = new Date().toISOString();
-    const todayStr = nowIso.split('T')[0];
-
-    // Complete all remaining tasks for the active milestone
-    const updatedTasks = tasks.map((t) => {
-      if (t.milestone_id === activeMilestone.id && t.done_at == null) {
-        return {
-          ...t,
-          done_at: nowIso,
-          progress_pct: 100,
-        };
-      }
-      return t;
-    });
-
-    // Mark current milestone done; pull next forward if exists
-    const nextMilestone = milestones[currentIdx + 1];
-    const updatedMilestones = milestones.map((m, idx) => {
-      if (idx === currentIdx) {
-        return { ...m, status: 'done' as const };
-      }
-      if (idx === currentIdx + 1) {
-        const origStart = new Date(m.start_date).getTime();
-        const origEnd = new Date(m.end_date).getTime();
-        const durationDays = !isNaN(origStart) && !isNaN(origEnd) && origEnd > origStart
-          ? Math.max(3, Math.round((origEnd - origStart) / (1000 * 60 * 60 * 24)))
-          : 7;
-        return {
-          ...m,
-          status: 'doing' as const,
-          start_date: todayStr,
-          end_date: addDaysToDateStr(todayStr, durationDays),
-        };
-      }
-      return m;
-    });
-
-    // Rebalance due dates of next stage tasks starting from today
-    let finalUpdatedTasks = updatedTasks;
-    if (nextMilestone) {
-      const nextTasks = updatedTasks.filter((t) => t.milestone_id === nextMilestone.id);
-      const taskCount = nextTasks.length;
-      finalUpdatedTasks = updatedTasks.map((t) => {
-        if (t.milestone_id === nextMilestone.id && t.done_at == null) {
-          const taskIdx = nextTasks.findIndex((nt) => nt.id === t.id);
-          const daysOffset = Math.floor(taskIdx * (7 / Math.max(1, taskCount))) + 1;
-          return {
-            ...t,
-            due_date: addDaysToDateStr(todayStr, daysOffset),
-          };
-        }
-        return t;
-      });
+    const today = getLocalDateOnly();
+    const daysUntilEnd = daysBetweenDateOnly(today, activeMilestone.end_date);
+    const daysToPullForward = Math.min(3, Math.max(0, daysUntilEnd - 1));
+    if (daysToPullForward === 0) {
+      return {
+        updatedMilestones: milestones,
+        updatedTasks: tasks,
+        message: 'The current schedule is already at its earliest dates.',
+      };
     }
 
-    const isLast = currentIdx >= milestones.length - 1;
-    const msg = isLast
-      ? '🏆 Amazing! Final stage completed early! You conquered your entire career roadmap!'
-      : `🚀 Stage ${currentIdx + 1} completed early! Stage ${currentIdx + 2} pulled forward.`;
+    const updatedMilestones = milestones.map((milestone, index) => {
+      if (index < currentIdx) return milestone;
+      const shiftedStart = addDaysToDateStr(milestone.start_date, -daysToPullForward);
+      const shiftedEnd = addDaysToDateStr(milestone.end_date, -daysToPullForward);
+      return {
+        ...milestone,
+        start_date: shiftedStart < today ? today : shiftedStart,
+        end_date: shiftedEnd <= today ? addDaysToDateStr(today, 1) : shiftedEnd,
+      };
+    });
+    const shiftedMilestoneIds = new Set(milestones.slice(currentIdx).map((milestone) => milestone.id));
+    const updatedTasks = tasks.map((task) => {
+      if (shiftedMilestoneIds.has(task.milestone_id) && task.done_at == null) {
+        const dueDate = addDaysToDateStr(task.due_date, -daysToPullForward);
+        return { ...task, due_date: dueDate < today ? today : dueDate };
+      }
+      return task;
+    });
 
     return {
       updatedMilestones,
-      updatedTasks: finalUpdatedTasks,
-      message: msg,
+      updatedTasks,
+      message: `Remaining dates moved forward by ${daysToPullForward} days. Complete tasks to progress.`,
     };
   }
 
