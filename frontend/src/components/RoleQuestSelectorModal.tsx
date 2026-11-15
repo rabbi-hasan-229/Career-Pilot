@@ -18,20 +18,32 @@ import {
 } from 'lucide-react';
 import {
   comprehensiveCareerCatalog,
+  careerCategories,
+  createCustomCareerBlueprint,
   getOrCreateCareerBlueprint,
 } from '../features/roadmap/careerCatalog';
-import type { CareerOption } from '../features/roadmap/careerCatalog';
+import type { CareerCategory, CareerOption } from '../features/roadmap/careerCatalog';
+import type { RolePlanOutline } from '../features/roadmap/careerCatalog';
+import { isRolePlanOutline, requestAI, type AIQuotaSummary } from '../features/ai/aiGateway';
 import { generateRoadmapForRole } from '../features/roadmap/plannerEngine';
-import type { Milestone } from '../types';
+import type { Milestone, Profile } from '../types';
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
+import { addMonthsToDateOnly, daysBetweenDateOnly, getLocalDateOnly } from '../lib/dateOnly';
 
 interface Props {
   currentRoleSlug: string;
+  experienceLevel: Profile['experience_level'];
+  isDemo?: boolean;
+  aiQuota?: AIQuotaSummary | null;
+  onAIUsageChanged?: () => Promise<void> | void;
   onClose: () => void;
   onSelectNewPlan: (
     roleTitle: string,
+    roleCategory: CareerCategory,
     targetDate: string,
     dailyMinutes: number,
-    milestones: Milestone[]
+    milestones: Milestone[],
+    roleOutline?: RolePlanOutline
   ) => void;
 }
 
@@ -44,22 +56,31 @@ const PRESET_TIMELINES = [
 ];
 
 function calculateTargetDate(months: number): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() + months);
-  return d.toISOString().split('T')[0];
+  return addMonthsToDateOnly(getLocalDateOnly(), months);
 }
 
 export const RoleQuestSelectorModal: React.FC<Props> = ({
   currentRoleSlug,
+  experienceLevel,
+  isDemo = false,
+  aiQuota,
+  onAIUsageChanged,
   onClose,
   onSelectNewPlan,
 }) => {
+  const dialogRef = useAccessibleDialog(true, onClose);
+  const [today] = useState(() => getLocalDateOnly());
   const [selectedSlug, setSelectedSlug] = useState(
     currentRoleSlug || 'serverless-application-engineer'
   );
   const [dailyMinutes, setDailyMinutes] = useState(60);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [customRoleTitle, setCustomRoleTitle] = useState('');
+  const [customRoleCategory, setCustomRoleCategory] = useState<CareerCategory>('Software & Web');
+  const [roleOutline, setRoleOutline] = useState<RolePlanOutline | null>(null);
+  const [isDraftingRole, setIsDraftingRole] = useState(false);
+  const [roleDraftError, setRoleDraftError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   // Timeline preset: 3, 6, 9, 12, 18 months or 'custom'
@@ -101,16 +122,49 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
 
   // Proportional math calculation
   const selectedRole = useMemo(() => {
+    if (customRoleTitle) return createCustomCareerBlueprint(customRoleTitle, customRoleCategory);
     return getOrCreateCareerBlueprint(selectedSlug);
-  }, [selectedSlug]);
+  }, [customRoleCategory, customRoleTitle, selectedSlug]);
+
+  const selectCustomRole = () => {
+    const title = searchQuery.trim().replace(/\s+/g, ' ');
+    if (!title) return;
+    setCustomRoleTitle(title);
+    setRoleOutline(null);
+    setRoleDraftError(null);
+    setSelectedSlug(title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''));
+    setSelectedCategory('all');
+  };
+
+  const handleDraftRoleOutline = async () => {
+    if (!customRoleTitle || isDraftingRole || isDemo) return;
+    setIsDraftingRole(true);
+    setRoleDraftError(null);
+    try {
+      const result = await requestAI<RolePlanOutline>('role', {
+        role_title: customRoleTitle,
+        experience_level: experienceLevel || 'beginner',
+        category: customRoleCategory,
+        skills: selectedRole.skills.join(', '),
+      });
+      const outline = result.response;
+      if (!isRolePlanOutline(outline, customRoleTitle)) {
+        throw new Error('The generated outline did not pass validation. You can still use the category playbook.');
+      }
+      setRoleOutline(outline);
+    } catch (error) {
+      setRoleOutline(null);
+      setRoleDraftError(error instanceof Error ? error.message : 'Could not draft the role outline. You can still use the category playbook.');
+    } finally {
+      setIsDraftingRole(false);
+      await onAIUsageChanged?.();
+    }
+  };
 
   const { totalDays, totalWeeks, totalEffortHours, isOverloaded, requiredDailyMinutes } = useMemo(() => {
-    const targetDate = new Date(targetDateStr);
-    const today = new Date();
-    const diffTime = targetDate.getTime() - today.getTime();
-    const days = Math.max(14, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+    const days = Math.max(14, daysBetweenDateOnly(today, targetDateStr));
     const weeks = days / 7;
-    const effort = selectedRole.effortHours;
+    const effort = roleOutline?.total_hours ?? selectedRole.effortHours;
     const available = (days * (5 / 7) * dailyMinutes) / 60;
     const overloaded = available < effort;
     const reqMins = Math.ceil((effort * 60) / (days * (5 / 7)));
@@ -121,28 +175,33 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
       isOverloaded: overloaded,
       requiredDailyMinutes: reqMins,
     };
-  }, [targetDateStr, selectedRole.effortHours, dailyMinutes]);
+  }, [targetDateStr, selectedRole.effortHours, roleOutline?.total_hours, dailyMinutes, today]);
 
   const handleConfirm = () => {
     const months =
       typeof selectedTimelinePreset === 'number'
         ? selectedTimelinePreset
         : Math.max(1, Math.round(totalDays / 30));
-    const milestones = generateRoadmapForRole(selectedRole.title, months, dailyMinutes);
-    onSelectNewPlan(selectedRole.title, targetDateStr, dailyMinutes, milestones);
+    const milestones = generateRoadmapForRole(
+      selectedRole.title,
+      months,
+      dailyMinutes,
+      targetDateStr,
+      experienceLevel || 'beginner',
+      selectedRole.category,
+      roleOutline ?? undefined
+    );
+    onSelectNewPlan(selectedRole.title, selectedRole.category, targetDateStr, dailyMinutes, milestones, roleOutline ?? undefined);
   };
 
   const formatDisplayDate = (isoStr: string) => {
-    try {
-      const d = new Date(isoStr);
-      const day = String(d.getDate()).padStart(2, '0');
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const month = months[d.getMonth()] || 'Jan';
-      const year = d.getFullYear();
-      return `${day} - ${month} - ${year}`;
-    } catch {
-      return isoStr;
-    }
+    const [year, monthNumber, dayNumber] = isoStr.split('-').map(Number);
+    if (!year || !monthNumber || !dayNumber) return isoStr;
+    const d = new Date(year, monthNumber - 1, dayNumber);
+    const day = String(d.getDate()).padStart(2, '0');
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[d.getMonth()] || 'Jan';
+    return `${day} - ${month} - ${d.getFullYear()}`;
   };
 
   const getRoleIcon = (role: CareerOption) => {
@@ -361,7 +420,12 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
     >
       {/* Modal Dialog Window */}
       <div
+        ref={dialogRef}
         className="career-path-window"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose a career goal"
+        tabIndex={-1}
         style={{
           maxWidth: '1060px',
           width: '100%',
@@ -442,7 +506,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                     marginBottom: '4px',
                   }}
                 >
-                  Career Roadmaps
+                  Career Pilot
                 </div>
                 <h2
                   style={{
@@ -456,7 +520,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                   Choose your career path
                 </h2>
                 <div style={{ fontSize: '12px', color: '#64748B' }}>
-                  Browse 200+ tech roadmaps with zero-cost math engine
+                  Explore curated roles or create a custom path shaped to your goals.
                 </div>
               </div>
 
@@ -477,7 +541,9 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                   <Search size={14} color="#94A3B8" />
                   <input
                     type="text"
+                    aria-label="Search career roles"
                     placeholder="Search 200+ careers (e.g. Next.js, DevOps, AI)..."
+                    data-dialog-initial-focus
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     style={{
@@ -608,11 +674,23 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
               }}
             >
               {filteredCareers.map((role) => {
-                const isSelected = selectedRole.slug === role.slug;
+                const isSelected = !customRoleTitle && selectedRole.slug === role.slug;
                 return (
                   <div
                     key={role.id}
-                    onClick={() => setSelectedSlug(role.slug)}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    onClick={() => { setCustomRoleTitle(''); setRoleOutline(null); setRoleDraftError(null); setSelectedSlug(role.slug); }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setCustomRoleTitle('');
+                        setRoleOutline(null);
+                        setRoleDraftError(null);
+                        setSelectedSlug(role.slug);
+                      }
+                    }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -656,7 +734,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                           borderRadius: '6px',
                         }}
                       >
-                        {role.effortHours}h · {role.stages.length} stages
+                        {role.effortHours}h
                       </span>
                       <ChevronRight size={14} color={isSelected ? '#2563EB' : '#94A3B8'} />
                     </div>
@@ -664,6 +742,101 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                 );
               })}
             </div>
+
+            {customRoleTitle && (
+              <section
+                aria-label="Custom role learning plan"
+                style={{ margin: '-6px 0 18px', padding: '14px', border: '1px solid #C7D2FE', borderRadius: '12px', background: '#F8FAFF' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 260px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F2744' }}>Personalize this custom role</div>
+                    <p style={{ fontSize: '11px', color: '#64748B', lineHeight: 1.45, margin: '4px 0 0' }}>
+                      The category playbook is the default. You can request a role-specific outline; its four reviewed stages and skills will shape your saved milestones and tasks.
+                    </p>
+                    <p style={{ fontSize: '10.5px', color: '#64748B', margin: '5px 0 0' }}>
+                      Only the role title, experience level, category, and baseline skills are sent when you request an outline.
+                      {aiQuota?.role ? ` ${aiQuota.role.remaining} of ${aiQuota.role.limit} weekly requests remain.` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleDraftRoleOutline()}
+                    disabled={isDemo || isDraftingRole || (aiQuota?.role?.remaining ?? 1) <= 0}
+                    style={{ minHeight: '38px', padding: '0 13px', border: '1px solid #A5B4FC', borderRadius: '9px', background: '#FFFFFF', color: '#3730A3', fontWeight: 800, cursor: isDemo || isDraftingRole ? 'wait' : 'pointer' }}
+                  >
+                    {isDraftingRole ? 'Drafting outline…' : roleOutline ? 'Draft a new outline' : 'Draft AI outline'}
+                  </button>
+                </div>
+                {isDemo && <p style={{ fontSize: '11px', color: '#64748B', margin: '9px 0 0' }}>AI outlines are available after you sign in. The category playbook works in demo mode.</p>}
+                {roleDraftError && <p role="alert" style={{ fontSize: '11px', color: '#B91C1C', margin: '9px 0 0' }}>{roleDraftError}</p>}
+                {roleOutline && (
+                  <div aria-live="polite" style={{ display: 'grid', gap: '8px', marginTop: '12px' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 800, color: '#3730A3' }}>
+                      AI draft · {roleOutline.total_hours} estimated hours · included in the roadmap if applied
+                    </div>
+                    {roleOutline.milestones.map((milestone) => (
+                      <article key={milestone.position} style={{ padding: '9px 10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E0E7FF' }}>
+                        <div style={{ fontSize: '11px', fontWeight: 800, color: '#1E293B' }}>Stage {milestone.position}: {milestone.title}</div>
+                        <div style={{ fontSize: '10.5px', color: '#475569', marginTop: '3px' }}>{milestone.focus}</div>
+                        <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px' }}>{milestone.skills.join(' · ')} · {milestone.effort_hours}h</div>
+                      </article>
+                    ))}
+                    <p style={{ fontSize: '10px', color: '#64748B', margin: 0 }}>Review this AI-generated draft before applying it. It is a learning suggestion, not verified labor-market research.</p>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {filteredCareers.length === 0 && searchQuery.trim() && (
+              <section
+                aria-label="Create a custom career roadmap"
+                className="career-custom-role-create"
+                style={{
+                  display: 'grid',
+                  alignItems: 'end',
+                  gap: '12px',
+                  padding: '14px',
+                  marginBottom: '18px',
+                  borderRadius: '12px',
+                  border: '1px solid #BFDBFE',
+                  background: '#F8FBFF',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F2744' }}>Create a custom role</div>
+                  <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>
+                    Starts from a category playbook. After selecting the role, you can optionally request a role-specific AI outline.
+                  </p>
+                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#1D4ED8', marginTop: '6px' }}>
+                    {searchQuery.trim().replace(/\s+/g, ' ').slice(0, 80)}
+                  </div>
+                </div>
+                <label style={{ display: 'grid', gap: '5px', fontSize: '10px', fontWeight: 800, color: '#475569' }}>
+                  CAREER CATEGORY
+                  <select
+                    value={customRoleCategory}
+                    onChange={(event) => {
+                      setCustomRoleCategory(event.target.value as CareerCategory);
+                      setRoleOutline(null);
+                      setRoleDraftError(null);
+                    }}
+                    style={{ minHeight: '38px', border: '1px solid #CBD5E1', borderRadius: '8px', padding: '0 10px', background: '#FFFFFF', color: '#0F172A' }}
+                  >
+                    {careerCategories.filter((category) => category.id !== 'all').map((category) => (
+                      <option key={category.id} value={category.id}>{category.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  onClick={selectCustomRole}
+                  style={{ minHeight: '38px', padding: '0 14px', border: 0, borderRadius: '8px', background: '#1D4ED8', color: '#FFFFFF', fontWeight: 800, cursor: 'pointer' }}
+                >
+                  Use role
+                </button>
+              </section>
+            )}
 
             {/* Target Deadline & Study Commitment Inputs */}
             <div
@@ -820,7 +993,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                   <input
                     ref={dateInputRef}
                     type="date"
-                    min={new Date().toISOString().split('T')[0]}
+                    min={today}
                     value={targetDateStr}
                     onChange={(e) => handleCustomDateChange(e.target.value)}
                     style={{
