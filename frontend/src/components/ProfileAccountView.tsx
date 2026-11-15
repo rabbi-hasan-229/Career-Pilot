@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   User,
   Shield,
@@ -33,6 +33,10 @@ import {
 import { AvatarPicker } from '../features/auth/AuthIllustration';
 import type { Profile, ActiveNavTab, Milestone, Task } from '../types';
 import type { ThemeMode } from '../lib/theme';
+import { downloadAccountExport, exportAccountData } from '../features/account/accountRepository';
+import type { AIQuotaSummary } from '../features/ai/aiGateway';
+import { supabase } from '../lib/supabase';
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
 
 const GithubIcon: React.FC<{ size?: number; className?: string }> = ({ size = 15, className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -53,11 +57,14 @@ interface Props {
   profile: Profile;
   milestones?: Milestone[];
   tasks?: Task[];
+  earnedAchievements?: Record<string, string>;
+  aiQuota?: AIQuotaSummary | null;
   theme: ThemeMode;
-  onUpdateProfile: (updated: Partial<Profile>) => void;
+  onUpdateProfile: (updated: Partial<Profile>) => Promise<void>;
   onToggleTheme: () => void;
   onOpenRoleModal: () => void;
   onSignOut: () => void;
+  onDeleteAccount: () => Promise<void>;
   onNavigateToTab: (tab: ActiveNavTab) => void;
   onToast: (msg: string) => void;
 }
@@ -68,29 +75,37 @@ export const ProfileAccountView: React.FC<Props> = ({
   profile,
   milestones = [],
   tasks = [],
+  earnedAchievements = {},
+  aiQuota = null,
   theme,
   onUpdateProfile,
   onToggleTheme,
   onOpenRoleModal,
   onSignOut,
+  onDeleteAccount,
   onNavigateToTab,
   onToast,
 }) => {
   const [activeTab, setActiveTab] = useState<ProfileTab>('identity');
+  const [mfaFactors, setMfaFactors] = useState<Array<{ id: string; friendly_name?: string; factor_type: string; status: string }>>([]);
+  const [mfaSetup, setMfaSetup] = useState<{ id: string; qrCode: string; secret: string } | null>(null);
+  const [mfaFriendlyName, setMfaFriendlyName] = useState('Primary authenticator');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaError, setMfaError] = useState('');
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [confirmDisableFactorId, setConfirmDisableFactorId] = useState<string | null>(null);
+  const [mfaSupported, setMfaSupported] = useState(true);
 
   // Form state
   const [fullName, setFullName] = useState(profile.full_name || '');
-  const [username, setUsername] = useState(profile.username || 'alex.rivera');
-  const [bio, setBio] = useState(
-    profile.bio ||
-      'Senior-focused product designer crafting systems, token architectures, and responsive digital experiences.'
-  );
-  const [email] = useState(profile.email || 'alex.rivera@careerpilot.io');
-  const [phone, setPhone] = useState(profile.phone || '+1 (555) 019-2834');
-  const [location, setLocation] = useState(profile.location || 'San Francisco, CA (PST)');
-  const [portfolioUrl, setPortfolioUrl] = useState(profile.portfolio_url || 'https://alexrivera.design');
-  const [githubUrl, setGithubUrl] = useState(profile.github_url || 'https://github.com/alexrivera-ux');
-  const [linkedinUrl, setLinkedinUrl] = useState(profile.linkedin_url || 'https://linkedin.com/in/alexrivera-product');
+  const [username, setUsername] = useState(profile.username || '');
+  const [bio, setBio] = useState(profile.bio || '');
+  const [email] = useState(profile.email || '');
+  const [phone, setPhone] = useState(profile.phone || '');
+  const [location, setLocation] = useState(profile.location || '');
+  const [portfolioUrl, setPortfolioUrl] = useState(profile.portfolio_url || '');
+  const [githubUrl, setGithubUrl] = useState(profile.github_url || '');
+  const [linkedinUrl, setLinkedinUrl] = useState(profile.linkedin_url || '');
   const [avatarUrl, setAvatarUrl] = useState(profile.avatar_url || '/avatars/career_navigator.jpg');
   const [isAvatarPickerOpen, setIsAvatarPickerOpen] = useState(false);
 
@@ -104,42 +119,193 @@ export const ProfileAccountView: React.FC<Props> = ({
   );
 
   // Subscription state
-  const [selectedPlan, setSelectedPlan] = useState<'free' | 'premium'>(profile.plan || 'free');
+  const selectedPlan = profile.plan || 'free';
+  const totalAIQuota = aiQuota
+    ? Object.values(aiQuota).reduce((total, quota) => ({ remaining: total.remaining + quota.remaining, limit: total.limit + quota.limit }), { remaining: 0, limit: 0 })
+    : null;
+  const totalAIQuotaPercent = totalAIQuota?.limit
+    ? Math.round((totalAIQuota.remaining / totalAIQuota.limit) * 100)
+    : 0;
 
   // Notifications & Security
   const [dailyReminder, setDailyReminder] = useState(profile.notification_daily_reminder ?? true);
   const [milestoneAlerts, setMilestoneAlerts] = useState(profile.notification_milestone_alerts ?? true);
   const [weeklyDigest, setWeeklyDigest] = useState(profile.notification_weekly_digest ?? true);
-  const [twoFactor, setTwoFactor] = useState(profile.two_factor_enabled ?? false);
+  const verifiedMfaFactors = mfaFactors.filter((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
+  const pendingMfaFactors = mfaFactors.filter((factor) => factor.factor_type === 'totp' && factor.status === 'unverified');
+  const twoFactor = verifiedMfaFactors.length > 0;
+
+  const refreshMfaFactors = async () => {
+    const { data, error } = await supabase.auth.mfa.listFactors();
+    if (error) {
+      setMfaSupported(false);
+      setMfaError('Authenticator verification is unavailable for this account right now.');
+      return;
+    }
+    setMfaSupported(true);
+    setMfaFactors(data.all);
+    setMfaFriendlyName(data.totp.length ? `Backup authenticator ${data.totp.length + 1}` : 'Primary authenticator');
+    setMfaError('');
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'security' || profile.is_demo) return;
+    let active = true;
+    void supabase.auth.mfa.listFactors().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setMfaSupported(false);
+        setMfaError('Authenticator verification is unavailable for this account right now.');
+        return;
+      }
+      setMfaSupported(true);
+      setMfaFactors(data.all);
+      setMfaFriendlyName(data.totp.length ? `Backup authenticator ${data.totp.length + 1}` : 'Primary authenticator');
+      setMfaError('');
+    });
+    return () => { active = false; };
+  }, [activeTab, profile.is_demo]);
+
+  const beginMfaEnrollment = async () => {
+    if (profile.is_demo) return;
+    setMfaBusy(true);
+    setMfaError('');
+    const friendlyName = mfaFriendlyName.trim();
+    if (!friendlyName || friendlyName.length > 40) {
+      setMfaError('Give this authenticator a name between 1 and 40 characters.');
+      setMfaBusy(false);
+      return;
+    }
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
+    if (error || !data?.totp) {
+      setMfaError(error?.message ?? 'Could not start authenticator setup.');
+    } else {
+      const qrCode = data.totp.qr_code.startsWith('data:')
+        ? data.totp.qr_code
+        : `data:image/svg+xml;utf8,${encodeURIComponent(data.totp.qr_code)}`;
+      setMfaSetup({ id: data.id, qrCode, secret: data.totp.secret });
+      setMfaCode('');
+    }
+    setMfaBusy(false);
+  };
+
+  const verifyMfaEnrollment = async () => {
+    if (!mfaSetup || !/^\d{6}$/.test(mfaCode)) {
+      setMfaError('Enter the six-digit code from your authenticator app.');
+      return;
+    }
+    setMfaBusy(true);
+    setMfaError('');
+    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaSetup.id });
+    if (challengeError) {
+      setMfaError('Could not verify the authenticator code. Please try again.');
+      setMfaBusy(false);
+      return;
+    }
+    const { error } = await supabase.auth.mfa.verify({ factorId: mfaSetup.id, challengeId: challenge.id, code: mfaCode });
+    if (error) {
+      setMfaError('That code was not accepted. Check the time on your device and try again.');
+      setMfaBusy(false);
+      return;
+    }
+    setMfaSetup(null);
+    setMfaCode('');
+    await refreshMfaFactors();
+    onToast('Authenticator verification is now enabled.');
+    setMfaBusy(false);
+  };
+
+  const disableMfaFactor = async (factorId: string) => {
+    setMfaBusy(true);
+    setMfaError('');
+    const { error } = await supabase.auth.mfa.unenroll({ factorId });
+    if (error) {
+      setMfaError('Could not remove this authenticator. Please try again.');
+    } else {
+      await supabase.auth.refreshSession();
+      setConfirmDisableFactorId(null);
+      const { data: factors, error: factorError } = await supabase.auth.mfa.listFactors();
+      if (factorError) {
+        setMfaError('The authenticator was removed, but the remaining security state could not be checked. Sign out and back in to refresh it.');
+      } else {
+        setMfaFactors(factors.all);
+        const hasAnotherVerifiedFactor = [...factors.totp, ...factors.phone, ...factors.webauthn].some((factor) => factor.status === 'verified');
+        if (hasAnotherVerifiedFactor) {
+          await supabase.auth.signOut();
+          onToast('Authenticator removed. Sign in again and verify with your remaining authenticator.');
+        } else {
+          onToast('Authenticator verification is now disabled.');
+        }
+      }
+    }
+    setMfaBusy(false);
+  };
+
+  const cancelMfaEnrollment = async () => {
+    if (!mfaSetup) return;
+    setMfaBusy(true);
+    const { error } = await supabase.auth.mfa.unenroll({ factorId: mfaSetup.id });
+    if (error) {
+      setMfaError('Could not cancel authenticator setup. Please try again.');
+    } else {
+      setMfaSetup(null);
+      setMfaCode('');
+      setMfaError('');
+      await refreshMfaFactors();
+    }
+    setMfaBusy(false);
+  };
+
+  const removePendingMfaFactor = async (factorId: string) => {
+    setMfaBusy(true);
+    setMfaError('');
+    const { error } = await supabase.auth.mfa.unenroll({ factorId });
+    if (error) {
+      setMfaError('Could not remove the incomplete authenticator setup. Please try again.');
+    } else {
+      await refreshMfaFactors();
+      onToast('Incomplete authenticator setup removed.');
+    }
+    setMfaBusy(false);
+  };
 
   // UI State
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [deleteConfirmationText, setDeleteConfirmationText] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const deleteDialogRef = useAccessibleDialog<HTMLFormElement>(isDeleteConfirmOpen, () => {
+    if (!isDeleting) setIsDeleteConfirmOpen(false);
+  });
 
   // Detect dirty state
   const isDirty =
     fullName !== (profile.full_name || '') ||
-    username !== (profile.username || 'alex.rivera') ||
-    bio !== (profile.bio || 'Senior-focused product designer crafting systems, token architectures, and responsive digital experiences.') ||
-    phone !== (profile.phone || '+1 (555) 019-2834') ||
-    location !== (profile.location || 'San Francisco, CA (PST)') ||
-    portfolioUrl !== (profile.portfolio_url || 'https://alexrivera.design') ||
-    githubUrl !== (profile.github_url || 'https://github.com/alexrivera-ux') ||
-    linkedinUrl !== (profile.linkedin_url || 'https://linkedin.com/in/alexrivera-product') ||
+    username !== (profile.username || '') ||
+    bio !== (profile.bio || '') ||
+    phone !== (profile.phone || '') ||
+    location !== (profile.location || '') ||
+    portfolioUrl !== (profile.portfolio_url || '') ||
+    githubUrl !== (profile.github_url || '') ||
+    linkedinUrl !== (profile.linkedin_url || '') ||
     avatarUrl !== (profile.avatar_url || '/avatars/career_navigator.jpg') ||
     dailyMinutes !== (profile.daily_minutes || 60) ||
     experienceLevel !== (profile.experience_level || 'junior') ||
     learningStyle !== (profile.learning_style || 'hands_on') ||
-    selectedPlan !== (profile.plan || 'free') ||
     dailyReminder !== (profile.notification_daily_reminder ?? true) ||
     milestoneAlerts !== (profile.notification_milestone_alerts ?? true) ||
-    weeklyDigest !== (profile.notification_weekly_digest ?? true) ||
-    twoFactor !== (profile.two_factor_enabled ?? false);
+    weeklyDigest !== (profile.notification_weekly_digest ?? true);
 
   // Save handler
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true);
-    setTimeout(() => {
-      onUpdateProfile({
+    setSaveError(null);
+    try {
+      await onUpdateProfile({
         full_name: fullName,
         username,
         bio,
@@ -152,28 +318,25 @@ export const ProfileAccountView: React.FC<Props> = ({
         daily_minutes: dailyMinutes,
         experience_level: experienceLevel,
         learning_style: learningStyle,
-        plan: selectedPlan,
-        ai_prompts_left:
-          selectedPlan === 'premium'
-            ? Math.max(100, profile.ai_prompts_left)
-            : Math.min(20, profile.ai_prompts_left),
         notification_daily_reminder: dailyReminder,
         notification_milestone_alerts: milestoneAlerts,
         notification_weekly_digest: weeklyDigest,
-        two_factor_enabled: twoFactor,
       });
-      setIsSaving(false);
       onToast('✅ Account & Profile successfully updated!');
-    }, 350);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save your account changes.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Revert handler
   const handleRevert = () => {
     setFullName(profile.full_name || '');
-    setUsername(profile.username || 'alex.rivera');
+    setUsername(profile.username || '');
     setBio(profile.bio || '');
-    setPhone(profile.phone || '+1 (555) 019-2834');
-    setLocation(profile.location || 'San Francisco, CA (PST)');
+    setPhone(profile.phone || '');
+    setLocation(profile.location || '');
     setPortfolioUrl(profile.portfolio_url || '');
     setGithubUrl(profile.github_url || '');
     setLinkedinUrl(profile.linkedin_url || '');
@@ -181,91 +344,73 @@ export const ProfileAccountView: React.FC<Props> = ({
     setDailyMinutes(profile.daily_minutes || 60);
     setExperienceLevel(profile.experience_level || 'junior');
     setLearningStyle(profile.learning_style || 'hands_on');
-    setSelectedPlan(profile.plan || 'free');
     setDailyReminder(profile.notification_daily_reminder ?? true);
     setMilestoneAlerts(profile.notification_milestone_alerts ?? true);
     setWeeklyDigest(profile.notification_weekly_digest ?? true);
-    setTwoFactor(profile.two_factor_enabled ?? false);
     onToast('🔄 Unsaved changes reverted.');
   };
 
   // Export JSON handler
-  const handleExportData = () => {
-    const exportPayload = {
-      profile,
-      milestones,
-      tasks,
-      exported_at: new Date().toISOString(),
-      platform: 'Career Pilot Telemetry System',
-      version: '2.5.0',
-    };
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportPayload, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `career_pilot_telemetry_${profile.target_role.replace(/\s+/g, '_').toLowerCase()}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    onToast('📥 Career telemetry and milestone progress exported!');
+  const handleExportData = async () => {
+    setIsExporting(true);
+    setExportError('');
+    try {
+      const data = await exportAccountData(profile, milestones, tasks);
+      downloadAccountExport(data, profile.target_role);
+      onToast('Your account data export has been downloaded.');
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Could not export your account data.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
-  // Badges data
+  const handleDeleteAccount = async () => {
+    setIsDeleting(true);
+    setDeleteError('');
+    try {
+      await onDeleteAccount();
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Could not delete this account.');
+      setIsDeleting(false);
+    }
+  };
+
+  const completedTaskCount = tasks.filter((task) => Boolean(task.done_at)).length;
+  const completionRate = tasks.length ? Math.round((completedTaskCount / tasks.length) * 100) : null;
+  const memberSince = Number.isNaN(Date.parse(profile.created_at))
+    ? 'Member'
+    : `Member since ${new Intl.DateTimeFormat(undefined, { month: 'short', year: 'numeric' }).format(new Date(profile.created_at))}`;
+  const quizTasks = tasks.filter((task) => Boolean(task.quiz));
+  const completedQuizCount = quizTasks.filter((task) => Boolean(task.done_at)).length;
+  const taskProgress = tasks.length ? Math.round((completedTaskCount / tasks.length) * 100) : 0;
+  const quizProgress = quizTasks.length ? Math.round((completedQuizCount / quizTasks.length) * 100) : 0;
   const badgesList = [
-    {
-      id: 'highway-pioneer',
-      name: 'Highway Pioneer',
-      desc: 'Configured your custom career roadmap and initialized first sprint stoppage',
-      icon: '🛣️',
-      unlocked: true,
-      date: 'Unlocked Oct 2026',
-      progress: '100%',
-    },
-    {
-      id: 'consistency-master',
-      name: 'Consistency Master',
-      desc: 'Maintained a 7-day continuous deep work momentum streak',
-      icon: '🔥',
-      unlocked: profile.streak_days >= 7,
-      date: profile.streak_days >= 7 ? 'Unlocked Oct 2026' : `${profile.streak_days}/7 days logged`,
-      progress: `${Math.min(100, Math.round((profile.streak_days / 7) * 100))}%`,
-    },
-    {
-      id: 'cadence-overdrive',
-      name: 'Cadence Overdrive',
-      desc: 'Achieved an executive sprint velocity exceeding 1.1x target pace',
-      icon: '⚡',
-      unlocked: true,
-      date: 'Unlocked Oct 2026',
-      progress: '100%',
-    },
-    {
-      id: 'checkpoint-ace',
-      name: 'Checkpoint Ace',
-      desc: 'Passed 10 engineering audit verification quizzes on first attempt',
-      icon: '🎯',
-      unlocked: false,
-      date: '6 of 10 passed',
-      progress: '60%',
-    },
-    {
-      id: 'artifact-builder',
-      name: 'Artifact Builder',
-      desc: 'Shipped 3 production-grade portfolio project deliverables',
-      icon: '🛠️',
-      unlocked: false,
-      date: '2 of 3 deliverables completed',
-      progress: '66%',
-    },
-    {
-      id: 'interview-arena-star',
-      name: 'Interview Arena Star',
-      desc: 'Successfully scored >85% in 5 simulated behavioral & technical rounds',
-      icon: '🎙️',
-      unlocked: false,
-      date: '1 of 5 rounds completed',
-      progress: '20%',
-    },
-  ];
+    { id: 'first_step', name: 'First Footprint', desc: 'Complete your first learning task.', icon: '👣', progress: completedTaskCount ? 100 : 0, hint: `${completedTaskCount} tasks completed` },
+    { id: 'quiz_master_1', name: 'Riddle Solver', desc: 'Pass your first checkpoint quiz.', icon: '🧠', progress: quizProgress, hint: `${completedQuizCount} checkpoints passed` },
+    { id: 'streak_3', name: 'Momentum Seeker', desc: 'Maintain a 3-day learning streak.', icon: '🔥', progress: Math.min(100, Math.round((profile.streak_days / 3) * 100)), hint: `${profile.streak_days}/3 day streak` },
+    { id: 'streak_7', name: 'Island Pioneer', desc: 'Maintain a 7-day learning streak.', icon: '🏆', progress: Math.min(100, Math.round((profile.streak_days / 7) * 100)), hint: `${profile.streak_days}/7 day streak` },
+    { id: 'role_graduate', name: 'Quest Champion', desc: 'Complete every task in your career roadmap.', icon: '👑', progress: taskProgress, hint: `${completedTaskCount}/${tasks.length} tasks completed` },
+  ].map((badge) => {
+    const unlockedAt = earnedAchievements[badge.id];
+    const demoUnlocked = Boolean(profile.is_demo) && (
+      (badge.id === 'first_step' && completedTaskCount > 0) ||
+      (badge.id === 'quiz_master_1' && completedQuizCount > 0) ||
+      (badge.id === 'streak_3' && profile.streak_days >= 3) ||
+      (badge.id === 'streak_7' && profile.streak_days >= 7) ||
+      (badge.id === 'role_graduate' && tasks.length > 0 && completedTaskCount === tasks.length)
+    );
+    return {
+      ...badge,
+      unlocked: Boolean(unlockedAt) || demoUnlocked,
+      date: unlockedAt
+        ? `Earned ${new Date(unlockedAt).toLocaleDateString()}`
+        : demoUnlocked
+          ? 'Earned in demo session'
+          : badge.hint,
+      progress: `${Math.min(100, badge.progress)}%`,
+    };
+  });
 
   return (
     <div className="pa-container">
@@ -319,6 +464,7 @@ export const ProfileAccountView: React.FC<Props> = ({
               </>
             )}
           </button>
+          {saveError && <p role="alert" className="pa-error-message">{saveError}</p>}
         </div>
       </div>
 
@@ -350,7 +496,7 @@ export const ProfileAccountView: React.FC<Props> = ({
               <span className="pa-verified-pill">
                 <CheckCircle2 size={11} /> Verified Member
               </span>
-              <span className="pa-plan-kicker-pill">{selectedPlan === 'premium' ? '⚡ Pro Accelerator' : 'Free Tier'}</span>
+              <span className="pa-plan-kicker-pill">{selectedPlan === 'premium' ? 'Pro' : 'Free Tier'}</span>
             </div>
 
             <h1 className="pa-user-heading">{fullName || 'Alex Rivera'}</h1>
@@ -364,14 +510,14 @@ export const ProfileAccountView: React.FC<Props> = ({
                 title="Switch Target Career Roadmap"
               >
                 <Compass size={13} />
-                <span>{profile.target_role || 'UI/UX Designer'}</span>
+                <span>{profile.target_role || 'Choose a career goal'}</span>
                 <ChevronRight size={12} />
               </button>
               <span className="pa-meta-text-pill">
                 <MapPin size={12} /> {location}
               </span>
               <span className="pa-meta-text-pill">
-                <Clock size={12} /> Member since Oct 2026
+                <Clock size={12} /> {memberSince}
               </span>
             </div>
           </div>
@@ -379,42 +525,42 @@ export const ProfileAccountView: React.FC<Props> = ({
           {/* 4 Quick Telemetry Indicators */}
           <div className="pa-hero-stats-panel">
             <div className="pa-stat-box">
-              <div className="pa-stat-icon amber">
+              <div className="pa-stat-icon">
                 <Flame size={15} />
               </div>
               <div className="pa-stat-content">
-                <span className="pa-stat-val">{profile.streak_days || 7} Days</span>
-                <span className="pa-stat-lbl">Continuous Streak</span>
+                <span className="pa-stat-val">{profile.streak_days ?? 0} Days</span>
+                <span className="pa-stat-lbl">Streak</span>
               </div>
             </div>
 
             <div className="pa-stat-box">
-              <div className="pa-stat-icon emerald">
+              <div className="pa-stat-icon">
                 <Zap size={15} />
               </div>
               <div className="pa-stat-content">
-                <span className="pa-stat-val">1.18x Cadence</span>
-                <span className="pa-stat-lbl">Sprint Velocity</span>
+                <span className="pa-stat-val">{completionRate === null ? '—' : `${completionRate}%`}</span>
+                <span className="pa-stat-lbl">Completed</span>
               </div>
             </div>
 
             <div className="pa-stat-box">
-              <div className="pa-stat-icon blue">
+              <div className="pa-stat-icon">
                 <Bot size={15} />
               </div>
               <div className="pa-stat-content">
-                <span className="pa-stat-val">{profile.ai_prompts_left || 16} calls</span>
-                <span className="pa-stat-lbl">AI Quota Available</span>
+                <span className="pa-stat-val">{aiQuota ? `${aiQuota.coach.remaining}/${aiQuota.coach.limit}` : '—'}</span>
+                <span className="pa-stat-lbl">Coach Left</span>
               </div>
             </div>
 
             <div className="pa-stat-box">
-              <div className="pa-stat-icon purple">
+              <div className="pa-stat-icon">
                 <Clock size={15} />
               </div>
               <div className="pa-stat-content">
                 <span className="pa-stat-val">{profile.target_timeline_months || 6} Months</span>
-                <span className="pa-stat-lbl">Graduation Goal</span>
+                <span className="pa-stat-lbl">Timeline</span>
               </div>
             </div>
           </div>
@@ -503,11 +649,11 @@ export const ProfileAccountView: React.FC<Props> = ({
           <div className="pa-tab-section">
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
-                <User size={18} className="text-blue-500" />
+                <User size={18} style={{ color: 'var(--md-primary)' }} />
                 <span>Personal Information</span>
               </h2>
               <p className="pa-panel-desc">
-                Your public professional profile, contact credentials, and verified presence.
+                Profile name, contact details, and public bio.
               </p>
 
               <div className="pa-form-grid">
@@ -612,11 +758,11 @@ export const ProfileAccountView: React.FC<Props> = ({
             {/* Online Portfolios & Links */}
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
-                <Globe size={18} className="text-emerald-500" />
-                <span>Professional Links & Portfolios</span>
+                <Globe size={18} style={{ color: 'var(--md-primary)' }} />
+                <span>Links & Portfolios</span>
               </h2>
               <p className="pa-panel-desc">
-                Connected accounts used for portfolio audits and CV builder exports.
+                Links included in CV exports and portfolio checks.
               </p>
 
               <div className="pa-form-grid">
@@ -683,11 +829,11 @@ export const ProfileAccountView: React.FC<Props> = ({
               <div className="pa-card-header-flex">
                 <div>
                   <h2 className="pa-panel-title">
-                    <Compass size={18} className="text-blue-500" />
-                    <span>Target Career Trajectory</span>
+                    <Compass size={18} style={{ color: 'var(--md-primary)' }} />
+                    <span>Target Career Role</span>
                   </h2>
                   <p className="pa-panel-desc">
-                    The active career role dictating your winding highway stages and checkpoints.
+                    Active role shaping your roadmap stages and tasks.
                   </p>
                 </div>
                 <button
@@ -707,7 +853,7 @@ export const ProfileAccountView: React.FC<Props> = ({
                 </div>
                 <div className="pa-role-info">
                   <span className="pa-role-kicker">ACTIVE ROADMAP</span>
-                  <div className="pa-role-name">{profile.target_role || 'UI/UX Designer'}</div>
+                  <div className="pa-role-name">{profile.target_role || 'Choose a career goal'}</div>
                   <span className="pa-role-meta">
                     {milestones.length} Strategic Milestones · {tasks.length} Action Tasks · ~
                     {Math.round(tasks.reduce((acc, t) => acc + (t.est_minutes || 60), 0) / 60)}h Total Depth
@@ -831,6 +977,7 @@ export const ProfileAccountView: React.FC<Props> = ({
                     </button>
                   ))}
                 </div>
+                <p className="pa-panel-desc">Your baseline shapes the starting point of a new roadmap. Existing roadmap progress stays intact.</p>
               </div>
             </div>
           </div>
@@ -843,92 +990,62 @@ export const ProfileAccountView: React.FC<Props> = ({
             <div className="pa-panel-card pa-quota-highlight">
               <div className="pa-quota-header">
                 <div>
-                  <span className="pa-quota-kicker">WEEKLY AI TELEMETRY QUOTA</span>
+                    <span className="pa-quota-kicker">ROLLING 7-DAY AI QUOTAS</span>
                   <h2 className="pa-quota-title">
-                    {profile.ai_prompts_left || 16} Calls Remaining
+                    {totalAIQuota ? `${totalAIQuota.remaining} Requests Remaining` : 'Usage unavailable'}
                   </h2>
                   <p className="pa-quota-desc">
-                    Refills every Monday at 00:00 UTC. Used for AI Career Coach, CV ATS scans, and Mock Interview evaluations.
+                    Limits are tracked separately for coach, resume, interview, and custom-role requests. Personal text is sent only when you request an AI action.
                   </p>
                 </div>
                 <div className="pa-quota-ring">
                   <span className="pa-quota-pct">
-                    {Math.round(((profile.ai_prompts_left || 16) / 20) * 100)}%
+                    {totalAIQuota ? `${totalAIQuotaPercent}%` : '—'}
                   </span>
-                  <span className="pa-quota-sub">Available</span>
+                    <span className="pa-quota-sub">Remaining</span>
                 </div>
               </div>
 
               <div className="pa-quota-track">
                 <div
                   className="pa-quota-fill"
-                  style={{ width: `${Math.min(100, ((profile.ai_prompts_left || 16) / 20) * 100)}%` }}
+                  style={{ width: `${totalAIQuotaPercent}%` }}
                 />
               </div>
+              {aiQuota && <div className="pa-quota-desc" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '14px' }}>
+                {(['coach', 'cv', 'interview', 'role'] as const).map((feature) => (
+                  <span key={feature} className="pa-subnav-btn">{feature === 'cv' ? 'Resume' : feature === 'role' ? 'Custom role' : feature}: {aiQuota[feature].remaining}/{aiQuota[feature].limit}</span>
+                ))}
+              </div>}
             </div>
 
-            {/* Plan Comparison Cards */}
-            <div className="pa-plan-duo-grid">
-              {/* Free Plan */}
-              <div className={`pa-plan-card ${selectedPlan === 'free' ? 'active-plan' : ''}`}>
-                <div className="pa-plan-header">
-                  <span className="pa-plan-name">Free Tier</span>
-                  <div className="pa-plan-price">
-                    <span className="price-num">$0</span>
-                    <span className="price-period">/ forever</span>
-                  </div>
-                  <p className="pa-plan-tagline">Essential tools to build self-paced career roadmaps.</p>
+            <div className="pa-panel-card" aria-labelledby="account-access-title">
+              <div className="pa-card-header-flex">
+                <div>
+                  <h2 id="account-access-title" className="pa-panel-title">
+                    <CreditCard size={18} />
+                    <span>Account access</span>
+                  </h2>
+                  <p className="pa-panel-desc">
+                    This account currently has {selectedPlan === 'premium' ? 'Pro' : 'Free'} access.
+                    AI request limits are shown above and refresh on a rolling seven-day window.
+                  </p>
                 </div>
-
-                <ul className="pa-plan-features">
-                  <li><Check size={14} className="text-emerald-500" /> Winding Highway dynamic roadmap</li>
-                  <li><Check size={14} className="text-emerald-500" /> Weekly Schedule task planner</li>
-                  <li><Check size={14} className="text-emerald-500" /> Pacing & Stats velocity telemetry</li>
-                  <li><Check size={14} className="text-emerald-500" /> 20 AI prompts per week</li>
-                  <li className="dimmed"><Check size={14} className="text-slate-500" /> Unlimited AI Coach & Interview Arena</li>
-                  <li className="dimmed"><Check size={14} className="text-slate-500" /> Recruiter Skill-Gap Radar</li>
-                </ul>
-
-                <button
-                  type="button"
-                  className={`pa-btn-plan ${selectedPlan === 'free' ? 'current' : ''}`}
-                  onClick={() => setSelectedPlan('free')}
-                >
-                  {selectedPlan === 'free' ? 'Current Active Plan' : 'Downgrade to Free'}
-                </button>
+                <span className="pa-badge-counter">{selectedPlan === 'premium' ? 'PRO ACCESS' : 'FREE ACCESS'}</span>
               </div>
-
-              {/* Pro Accelerator Plan */}
-              <div className={`pa-plan-card featured ${selectedPlan === 'premium' ? 'active-plan' : ''}`}>
-                <div className="pa-popular-badge">RECOMMENDED FOR CAREER SWITCHERS</div>
-                <div className="pa-plan-header">
-                  <span className="pa-plan-name">Pro Career Accelerator</span>
-                  <div className="pa-plan-price">
-                    <span className="price-num">$19</span>
-                    <span className="price-period">/ month</span>
-                  </div>
-                  <p className="pa-plan-tagline">Full AI suite for accelerated job-readiness & recruiter matching.</p>
-                </div>
-
-                <ul className="pa-plan-features">
-                  <li><Check size={14} className="text-emerald-500" /> <strong>Unlimited</strong> AI Career Coach prompts</li>
-                  <li><Check size={14} className="text-emerald-500" /> Interactive Mock Interview Arena with audio analysis</li>
-                  <li><Check size={14} className="text-emerald-500" /> CV Builder with AI ATS keyword optimization</li>
-                  <li><Check size={14} className="text-emerald-500" /> Live Skill-Gap recruiter vacancy radar</li>
-                  <li><Check size={14} className="text-emerald-500" /> Priority road rebalancing & checkpoint verifications</li>
-                  <li><Check size={14} className="text-emerald-500" /> Direct JSON telemetry export & GitHub sync</li>
-                </ul>
-
-                <button
-                  type="button"
-                  className={`pa-btn-plan primary ${selectedPlan === 'premium' ? 'current' : ''}`}
-                  onClick={() => {
-                    setSelectedPlan('premium');
-                    onToast('🎉 Switched to Pro Career Accelerator!');
-                  }}
-                >
-                  {selectedPlan === 'premium' ? 'Current Active Plan' : 'Upgrade to Pro ($19/mo)'}
-                </button>
+              <div
+                role="status"
+                style={{
+                  padding: '12px 14px',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '12px',
+                  background: 'var(--md-surface-variant)',
+                  color: 'var(--md-text-secondary)',
+                  fontSize: '0.8125rem',
+                  lineHeight: 1.5,
+                }}
+              >
+                Billing is not connected in this version. Checkout, plan changes, and subscription management are unavailable.
               </div>
             </div>
           </div>
@@ -995,36 +1112,89 @@ export const ProfileAccountView: React.FC<Props> = ({
             {/* Security Credentials */}
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
-                <Shield size={18} className="text-blue-500" />
+                <Shield size={18} style={{ color: 'var(--md-primary)' }} />
                 <span>Security & Authentication</span>
               </h2>
               <p className="pa-panel-desc">
-                Authentication methods, two-factor verification, and active session telemetry.
+                Manage authenticator verification and active sessions.
               </p>
 
               <div className="pa-toggle-list">
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
                     <span className="pa-toggle-title">Two-Factor Authentication (2FA)</span>
-                    <span className="pa-toggle-desc">Require one-time email OTP or authenticator app code on login</span>
+                    <span className="pa-toggle-desc">Use a time-based code from an authenticator app when you sign in.</span>
                   </div>
-                  <button
-                    type="button"
-                    className={`pa-switch-btn ${twoFactor ? 'on' : 'off'}`}
-                    onClick={() => {
-                      setTwoFactor(!twoFactor);
-                      onToast(twoFactor ? '2FA disabled' : '🔒 2FA successfully enabled!');
-                    }}
-                    aria-label="Toggle 2FA"
-                  >
-                    <span className="pa-switch-handle" />
-                  </button>
+                  <span className="pa-session-active-tag">{twoFactor ? 'Enabled' : 'Not enabled'}</span>
                 </div>
+
+                {profile.is_demo ? (
+                  <p className="pa-panel-desc">Authenticator setup is available for signed-in accounts, not demo mode.</p>
+                ) : twoFactor ? (
+                  <div style={{ padding: '12px 0' }}>
+                    {verifiedMfaFactors.map((factor) => (
+                      <div key={factor.id} className="pa-toggle-item">
+                        <div className="pa-toggle-info">
+                          <span className="pa-toggle-title">{factor.friendly_name || 'Authenticator app'}</span>
+                          <span className="pa-toggle-desc">Verified authenticator</span>
+                        </div>
+                        {confirmDisableFactorId === factor.id ? (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => setConfirmDisableFactorId(null)}>Keep</button>
+                            <button type="button" className="btn-m3-primary" disabled={mfaBusy} onClick={() => void disableMfaFactor(factor.id)}>{mfaBusy ? 'Removing…' : 'Remove'}</button>
+                          </div>
+                        ) : (
+                          <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => setConfirmDisableFactorId(factor.id)}>Remove</button>
+                        )}
+                      </div>
+                    ))}
+                    <p className="pa-panel-desc">For sign-in recovery, add another authenticator on a separate device and give it a distinct name.</p>
+                    <label htmlFor="mfa-new-name" className="pa-toggle-title">New authenticator name</label>
+                    <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                      <input id="mfa-new-name" value={mfaFriendlyName} maxLength={40} onChange={(event) => setMfaFriendlyName(event.target.value)} style={{ flex: '1 1 220px', minWidth: 0, padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
+                      <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void beginMfaEnrollment()}>Add authenticator</button>
+                    </div>
+                  </div>
+                ) : pendingMfaFactors.length > 0 ? (
+                  <div style={{ padding: '12px 0' }}>
+                    <p className="pa-panel-desc">An unfinished authenticator setup was found. Remove it before starting a fresh setup.</p>
+                    {pendingMfaFactors.map((factor) => (
+                      <div key={factor.id} className="pa-toggle-item">
+                        <span className="pa-toggle-title">{factor.friendly_name || 'Incomplete authenticator'}</span>
+                        <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void removePendingMfaFactor(factor.id)}>{mfaBusy ? 'Removing…' : 'Remove setup'}</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: '12px 0' }}>
+                    <label htmlFor="mfa-first-name" className="pa-toggle-title">Authenticator name</label>
+                    <input id="mfa-first-name" value={mfaFriendlyName} maxLength={40} onChange={(event) => setMfaFriendlyName(event.target.value)} style={{ display: 'block', width: '100%', maxWidth: 340, boxSizing: 'border-box', margin: '8px 0 12px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
+                    <button type="button" className="btn-m3-primary" disabled={!mfaSupported || mfaBusy} onClick={() => void beginMfaEnrollment()}>
+                      {mfaBusy ? 'Starting setup…' : 'Set up authenticator'}
+                    </button>
+                  </div>
+                )}
+
+                {mfaSetup && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 200px) 1fr', gap: 20, alignItems: 'center', padding: '20px 0' }}>
+                    <img src={mfaSetup.qrCode} alt="Scan this QR code with your authenticator app" style={{ width: '100%', maxWidth: 200, background: 'white', borderRadius: 12, padding: 8, boxSizing: 'border-box' }} />
+                    <div>
+                      <p className="pa-panel-desc">Scan the QR code, then enter the six-digit code generated by your app.</p>
+                      <label htmlFor="mfa-enrollment-secret" className="pa-toggle-title">Setup key</label>
+                      <input id="mfa-enrollment-secret" readOnly value={mfaSetup.secret} style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '6px 0 14px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
+                      <label htmlFor="mfa-enrollment-code" className="pa-toggle-title">Authenticator code</label>
+                      <input id="mfa-enrollment-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '6px 0 12px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
+                      <button type="button" className="btn-m3-primary" disabled={mfaBusy || mfaCode.length !== 6} onClick={() => void verifyMfaEnrollment()}>{mfaBusy ? 'Verifying…' : 'Verify and enable'}</button>
+                      <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void cancelMfaEnrollment()}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+                {mfaError && <p role="alert" style={{ color: 'var(--md-error, #b3261e)' }}>{mfaError}</p>}
 
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
                     <span className="pa-toggle-title">Active Browser Session</span>
-                    <span className="pa-toggle-desc">Chrome on Windows · 127.0.0.1 (Current session · Active now)</span>
+                    <span className="pa-toggle-desc">This signed-in session is active on the current device.</span>
                   </div>
                   <span className="pa-session-active-tag">Active</span>
                 </div>
@@ -1034,24 +1204,25 @@ export const ProfileAccountView: React.FC<Props> = ({
             {/* Notification Preferences */}
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
-                <Bell size={18} className="text-amber-500" />
+                <Bell size={18} style={{ color: 'var(--md-primary)' }} />
                 <span>Notification Preferences</span>
               </h2>
               <p className="pa-panel-desc">
-                Tune the frequency of smart alerts, sprint focus reminders, and milestone digests.
+                Manage task reminders, milestone alerts, and check-ins.
               </p>
 
               <div className="pa-toggle-list">
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
-                    <span className="pa-toggle-title">Daily Deep Work Focus Reminder</span>
-                    <span className="pa-toggle-desc">Receive a reminder at your scheduled sprint time (09:00 AM)</span>
+                    <span className="pa-toggle-title">Daily task reminder</span>
+                    <span className="pa-toggle-desc">Record reminders for due tasks and send background push when enabled.</span>
                   </div>
                   <button
                     type="button"
                     className={`pa-switch-btn ${dailyReminder ? 'on' : 'off'}`}
                     onClick={() => setDailyReminder(!dailyReminder)}
-                    aria-label="Toggle daily reminder"
+                    aria-label="Toggle daily task reminders"
+                    aria-pressed={dailyReminder}
                   >
                     <span className="pa-switch-handle" />
                   </button>
@@ -1059,14 +1230,15 @@ export const ProfileAccountView: React.FC<Props> = ({
 
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
-                    <span className="pa-toggle-title">Milestone & Checkpoint Alerts</span>
-                    <span className="pa-toggle-desc">Celebrate completions and receive automated rebalancing suggestions</span>
+                    <span className="pa-toggle-title">Milestone completion alerts</span>
+                    <span className="pa-toggle-desc">Notify when all tasks in a milestone finish.</span>
                   </div>
                   <button
                     type="button"
                     className={`pa-switch-btn ${milestoneAlerts ? 'on' : 'off'}`}
                     onClick={() => setMilestoneAlerts(!milestoneAlerts)}
-                    aria-label="Toggle milestone alerts"
+                    aria-label="Toggle milestone completion alerts"
+                    aria-pressed={milestoneAlerts}
                   >
                     <span className="pa-switch-handle" />
                   </button>
@@ -1074,14 +1246,15 @@ export const ProfileAccountView: React.FC<Props> = ({
 
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
-                    <span className="pa-toggle-title">Weekly Performance Telemetry Digest</span>
-                    <span className="pa-toggle-desc">Sunday email summarizing velocity multiplier and predicted graduation date</span>
+                    <span className="pa-toggle-title">Weekly check-in reminders</span>
+                    <span className="pa-toggle-desc">Allow on-demand progress check-ins from your roadmap.</span>
                   </div>
                   <button
                     type="button"
                     className={`pa-switch-btn ${weeklyDigest ? 'on' : 'off'}`}
                     onClick={() => setWeeklyDigest(!weeklyDigest)}
-                    aria-label="Toggle weekly digest"
+                    aria-label="Allow on-demand weekly check-ins"
+                    aria-pressed={weeklyDigest}
                   >
                     <span className="pa-switch-handle" />
                   </button>
@@ -1092,10 +1265,10 @@ export const ProfileAccountView: React.FC<Props> = ({
             {/* System Theme & Density */}
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
-                <SettingsIcon size={18} className="text-purple-500" />
-                <span>System Appearance</span>
+                <SettingsIcon size={18} style={{ color: 'var(--md-primary)' }} />
+                <span>Appearance</span>
               </h2>
-              <p className="pa-panel-desc">Choose between high-contrast Dark Mode and crisp Light Mode.</p>
+              <p className="pa-panel-desc">Switch between dark and light themes.</p>
 
               <div className="pa-theme-selector-row">
                 <button
@@ -1105,9 +1278,9 @@ export const ProfileAccountView: React.FC<Props> = ({
                     if (theme !== 'dark') onToggleTheme();
                   }}
                 >
-                  <Moon size={20} className="text-blue-400" />
+                  <Moon size={20} style={{ color: 'var(--md-text-secondary)' }} />
                   <span className="pa-theme-name">Dark Mode</span>
-                  <span className="pa-theme-desc">OLED contrast & neon accents</span>
+                  <span className="pa-theme-desc">Low-glare dark workspace</span>
                 </button>
 
                 <button
@@ -1117,9 +1290,9 @@ export const ProfileAccountView: React.FC<Props> = ({
                     if (theme !== 'light') onToggleTheme();
                   }}
                 >
-                  <Sun size={20} className="text-amber-500" />
+                  <Sun size={20} style={{ color: 'var(--md-primary)' }} />
                   <span className="pa-theme-name">Light Mode</span>
-                  <span className="pa-theme-desc">High readability Material 3</span>
+                  <span className="pa-theme-desc">Clean light workspace</span>
                 </button>
               </div>
             </div>
@@ -1131,18 +1304,21 @@ export const ProfileAccountView: React.FC<Props> = ({
                 <span>Data Management & Danger Zone</span>
               </h2>
               <p className="pa-panel-desc">
-                Export your full telemetry data or manage your session authentication.
+                Download a copy of your saved account data or permanently delete your account.
               </p>
+
+              {exportError && <p role="alert" style={{ color: '#B91C1C', fontSize: 12 }}>{exportError}</p>}
 
               <div className="pa-danger-actions-row">
                 <button
                   type="button"
                   className="pa-btn-export"
-                  onClick={handleExportData}
-                  title="Download telemetry JSON"
+                  onClick={() => void handleExportData()}
+                  disabled={isExporting}
+                  title="Download account data JSON"
                 >
                   <Download size={14} />
-                  <span>Export Career Telemetry (JSON)</span>
+                  <span>{isExporting ? 'Preparing export…' : 'Export Account Data (JSON)'}</span>
                 </button>
 
                 <button
@@ -1154,11 +1330,64 @@ export const ProfileAccountView: React.FC<Props> = ({
                   <Lock size={14} />
                   <span>Sign Out of Account</span>
                 </button>
+                {!profile.is_demo && (
+                  <button
+                    type="button"
+                    className="pa-btn-delete"
+                    onClick={() => { setDeleteError(''); setDeleteConfirmationText(''); setIsDeleteConfirmOpen(true); }}
+                  >
+                    <AlertCircle size={14} />
+                    <span>Delete Account</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
         )}
       </main>
+
+      {isDeleteConfirmOpen && (
+        <div
+          role="presentation"
+          onClick={() => !isDeleting && setIsDeleteConfirmOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1800, background: 'rgba(15,23,42,.72)', display: 'grid', placeItems: 'center', padding: 20 }}
+        >
+          <form
+            ref={deleteDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+            tabIndex={-1}
+            onSubmit={(event) => { event.preventDefault(); if (deleteConfirmationText === 'DELETE') void handleDeleteAccount(); }}
+            onClick={(event) => event.stopPropagation()}
+            style={{ width: 'min(100%, 440px)', background: 'var(--md-surface)', color: 'var(--md-text-primary)', borderRadius: 20, padding: 24, boxShadow: '0 24px 70px rgba(0,0,0,.35)' }}
+          >
+            <h2 id="delete-account-title" style={{ margin: '0 0 8px', fontSize: 20 }}>Delete your account?</h2>
+            <p style={{ fontSize: 13, lineHeight: 1.5, color: 'var(--md-text-secondary)' }}>
+              This permanently deletes your profile, roadmap, saved CVs, interview and quiz history, skills, messages, and notifications. This cannot be undone.
+            </p>
+            {deleteError && <p role="alert" style={{ color: '#B91C1C', fontSize: 12 }}>{deleteError}</p>}
+            <label htmlFor="delete-account-confirmation" style={{ display: 'block', fontSize: 12, fontWeight: 700, margin: '16px 0 6px' }}>
+              Type DELETE to confirm
+            </label>
+            <input
+              id="delete-account-confirmation"
+              data-dialog-initial-focus
+              value={deleteConfirmationText}
+              onChange={(event) => setDeleteConfirmationText(event.target.value)}
+              autoComplete="off"
+              disabled={isDeleting}
+              style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--md-outline)', borderRadius: 10, padding: 10, background: 'var(--md-surface-variant)', color: 'var(--md-text-primary)' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+              <button type="button" disabled={isDeleting} onClick={() => setIsDeleteConfirmOpen(false)} className="pa-btn-export">Cancel</button>
+              <button type="submit" disabled={isDeleting || deleteConfirmationText !== 'DELETE'} className="pa-btn-delete">
+                {isDeleting ? 'Deleting…' : 'Permanently Delete'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* ──────────────────────────────────────────────────────────────────────────
           5. EMBEDDED STYLES FOR PROFILE & ACCOUNT VIEW
@@ -1262,8 +1491,8 @@ const paStyles = `
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: #2563EB;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: var(--md-primary, #123C69);
+  border: none;
   border-radius: 10px;
   padding: 8px 16px;
   font-size: 0.8125rem;
@@ -1271,7 +1500,6 @@ const paStyles = `
   color: #FFFFFF;
   cursor: pointer;
   transition: all 0.15s ease;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25);
 }
 
 .pa-btn-primary:disabled {
@@ -1284,24 +1512,20 @@ const paStyles = `
 }
 
 .pa-btn-primary.pulse-save {
-  background: #10B981;
-  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
-  animation: pulseGlow 1.8s infinite;
+  background: var(--md-primary, #123C69);
 }
 
 /* 2. Hero Profile Card */
 .pa-hero-card {
-  background: var(--surface-container, #FFFFFF);
-  border: 1px solid var(--outline-variant, #E2E8F0);
-  border-radius: 20px;
+  background: var(--md-surface, #FFFFFF);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 18px;
   padding: 24px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
 }
 
 [data-theme='dark'] .pa-hero-card {
-  background: #111827;
-  border-color: #1F2937;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  background: var(--md-surface, #111827);
+  border-color: var(--md-outline, #1F2937);
 }
 
 .pa-hero-grid {
@@ -1325,12 +1549,12 @@ const paStyles = `
 
 .pa-avatar-frame {
   position: relative;
-  width: 92px;
-  height: 92px;
-  border-radius: 24px;
-  padding: 4px;
-  background: linear-gradient(135deg, #38BDF8, #2563EB);
-  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.3);
+  width: 88px;
+  height: 88px;
+  border-radius: 20px;
+  padding: 3px;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.2));
+  border: 1px solid var(--md-primary, #123C69);
 }
 
 .pa-avatar-img {
@@ -1359,8 +1583,8 @@ const paStyles = `
 }
 
 .pa-avatar-edit-badge:hover {
-  transform: scale(1.1);
-  background: #2563EB;
+  transform: scale(1.06);
+  background: var(--md-primary, #123C69);
 }
 
 .pa-identity-details {
@@ -1402,21 +1626,19 @@ const paStyles = `
   gap: 4px;
   font-size: 0.6875rem;
   font-weight: 700;
-  background: rgba(16, 185, 129, 0.12);
-  color: #10B981;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  color: var(--md-on-primary-container, #3E521C);
   padding: 2px 8px;
   border-radius: 9999px;
 }
 
 .pa-plan-kicker-pill {
   font-size: 0.6875rem;
-  font-weight: 800;
-  background: rgba(37, 99, 235, 0.12);
-  color: #2563EB;
+  font-weight: 700;
+  background: var(--md-surface-variant, #F1F5F9);
+  color: var(--md-text-secondary, #64748B);
   padding: 2px 8px;
   border-radius: 9999px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .pa-user-heading {
@@ -1455,9 +1677,9 @@ const paStyles = `
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  color: var(--md-on-primary-container, #3E521C);
+  border: 1px solid rgba(18, 60, 105, 0.3);
   border-radius: 9999px;
   padding: 3px 10px;
   font-size: 0.75rem;
@@ -1467,7 +1689,7 @@ const paStyles = `
 }
 
 .pa-meta-role-btn:hover {
-  background: rgba(16, 185, 129, 0.2);
+  background: rgba(18, 60, 105, 0.24);
 }
 
 .pa-meta-text-pill {
@@ -1516,12 +1738,9 @@ const paStyles = `
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  color: var(--md-primary, #123C69);
 }
-
-.pa-stat-icon.amber { background: rgba(245, 158, 11, 0.15); color: #F59E0B; }
-.pa-stat-icon.emerald { background: rgba(16, 185, 129, 0.15); color: #10B981; }
-.pa-stat-icon.blue { background: rgba(37, 99, 235, 0.15); color: #2563EB; }
-.pa-stat-icon.purple { background: rgba(139, 92, 246, 0.15); color: #8B5CF6; }
 
 .pa-stat-content {
   display: flex;
@@ -1576,7 +1795,7 @@ const paStyles = `
 .pa-btn-close-drawer {
   font-size: 0.75rem;
   font-weight: 700;
-  color: #2563EB;
+  color: var(--md-primary, #123C69);
   background: none;
   border: none;
   cursor: pointer;
@@ -1627,10 +1846,9 @@ const paStyles = `
 }
 
 .pa-subnav-btn.active {
-  background: #2563EB;
+  background: var(--md-primary, #123C69);
   color: #FFFFFF;
   font-weight: 700;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
 }
 
 /* 4. Tab Section Layout */
@@ -1641,17 +1859,15 @@ const paStyles = `
 }
 
 .pa-panel-card {
-  background: var(--surface-container, #FFFFFF);
-  border: 1px solid var(--outline-variant, #E2E8F0);
-  border-radius: 18px;
-  padding: 24px;
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.03);
+  background: var(--md-surface, #FFFFFF);
+  border: 1px solid var(--md-outline, #E2E8F0);
+  border-radius: 16px;
+  padding: 22px 24px;
 }
 
 [data-theme='dark'] .pa-panel-card {
-  background: #111827;
-  border-color: #1F2937;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  background: var(--md-surface, #111827);
+  border-color: var(--md-outline, #1F2937);
 }
 
 .pa-panel-title {
@@ -1700,7 +1916,7 @@ const paStyles = `
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: linear-gradient(135deg, #10B981, #059669);
+  background: var(--md-primary, #123C69);
   color: #FFFFFF;
   border: none;
   border-radius: 10px;
@@ -1708,13 +1924,11 @@ const paStyles = `
   font-size: 0.75rem;
   font-weight: 700;
   cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+  transition: opacity 0.15s ease;
 }
 
 .pa-btn-accent:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+  opacity: 0.92;
 }
 
 /* Forms */
@@ -1773,8 +1987,8 @@ const paStyles = `
 .pa-input:focus,
 .pa-textarea:focus {
   outline: none;
-  border-color: #2563EB;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  border-color: var(--md-primary, #123C69);
+  box-shadow: 0 0 0 3px rgba(18, 60, 105, 0.18);
 }
 
 .pa-input-prefix-wrap,
@@ -1932,18 +2146,18 @@ const paStyles = `
 }
 
 .pa-preset-card:hover {
-  border-color: #2563EB;
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-preset-card.selected {
-  background: rgba(37, 99, 235, 0.08);
-  border-color: #2563EB;
-  box-shadow: 0 0 0 1px #2563EB;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.12));
+  border-color: var(--md-primary, #123C69);
+  box-shadow: 0 0 0 1px var(--md-primary, #123C69);
 }
 
 [data-theme='dark'] .pa-preset-card.selected {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: #38BDF8;
+  background: rgba(18, 60, 105, 0.18);
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-preset-val {
@@ -1964,7 +2178,7 @@ const paStyles = `
 .pa-preset-sub {
   font-size: 0.625rem;
   font-weight: 700;
-  color: #2563EB;
+  color: var(--md-primary, #123C69);
   margin-top: 4px;
 }
 
@@ -1975,7 +2189,7 @@ const paStyles = `
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #2563EB;
+  background: var(--md-primary, #123C69);
   color: #FFFFFF;
   display: flex;
   align-items: center;
@@ -2007,7 +2221,7 @@ const paStyles = `
 
 .pa-range-slider {
   width: 100%;
-  accent-color: #2563EB;
+  accent-color: var(--md-primary, #123C69);
   cursor: pointer;
 }
 
@@ -2043,18 +2257,18 @@ const paStyles = `
 }
 
 .pa-style-card:hover {
-  border-color: #2563EB;
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-style-card.active {
-  background: rgba(37, 99, 235, 0.08);
-  border-color: #2563EB;
-  box-shadow: 0 0 0 1px #2563EB;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.12));
+  border-color: var(--md-primary, #123C69);
+  box-shadow: 0 0 0 1px var(--md-primary, #123C69);
 }
 
 [data-theme='dark'] .pa-style-card.active {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: #38BDF8;
+  background: rgba(18, 60, 105, 0.18);
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-style-header {
@@ -2076,12 +2290,11 @@ const paStyles = `
 
 .pa-style-tag {
   font-size: 0.625rem;
-  font-weight: 800;
-  background: rgba(37, 99, 235, 0.15);
-  color: #2563EB;
+  font-weight: 700;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  color: var(--md-on-primary-container, #3E521C);
   padding: 1px 6px;
   border-radius: 9999px;
-  text-transform: uppercase;
 }
 
 .pa-style-desc {
@@ -2117,24 +2330,24 @@ const paStyles = `
 
 .pa-level-pill:hover {
   color: var(--md-text-primary, #0f172a);
-  border-color: #2563EB;
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-level-pill.active {
-  background: #2563EB;
+  background: var(--md-primary, #123C69);
   color: #FFFFFF;
-  border-color: #2563EB;
+  border-color: var(--md-primary, #123C69);
 }
 
 /* Quota Meter */
 .pa-quota-highlight {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(56, 189, 248, 0.04));
-  border-color: rgba(37, 99, 235, 0.25);
+  background: var(--md-surface-variant, #F8FAFC);
+  border-color: var(--md-outline, #E2E8F0);
 }
 
 [data-theme='dark'] .pa-quota-highlight {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(15, 23, 42, 0.9));
-  border-color: rgba(56, 189, 248, 0.3);
+  background: var(--md-surface-variant, #1E293B);
+  border-color: var(--md-outline, #334155);
 }
 
 .pa-quota-header {
@@ -2147,8 +2360,8 @@ const paStyles = `
 
 .pa-quota-kicker {
   font-size: 0.6875rem;
-  font-weight: 800;
-  color: #2563EB;
+  font-weight: 700;
+  color: var(--md-primary, #123C69);
   letter-spacing: 0.04em;
 }
 
@@ -2174,14 +2387,13 @@ const paStyles = `
   width: 68px;
   height: 68px;
   border-radius: 50%;
-  background: var(--surface-container, #FFFFFF);
-  border: 3px solid #2563EB;
+  background: var(--md-surface, #FFFFFF);
+  border: 3px solid var(--md-primary, #123C69);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.2);
 }
 
 [data-theme='dark'] .pa-quota-ring {
@@ -2191,7 +2403,7 @@ const paStyles = `
 .pa-quota-pct {
   font-size: 0.9375rem;
   font-weight: 900;
-  color: #2563EB;
+  color: var(--md-primary, #123C69);
   line-height: 1;
 }
 
@@ -2216,7 +2428,7 @@ const paStyles = `
 
 .pa-quota-fill {
   height: 100%;
-  background: linear-gradient(90deg, #38BDF8, #2563EB);
+  background: var(--md-primary, #123C69);
   border-radius: 9999px;
   transition: width 0.4s ease;
 }
@@ -2252,28 +2464,25 @@ const paStyles = `
 }
 
 .pa-plan-card.featured {
-  border-color: #2563EB;
-  box-shadow: 0 8px 30px rgba(37, 99, 235, 0.12);
+  border-color: var(--md-primary, #123C69);
 }
 
 [data-theme='dark'] .pa-plan-card.featured {
-  background: #151E33;
-  border-color: #3B82F6;
-  box-shadow: 0 8px 30px rgba(37, 99, 235, 0.25);
+  background: var(--md-surface, #111827);
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-popular-badge {
   position: absolute;
   top: -10px;
   left: 24px;
-  background: linear-gradient(135deg, #2563EB, #1D4ED8);
+  background: var(--md-primary, #123C69);
   color: #FFFFFF;
   font-size: 0.625rem;
   font-weight: 800;
   letter-spacing: 0.05em;
   padding: 3px 10px;
   border-radius: 9999px;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
 }
 
 .pa-plan-name {
@@ -2361,29 +2570,28 @@ const paStyles = `
 }
 
 .pa-btn-plan.current {
-  background: rgba(16, 185, 129, 0.12);
-  border-color: #10B981;
-  color: #059669;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  border-color: var(--md-primary, #123C69);
+  color: var(--md-on-primary-container, #3E521C);
   cursor: default;
 }
 
 .pa-btn-plan.primary {
-  background: #2563EB;
-  border-color: #2563EB;
+  background: var(--md-primary, #123C69);
+  border-color: var(--md-primary, #123C69);
   color: #FFFFFF;
-  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
 }
 
 .pa-btn-plan.primary:hover:not(.current) {
-  background: #1D4ED8;
+  opacity: 0.92;
 }
 
 /* Badges Grid */
 .pa-badge-counter {
   font-size: 0.75rem;
-  font-weight: 800;
-  background: rgba(245, 158, 11, 0.15);
-  color: #D97706;
+  font-weight: 700;
+  background: var(--md-surface-variant, #F1F5F9);
+  color: var(--md-text-secondary, #64748B);
   padding: 4px 10px;
   border-radius: 9999px;
 }
@@ -2526,8 +2734,8 @@ const paStyles = `
   border-radius: 9999px;
 }
 
-.pa-badge-fill.gold { background: linear-gradient(90deg, #F59E0B, #D97706); }
-.pa-badge-fill.blue { background: linear-gradient(90deg, #38BDF8, #2563EB); }
+.pa-badge-fill.gold { background: var(--md-primary, #123C69); }
+.pa-badge-fill.blue { background: var(--md-text-secondary, #64748B); }
 
 .pa-badge-date {
   font-size: 0.6875rem;
@@ -2596,7 +2804,7 @@ const paStyles = `
 }
 
 .pa-switch-btn.on {
-  background: #10B981;
+  background: var(--md-primary, #123C69);
 }
 
 .pa-switch-handle {
@@ -2615,9 +2823,9 @@ const paStyles = `
 
 .pa-session-active-tag {
   font-size: 0.6875rem;
-  font-weight: 800;
-  background: rgba(16, 185, 129, 0.15);
-  color: #10B981;
+  font-weight: 700;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.14));
+  color: var(--md-on-primary-container, #3E521C);
   padding: 2px 8px;
   border-radius: 9999px;
 }
@@ -2654,18 +2862,18 @@ const paStyles = `
 }
 
 .pa-theme-card:hover {
-  border-color: #2563EB;
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-theme-card.active {
-  background: rgba(37, 99, 235, 0.08);
-  border-color: #2563EB;
-  box-shadow: 0 0 0 1px #2563EB;
+  background: var(--md-primary-container, rgba(18, 60, 105, 0.12));
+  border-color: var(--md-primary, #123C69);
+  box-shadow: 0 0 0 1px var(--md-primary, #123C69);
 }
 
 [data-theme='dark'] .pa-theme-card.active {
-  background: rgba(37, 99, 235, 0.2);
-  border-color: #38BDF8;
+  background: rgba(18, 60, 105, 0.18);
+  border-color: var(--md-primary, #123C69);
 }
 
 .pa-theme-name {
@@ -2743,6 +2951,26 @@ const paStyles = `
 
 .pa-btn-signout:hover {
   background: rgba(239, 68, 68, 0.2);
+}
+
+.pa-btn-delete {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #DC2626;
+  border: 1px solid #B91C1C;
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: #FFFFFF;
+  cursor: pointer;
+}
+
+.pa-btn-delete:disabled,
+.pa-btn-export:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Keyframes */

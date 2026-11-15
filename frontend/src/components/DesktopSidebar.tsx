@@ -9,18 +9,18 @@ import {
   TrendingUp,
   Moon,
   Sun,
-  Settings,
   LogOut,
-  ShieldCheck,
   User,
 } from 'lucide-react';
 import type { ActiveNavTab, Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
+import type { AIQuotaSummary } from '../features/ai/aiGateway';
 
 interface Props {
   activeTab: ActiveNavTab;
   onChangeTab: (tab: ActiveNavTab) => void;
   profile: Profile;
+  aiQuota?: AIQuotaSummary | null;
   onOpenRoleModal: () => void;
   theme: ThemeMode;
   onToggleTheme: () => void;
@@ -32,52 +32,52 @@ export const DesktopSidebar: React.FC<Props> = ({
   activeTab,
   onChangeTab,
   profile,
+  aiQuota = null,
   onOpenRoleModal,
   theme,
   onToggleTheme,
-  onOpenSettings,
+  onOpenSettings: _onOpenSettings,
   onSignOut,
 }) => {
   const coreNavItems = [
-    { id: 'home' as ActiveNavTab, label: "Career Roadmap", icon: Home },
-    { id: 'plan' as ActiveNavTab, label: 'Weekly Schedule', icon: Calendar },
-    { id: 'overview' as ActiveNavTab, label: 'Pacing & Stats', icon: PieChart },
-    { id: 'coach' as ActiveNavTab, label: 'AI Career Coach', icon: Bot },
+    { id: 'home' as ActiveNavTab, label: 'Roadmap', icon: Home },
+    { id: 'plan' as ActiveNavTab, label: 'Schedule', icon: Calendar },
+    { id: 'overview' as ActiveNavTab, label: 'Analytics', icon: PieChart },
+    { id: 'coach' as ActiveNavTab, label: 'AI Coach', icon: Bot },
   ];
 
   const careerAccelerators = [
-    { id: 'interview' as ActiveNavTab, label: 'Interview Simulator', icon: Mic2 },
-    { id: 'cv' as ActiveNavTab, label: 'CV & Resume Builder', icon: FileText },
-    { id: 'skills' as ActiveNavTab, label: 'Skill Gap & Matching', icon: TrendingUp },
-    { id: 'profile' as ActiveNavTab, label: 'Account & Profile', icon: User },
+    { id: 'interview' as ActiveNavTab, label: 'Interviews', icon: Mic2 },
+    { id: 'cv' as ActiveNavTab, label: 'Resume', icon: FileText },
+    { id: 'skills' as ActiveNavTab, label: 'Skills', icon: TrendingUp },
+    { id: 'profile' as ActiveNavTab, label: 'Account', icon: User },
   ];
 
   return (
     <aside className="desktop-sidebar">
       {/* Brand Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', marginBottom: '18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', marginBottom: '18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div
             style={{
-              width: '34px',
-              height: '34px',
-              borderRadius: '10px',
-              background: '#8EA95B',
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              background: 'var(--md-primary)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               color: '#ffffff',
-              boxShadow: '0 3px 10px rgba(142, 169, 91, 0.3)',
             }}
           >
-            <Compass size={20} />
+            <Compass size={18} />
           </div>
           <div>
-            <h2 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--md-text-primary)', margin: 0, lineHeight: 1.1 }}>
+            <h2 style={{ fontSize: '15px', fontWeight: 800, color: 'var(--md-text-primary)', margin: 0, lineHeight: 1.2 }}>
               Career Pilot
             </h2>
-            <span style={{ fontSize: '10.5px', fontWeight: 600, color: 'var(--md-text-secondary)' }}>
-              Roadmap Workspace
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-muted)' }}>
+              Workspace
             </span>
           </div>
         </div>
@@ -90,8 +90,8 @@ export const DesktopSidebar: React.FC<Props> = ({
             background: 'var(--md-surface-variant)',
             border: '1px solid var(--md-outline)',
             borderRadius: '50%',
-            width: '30px',
-            height: '30px',
+            width: '28px',
+            height: '28px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -99,51 +99,52 @@ export const DesktopSidebar: React.FC<Props> = ({
             color: 'var(--md-text-primary)',
           }}
         >
-          {theme === 'dark' ? <Sun size={14} color="#F59E0B" /> : <Moon size={14} color="#6366F1" />}
+          {theme === 'dark' ? <Sun size={14} color="#F59E0B" /> : <Moon size={14} color="var(--md-text-secondary)" />}
         </button>
       </div>
 
       {/* Core Navigation Links */}
-      <div style={{ marginBottom: '14px' }}>
+      <div style={{ marginBottom: '16px' }}>
         <span
           style={{
-            fontSize: '10px',
-            fontWeight: 800,
+            fontSize: '10.5px',
+            fontWeight: 700,
             color: 'var(--md-text-muted)',
             textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            paddingLeft: '12px',
-            marginBottom: '4px',
+            letterSpacing: '0.04em',
+            paddingLeft: '10px',
+            marginBottom: '6px',
             display: 'block',
           }}
         >
-          Roadmap Core
+          Navigation
         </span>
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+        <nav aria-label="Primary navigation" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {coreNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => onChangeTab(item.id)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '10px',
-                  padding: '9px 12px',
-                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
                   border: 'none',
-                  background: isActive ? 'rgba(142, 169, 91, 0.15)' : 'transparent',
-                  color: isActive ? '#5C7433' : 'var(--md-text-secondary)',
+                  background: isActive ? 'var(--md-primary-container)' : 'transparent',
+                  color: isActive ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
                   fontSize: '13px',
-                  fontWeight: isActive ? 800 : 600,
+                  fontWeight: isActive ? 700 : 500,
                   cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'all 0.15s ease',
                 }}
               >
-                <Icon size={18} color={isActive ? '#8EA95B' : 'var(--md-text-muted)'} />
+                <Icon size={16} color={isActive ? 'var(--md-primary)' : 'var(--md-text-muted)'} />
                 <span>{item.label}</span>
               </button>
             );
@@ -152,46 +153,47 @@ export const DesktopSidebar: React.FC<Props> = ({
       </div>
 
       {/* Career Accelerators */}
-      <div style={{ marginBottom: '14px', flex: 1 }}>
+      <div style={{ marginBottom: '16px', flex: 1 }}>
         <span
           style={{
-            fontSize: '10px',
-            fontWeight: 800,
+            fontSize: '10.5px',
+            fontWeight: 700,
             color: 'var(--md-text-muted)',
             textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            paddingLeft: '12px',
-            marginBottom: '4px',
+            letterSpacing: '0.04em',
+            paddingLeft: '10px',
+            marginBottom: '6px',
             display: 'block',
           }}
         >
-          Career Tools
+          Tools
         </span>
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+        <nav aria-label="Career tools" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {careerAccelerators.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
               <button
                 key={item.id}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => onChangeTab(item.id)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: '10px',
-                  padding: '9px 12px',
-                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  borderRadius: '8px',
                   border: 'none',
-                  background: isActive ? 'rgba(142, 169, 91, 0.15)' : 'transparent',
-                  color: isActive ? '#5C7433' : 'var(--md-text-secondary)',
+                  background: isActive ? 'var(--md-primary-container)' : 'transparent',
+                  color: isActive ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
                   fontSize: '13px',
-                  fontWeight: isActive ? 800 : 600,
+                  fontWeight: isActive ? 700 : 500,
                   cursor: 'pointer',
                   textAlign: 'left',
                   transition: 'all 0.15s ease',
                 }}
               >
-                <Icon size={18} color={isActive ? '#8EA95B' : 'var(--md-text-muted)'} />
+                <Icon size={16} color={isActive ? 'var(--md-primary)' : 'var(--md-text-muted)'} />
                 <span>{item.label}</span>
               </button>
             );
@@ -200,70 +202,52 @@ export const DesktopSidebar: React.FC<Props> = ({
       </div>
 
       {/* Active Goal Path Card */}
-      <div
+      <button
+        type="button"
+        onClick={onOpenRoleModal}
+        title="Change Target Role"
         style={{
+          width: '100%',
+          textAlign: 'left',
           background: 'var(--md-surface-variant)',
           border: '1px solid var(--md-outline)',
-          borderRadius: '14px',
-          padding: '12px',
+          borderRadius: '10px',
+          padding: '10px 12px',
           marginBottom: '10px',
+          cursor: 'pointer',
+          transition: 'border-color 0.15s ease, background 0.15s ease',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-          <span style={{ fontSize: '10px', fontWeight: 800, color: '#8EA95B', textTransform: 'uppercase' }}>
-            Active Goal
+          <span style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.04em', color: 'var(--md-primary)', textTransform: 'uppercase' }}>
+            Target Role
           </span>
-          <span style={{ fontSize: '9.5px', fontWeight: 700, color: '#10B981', display: 'flex', alignItems: 'center', gap: '2px' }}>
-            <ShieldCheck size={11} /> Verified
-          </span>
-        </div>
-        <h4 style={{ fontSize: '12.5px', fontWeight: 800, color: 'var(--md-text-primary)', margin: '0 0 6px 0' }}>
-          {profile.target_role || 'Full Stack Engineer'}
-        </h4>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <button
-            onClick={onOpenRoleModal}
+          <span
             style={{
-              flex: 1,
-              background: 'var(--md-surface)',
-              border: '1px solid var(--md-outline)',
-              borderRadius: '8px',
-              padding: '5px 8px',
-              fontSize: '10.5px',
-              fontWeight: 700,
+              fontSize: '10px',
+              fontWeight: 600,
               color: 'var(--md-text-secondary)',
-              cursor: 'pointer',
+              background: 'var(--md-surface)',
+              border: '1px solid var(--md-outline-variant)',
+              borderRadius: '5px',
+              padding: '1px 6px',
             }}
           >
-            Adjust Goal
-          </button>
-          <button
-            onClick={onOpenSettings}
-            title="Account Settings"
-            style={{
-              background: 'var(--md-surface)',
-              border: '1px solid var(--md-outline)',
-              borderRadius: '8px',
-              padding: '5px 8px',
-              cursor: 'pointer',
-              color: 'var(--md-text-secondary)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Settings size={13} />
-          </button>
+            Switch
+          </span>
         </div>
-      </div>
+        <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary)', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {profile.target_role || 'Career Goal'}
+        </div>
+      </button>
 
       {/* User Session Footer & Sign Out */}
       <div
         style={{
           background: 'var(--md-surface-variant)',
           border: '1px solid var(--md-outline)',
-          borderRadius: '12px',
-          padding: '10px',
+          borderRadius: '10px',
+          padding: '8px 10px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -279,7 +263,7 @@ export const DesktopSidebar: React.FC<Props> = ({
             cursor: 'pointer',
             flex: 1,
             padding: '2px',
-            borderRadius: '8px',
+            borderRadius: '6px',
           }}
           title="View Account & Profile"
         >
@@ -287,19 +271,19 @@ export const DesktopSidebar: React.FC<Props> = ({
             src={profile.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
             alt={profile.full_name}
             style={{
-              width: '28px',
-              height: '28px',
+              width: '26px',
+              height: '26px',
               borderRadius: '50%',
               flexShrink: 0,
-              border: activeTab === 'profile' ? '2px solid #2563EB' : '1px solid var(--md-outline)',
+              border: '1px solid var(--md-outline)',
             }}
           />
           <div style={{ overflow: 'hidden' }}>
             <div style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-primary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
               {profile.full_name}
             </div>
-            <div style={{ fontSize: '10px', color: 'var(--md-text-secondary)' }}>
-              {profile.ai_prompts_left} AI calls
+            <div style={{ fontSize: '10px', color: 'var(--md-text-muted)' }}>
+              {aiQuota ? `${aiQuota.coach.remaining} AI credits` : 'Active'}
             </div>
           </div>
         </div>
@@ -310,7 +294,7 @@ export const DesktopSidebar: React.FC<Props> = ({
             background: 'none',
             border: 'none',
             cursor: 'pointer',
-            color: '#EF4444',
+            color: 'var(--md-text-muted)',
             padding: '4px',
             display: 'flex',
           }}

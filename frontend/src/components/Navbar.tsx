@@ -2,9 +2,11 @@ import React from 'react';
 import { Bell, Sparkles, Moon, Sun, LogOut, Compass } from 'lucide-react';
 import type { Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
+import type { AIQuotaSummary } from '../features/ai/aiGateway';
 
 interface Props {
   profile: Profile;
+  aiQuota?: AIQuotaSummary | null;
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenProfile?: () => void;
@@ -15,6 +17,7 @@ interface Props {
 
 export const Navbar: React.FC<Props> = ({
   profile,
+  aiQuota = null,
   theme,
   onToggleTheme,
   onOpenProfile,
@@ -42,13 +45,12 @@ export const Navbar: React.FC<Props> = ({
             height: '40px',
             borderRadius: '50%',
             overflow: 'hidden',
-            border: '2px solid #8EA95B',
-            boxShadow: '0 2px 8px rgba(142, 169, 91, 0.25)',
+            border: '2px solid var(--md-primary)',
             cursor: 'pointer',
             flexShrink: 0,
           }}
           onClick={onOpenProfile}
-          title="Profile & Settings"
+          title="Account & Settings"
         >
           <img
             src={profile.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100'}
@@ -59,22 +61,22 @@ export const Navbar: React.FC<Props> = ({
 
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-secondary, #64748B)' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-secondary)' }}>
               Career Pilot
             </span>
             <span
               onClick={onOpenGoalSettings}
               style={{
-                fontSize: '9.5px',
-                fontWeight: 800,
-                background: 'rgba(142, 169, 91, 0.15)',
-                color: '#5C7433',
-                padding: '1px 6px',
+                fontSize: '10px',
+                fontWeight: 700,
+                background: 'var(--md-primary-container)',
+                color: 'var(--md-on-primary-container)',
+                padding: '1px 7px',
                 borderRadius: '9999px',
                 cursor: 'pointer',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '2px',
+                gap: '3px',
               }}
             >
               <Compass size={10} />
@@ -84,8 +86,8 @@ export const Navbar: React.FC<Props> = ({
           <h3
             style={{
               fontSize: '15px',
-              fontWeight: 800,
-              color: 'var(--md-text-primary, #1E293B)',
+              fontWeight: 700,
+              color: 'var(--md-text-primary)',
               margin: 0,
               cursor: 'pointer',
             }}
@@ -98,46 +100,47 @@ export const Navbar: React.FC<Props> = ({
 
       {/* Right Action Icons & Badges */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        {/* AI Quota Badge */}
-        <div
+        {/* Live coach request quota */}
+        {aiQuota && !profile.is_demo && <div
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: '4px',
-            background: 'var(--md-surface, #FFFFFF)',
-            border: '1px solid var(--md-outline, #E2E8F0)',
+            background: 'var(--md-surface)',
+            border: '1px solid var(--md-outline)',
             borderRadius: '9999px',
             padding: '5px 10px',
             fontSize: '11px',
-            fontWeight: 700,
-            color: 'var(--md-text-primary, #1E293B)',
+            fontWeight: 600,
+            color: 'var(--md-text-secondary)',
           }}
-          title={`${profile.ai_prompts_left} AI calls remaining this week`}
+          title={`${aiQuota.coach.remaining} of ${aiQuota.coach.limit} coach requests left`}
         >
-          <Sparkles size={12} color="#8EA95B" />
-          <span>{profile.ai_prompts_left} calls</span>
-        </div>
+          <Sparkles size={12} color="var(--md-primary)" />
+          <span>{aiQuota.coach.remaining} left</span>
+        </div>}
 
         {/* Dark / Light Mode Switcher */}
         <button
           type="button"
           onClick={onToggleTheme}
           style={{
-            width: '36px',
-            height: '36px',
+            width: '40px',
+            height: '40px',
             borderRadius: '50%',
-            background: 'var(--md-surface, #FFFFFF)',
-            border: '1px solid var(--md-outline, #E2E8F0)',
+            background: 'var(--md-surface)',
+            border: '1px solid var(--md-outline)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            color: 'var(--md-text-primary, #1E293B)',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            color: 'var(--md-text-secondary)',
+            boxShadow: 'var(--shadow-sm)',
           }}
           title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         >
-          {theme === 'dark' ? <Sun size={15} color="#F59E0B" /> : <Moon size={15} color="#6366F1" />}
+          {theme === 'dark' ? <Sun size={16} color="#F59E0B" /> : <Moon size={16} />}
         </button>
 
         {/* Notification Bell Button */}
@@ -145,31 +148,32 @@ export const Navbar: React.FC<Props> = ({
           type="button"
           onClick={onOpenNotifications}
           style={{
-            width: '36px',
-            height: '36px',
+            width: '40px',
+            height: '40px',
             borderRadius: '50%',
-            background: 'var(--md-surface, #FFFFFF)',
-            border: '1px solid var(--md-outline, #E2E8F0)',
+            background: 'var(--md-surface)',
+            border: '1px solid var(--md-outline)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
             position: 'relative',
-            color: 'var(--md-text-primary, #1E293B)',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            color: 'var(--md-text-primary)',
+            boxShadow: 'var(--shadow-sm)',
           }}
-          title="Roadmap Notifications & Alerts"
+          title="Notifications"
+          aria-label="Notifications"
         >
-          <Bell size={15} />
+          <Bell size={16} />
           <span
             style={{
               position: 'absolute',
-              top: '8px',
-              right: '8px',
+              top: '9px',
+              right: '9px',
               width: '7px',
               height: '7px',
               borderRadius: '50%',
-              background: '#F97316',
+              background: 'var(--md-primary)',
             }}
           />
         </button>
@@ -179,21 +183,22 @@ export const Navbar: React.FC<Props> = ({
           type="button"
           onClick={onSignOut}
           style={{
-            width: '36px',
-            height: '36px',
+            width: '40px',
+            height: '40px',
             borderRadius: '50%',
-            background: 'var(--md-surface, #FFFFFF)',
-            border: '1px solid var(--md-outline, #E2E8F0)',
+            background: 'var(--md-surface)',
+            border: '1px solid var(--md-outline)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            color: '#EF4444',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            color: 'var(--md-text-secondary)',
+            boxShadow: 'var(--shadow-sm)',
           }}
           title="Sign Out"
+          aria-label="Sign Out"
         >
-          <LogOut size={15} />
+          <LogOut size={16} />
         </button>
       </div>
     </header>

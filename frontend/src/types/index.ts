@@ -1,4 +1,5 @@
 // Career Pilot: Professional Material 3 Data Models
+import type { CareerCategory } from '../features/roadmap/careerCatalog';
 
 export interface Profile {
   id: string;
@@ -7,15 +8,16 @@ export interface Profile {
   phone?: string;
   avatar_url?: string;
   target_role: string;
+  target_role_category?: CareerCategory;
   target_timeline_months?: number; // e.g. 3, 6, 9, 12, 18
   target_completion_date?: string; // ISO date string e.g. '2027-04-17'
   experience_level?: 'beginner' | 'switcher' | 'junior' | 'mid';
   plan: 'free' | 'premium';
   daily_minutes: number;
-  ai_prompts_left: number;
   streak_days: number;
   created_at: string;
   is_guest?: boolean;
+  is_demo?: boolean;
   has_completed_onboarding?: boolean;
   bio?: string;
   username?: string;
@@ -24,10 +26,13 @@ export interface Profile {
   github_url?: string;
   linkedin_url?: string;
   notification_daily_reminder?: boolean;
+  notification_daily_reminder_time?: string;
   notification_milestone_alerts?: boolean;
+  notification_streak_alerts?: boolean;
   notification_weekly_digest?: boolean;
+  notification_sound?: boolean;
+  weekly_reminder_frequency?: '2x' | '3x' | '4x';
   learning_style?: 'hands_on' | 'balanced' | 'fast_track';
-  two_factor_enabled?: boolean;
 }
 
 export interface Role {
@@ -69,13 +74,20 @@ export interface Task {
   progress_pct: number; // 0 to 100
   done_at?: string | null;
   quiz?: TaskQuiz;
+  quiz_template_id?: string;
   deliverable?: string; // e.g. 'Build and test JWT + RLS policy in Supabase'
+  resource?: {
+    id: string;
+    title: string;
+    url: string | null;
+    provider: string | null;
+  };
 }
 
 export interface QuizOption {
   id: string;
   text: string;
-  is_correct: boolean;
+  is_correct?: boolean;
 }
 
 export interface TaskQuiz {
@@ -93,7 +105,7 @@ export interface AICoachMessage {
   text: string;
   timestamp: string;
   proposal?: {
-    action: 'shift_milestone' | 'compress_tasks' | 'pause_week';
+    action: 'behind' | 'early' | 'pause';
     title: string;
     description: string;
     days?: number;
@@ -102,6 +114,7 @@ export interface AICoachMessage {
 
 export interface InterviewQuestion {
   id: string;
+  role_category?: string | null;
   round: 'Behavioral' | 'Technical' | 'System Design';
   difficulty: 'Junior' | 'Mid' | 'Senior';
   question: string;
@@ -143,12 +156,18 @@ export interface Vacancy {
   company: string;
   location: string;
   salary_range: string;
-  match_pct: number;
+  match_pct: number | null;
   required_skills: string[];
   missing_skills: string[];
+  source_type?: 'sample' | 'remoteok' | 'jooble';
+  source_url?: string;
+  published_at?: string | null;
 }
 
+export type CVTemplateId = 'modern' | 'minimalist' | 'executive' | 'creative' | 'compact';
+
 export interface CVData {
+  template_id?: CVTemplateId;
   full_name: string;
   email: string;
   phone: string;

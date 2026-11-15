@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
+  AlertCircle,
   Mail,
   Lock,
   Eye,
@@ -7,24 +8,30 @@ import {
   ArrowRight,
   ArrowLeft,
   User,
-  ChevronDown,
-  Sparkles,
   RefreshCw,
   CheckCircle2,
+  Compass,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { GoogleIcon, GithubIcon, MicrosoftIcon } from '../../components/SocialIcons';
-import { authService, demoAccounts } from './authService';
+import { GoogleIcon } from '../../components/SocialIcons';
+import { authService } from './authService';
+import { isSupabaseConfigured } from '../../lib/supabase';
 import type { Profile } from '../../types';
 
 interface Props {
   onAuthenticated: (profile: Profile) => void;
+  onMFARequired: () => void;
   onToast: (msg: string) => void;
 }
 
-export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
+const ACCENT_LINK = '#123C69';
+const ACCENT_BORDER = '#1E4D8B';
+
+export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, onToast }) => {
+  const supabaseConfigured = isSupabaseConfigured();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [signupStep, setSignupStep] = useState<'form' | 'otp'>('form');
+  const [verificationStep, setVerificationStep] = useState<'form' | 'otp'>('form');
+  const [verificationSource, setVerificationSource] = useState<'signup' | 'signin'>('signup');
 
   // Form Fields
   const [firstName, setFirstName] = useState('');
@@ -34,32 +41,28 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const [agreeTerms, setAgreeTerms] = useState(true);
+  const [rememberMe, setRememberMe] = useState(() => authService.getRememberMe());
+  const [agreeTerms, setAgreeTerms] = useState(false);
 
   // OTP Fields (6 individual digits)
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
-  const [previewOtp, setPreviewOtp] = useState<string | null>(null);
-  const [resendStatus, setResendStatus] = useState<string | null>(null);
   const [resendCountdown, setResendCountdown] = useState(0);
 
   // States
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showDemoList, setShowDemoList] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
 
-  // Focus first OTP input box when stepping into OTP view
   useEffect(() => {
-    if (mode === 'signup' && signupStep === 'otp') {
+    if (verificationStep === 'otp') {
       const timer = setTimeout(() => {
         otpInputRefs.current[0]?.focus();
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [mode, signupStep]);
+  }, [verificationStep]);
 
-  // Resend Countdown Timer
   useEffect(() => {
     if (resendCountdown <= 0) return;
     const timer = setInterval(() => {
@@ -68,105 +71,154 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     return () => clearInterval(timer);
   }, [resendCountdown]);
 
-  // Form Submit: Either Sign In or Send OTP for Sign Up
+  const switchMode = (nextMode: 'signin' | 'signup') => {
+    setError(null);
+    setResetEmailSent(false);
+    setMode(nextMode);
+    setVerificationStep('form');
+  };
+
+  const celebrateSignup = () => {
+    try {
+      confetti({
+        particleCount: 65,
+        spread: 60,
+        origin: { y: 0.65 },
+      });
+    } catch {
+      // Non-blocking
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
+    if (!isSupabaseConfigured()) {
+      setError('Connect this app to a Supabase project before signing in or creating an account.');
+      return;
+    }
+
+    if (verificationStep === 'otp') {
+      await handleVerifyOtp();
+      return;
+    }
+
     if (mode === 'signup') {
-      if (signupStep === 'form') {
-        const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-        if (!firstName.trim()) {
-          setError('Please enter your first name.');
-          return;
-        }
-        if (!email.trim() || !email.includes('@')) {
-          setError('Please enter a valid email address.');
-          return;
-        }
-        if (!password || password.length < 6) {
-          setError('Password must be at least 6 characters.');
-          return;
-        }
-        if (password !== confirmPassword) {
-          setError('Passwords do not match.');
-          return;
-        }
-        if (!agreeTerms) {
-          setError('Please accept the Terms of Service and Privacy Policy to continue.');
-          return;
-        }
-
-        setIsLoading(true);
-        try {
-          // Request OTP verification code dispatch
-          const res = await authService.sendEmailOtp({
-            email: email.trim(),
-            fullName,
-            targetRole: 'Full Stack Engineer',
-          });
-
-          if (!res.success) {
-            setError(res.error || 'Failed to dispatch verification code. Please try again.');
-            return;
-          }
-
-          setPreviewOtp(res.previewOtp || null);
-          setResendStatus(res.resendStatus);
-          setResendCountdown(60);
-          setOtpDigits(['', '', '', '', '', '']);
-          setSignupStep('otp');
-
-          if (res.emailSent) {
-            onToast(`📧 Verification code sent to ${email.trim()}!`);
-          } else {
-            onToast(`Code generated! Enter the 6-digit verification code.`);
-          }
-        } catch (err: any) {
-          setError(err.message || 'Error sending verification code.');
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        // In OTP step, submit OTP verification
-        await handleVerifyOtp();
-      }
-    } else {
-      // Sign In
-      if (!email.trim() || !email.includes('@')) {
-        setError('Please enter your email.');
+      const cleanFirst = firstName.trim();
+      const fullName = `${cleanFirst} ${lastName.trim()}`.trim();
+      if (cleanFirst.length < 2) {
+        setError('Please enter your first name (at least 2 characters).');
         return;
       }
-      if (!password) {
-        setError('Please enter your password.');
+      if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        setError('Please enter a valid email address.');
+        return;
+      }
+      if (!password || password.length < 8) {
+        setError('Password must be at least 8 characters.');
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError('Passwords do not match.');
+        return;
+      }
+      if (!agreeTerms) {
+        setError('Please accept the Terms of Service and Privacy Notice to continue.');
         return;
       }
 
       setIsLoading(true);
       try {
-        const res = await authService.signIn({
+        const res = await authService.signUp({
           email: email.trim(),
           password,
+          fullName,
           rememberMe,
+          legalConsentAccepted: agreeTerms,
         });
 
-        if (!res.success || !res.profile) {
-          setError(res.error || 'Invalid email or password.');
+        if (!res.success) {
+          setError(res.error || 'Could not create your account. Please try again.');
           return;
         }
 
-        onToast(`👋 Welcome back, ${res.profile.full_name}!`);
+        if (res.needsEmailVerification) {
+          setVerificationSource('signup');
+          setResendCountdown(60);
+          setOtpDigits(['', '', '', '', '', '']);
+          setVerificationStep('otp');
+          onToast(`6-digit verification code sent to ${email.trim()}.`);
+          return;
+        }
+
+        if (!res.profile) {
+          setError('Account created, but profile initialization failed. Try signing in.');
+          return;
+        }
+
+        celebrateSignup();
+        onToast(`Account created. Welcome to Career Pilot, ${res.profile.full_name}.`);
         onAuthenticated(res.profile);
-      } catch (err: any) {
-        setError(err.message || 'Authentication error occurred.');
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to create your account right now.');
       } finally {
         setIsLoading(false);
       }
+      return;
+    }
+
+    // Sign In
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Please enter a valid email address.');
+      return;
+    }
+    if (!password) {
+      setError('Please enter your password.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await authService.signIn({
+        email: email.trim(),
+        password,
+        rememberMe,
+      });
+
+      if (res.mfaRequired) {
+        onMFARequired();
+        return;
+      }
+
+      if (res.needsEmailVerification) {
+        setVerificationSource('signin');
+        setOtpDigits(['', '', '', '', '', '']);
+        setVerificationStep('otp');
+        setError(res.error || 'Verify your email before signing in.');
+        return;
+      }
+
+      if (!res.success || !res.profile) {
+        setError(res.error || 'Incorrect email or password.');
+        return;
+      }
+
+      onToast(`Welcome back, ${res.profile.full_name}.`);
+      onAuthenticated(res.profile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Authentication failed. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Verify submitted OTP code and create verified account
   const handleVerifyOtp = async (codeOverride?: string) => {
+    if (!isSupabaseConfigured()) {
+      setError('Connect this app to a Supabase project before verifying your email.');
+      return;
+    }
+
     const code = codeOverride || otpDigits.join('').trim();
     if (code.length < 6) {
       setError('Please enter all 6 digits of your verification code.');
@@ -175,59 +227,42 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
 
     setError(null);
     setIsLoading(true);
-
     try {
-      // 1. Verify code against server
-      const verifyRes = await authService.verifyEmailOtp({
+      const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+      const verifyRes = await authService.verifySignUpOtp({
         email: email.trim(),
         otp: code,
-      });
-
-      if (!verifyRes.success) {
-        setError(verifyRes.error || 'Incorrect verification code. Please check your email.');
-        setIsLoading(false);
-        return;
-      }
-
-      // 2. Complete signup and create active account
-      const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-      const signUpRes = await authService.completeSignUp({
-        email: email.trim(),
-        fullName: fullName || verifyRes.fullName || 'Career Pilot',
-        password,
+        fullName: fullName || undefined,
         rememberMe,
-        targetRole: verifyRes.targetRole || 'Full Stack Engineer',
+        legalConsentAccepted: verificationSource === 'signup' ? agreeTerms : true,
+        recordConsent: verificationSource === 'signup',
       });
 
-      if (!signUpRes.success || !signUpRes.profile) {
-        setError(signUpRes.error || 'Failed to initialize account profile.');
-        setIsLoading(false);
+      if (verifyRes.mfaRequired) {
+        onMFARequired();
         return;
       }
 
-      // Trigger celebratory confetti
-      try {
-        confetti({
-          particleCount: 65,
-          spread: 60,
-          origin: { y: 0.65 },
-        });
-      } catch {
-        // Non-blocking
+      if (!verifyRes.success || !verifyRes.profile) {
+        setError(verifyRes.error || 'Incorrect verification code. Check your email or request a new one.');
+        return;
       }
 
-      onToast(`🎉 Email verified! Welcome to Career Pilot, ${signUpRes.profile.full_name}!`);
-      onAuthenticated(signUpRes.profile);
-    } catch (err: any) {
-      setError(err.message || 'Verification failed. Please try again.');
+      if (verificationSource === 'signup') {
+        celebrateSignup();
+        onToast(`Email verified. Welcome, ${verifyRes.profile.full_name}.`);
+      } else {
+        onToast(`Email verified. Welcome back, ${verifyRes.profile.full_name}.`);
+      }
+      onAuthenticated(verifyRes.profile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handle individual digit input, auto-advancing, and complete paste
   const handleOtpDigitChange = (index: number, val: string) => {
-    // Handle paste of 6-digit string
     if (val.length > 1) {
       const clean = val.replace(/\D/g, '').slice(0, 6);
       if (clean.length > 0) {
@@ -237,7 +272,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         }
         setOtpDigits(nextDigits);
         if (clean.length === 6) {
-          handleVerifyOtp(clean);
+          void handleVerifyOtp(clean);
         } else {
           otpInputRefs.current[Math.min(clean.length, 5)]?.focus();
         }
@@ -251,129 +286,109 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     setOtpDigits(updated);
     setError(null);
 
-    // Auto-advance
     if (digit && index < 5) {
       otpInputRefs.current[index + 1]?.focus();
     }
 
-    // Auto-trigger if final digit entered
     if (digit && index === 5) {
       const full = updated.join('');
       if (full.length === 6) {
-        handleVerifyOtp(full);
+        void handleVerifyOtp(full);
       }
     }
   };
 
-  // Handle backspace to navigate to previous box
   const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Backspace') {
-      if (!otpDigits[index] && index > 0) {
-        otpInputRefs.current[index - 1]?.focus();
-      }
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus();
     }
   };
 
-  // Resend OTP code
-  const handleResendOtp = async () => {
+  const handleResendVerification = async () => {
     if (resendCountdown > 0 || isLoading) return;
+    if (!isSupabaseConfigured()) {
+      setError('Connect this app to a Supabase project before requesting an email code.');
+      return;
+    }
     setError(null);
     setIsLoading(true);
-
     try {
-      const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
-      const res = await authService.sendEmailOtp({
-        email: email.trim(),
-        fullName,
-        targetRole: 'Full Stack Engineer',
-      });
-
+      const res = await authService.resendVerificationEmail(email.trim());
       if (!res.success) {
-        setError(res.error || 'Failed to resend code.');
+        setError(res.error || 'Failed to resend verification email.');
         return;
       }
-
-      setPreviewOtp(res.previewOtp || null);
-      setResendStatus(res.resendStatus);
       setResendCountdown(60);
       setOtpDigits(['', '', '', '', '', '']);
-
-      if (res.emailSent) {
-        onToast(`📧 New verification code sent to ${email.trim()}!`);
-      } else {
-        onToast(`New code generated! Enter below.`);
-      }
+      onToast(`6-digit verification code resent to ${email.trim()}.`);
       otpInputRefs.current[0]?.focus();
-    } catch (err: any) {
-      setError(err.message || 'Error resending code.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error resending verification email.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleAutoFillOtp = (code: string) => {
-    const chars = code.split('').slice(0, 6);
-    const nextDigits = [...otpDigits];
-    for (let i = 0; i < 6; i++) {
-      nextDigits[i] = chars[i] || '';
+  const handleGoogleSignIn = async () => {
+    if (!isSupabaseConfigured()) {
+      setError('Connect this app to a Supabase project before using Google sign-in.');
+      return;
     }
-    setOtpDigits(nextDigits);
-    handleVerifyOtp(code);
-  };
-
-  const handleSocialClick = async (provider: 'google' | 'facebook' | 'twitter') => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await authService.signInWithSocial(provider);
-      if (res.success && res.profile) {
-        onToast(`Signed in with ${provider.charAt(0).toUpperCase() + provider.slice(1)}!`);
-        onAuthenticated(res.profile);
-      } else {
-        setError(res.error || 'Social authentication failed.');
+      const res = await authService.signInWithSocial('google', rememberMe);
+      if (!res.success) {
+        setError(res.error || 'Google sign-in could not be started.');
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google authentication failed.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handlePickDemo = (demo: (typeof demoAccounts)[0]) => {
-    authService.saveSession(demo.profile, true);
-    onToast(`Logged in as demo user: ${demo.profile.full_name}`);
-    onAuthenticated(demo.profile);
+  const handleForgotPassword = async () => {
+    if (!isSupabaseConfigured()) {
+      setError('Connect this app to a Supabase project before requesting a password reset.');
+      return;
+    }
+    setError(null);
+    setResetEmailSent(false);
+    setIsLoading(true);
+    try {
+      const res = await authService.requestPasswordReset(email);
+      if (!res.success) {
+        setError(res.error || 'Could not send a password reset email.');
+        return;
+      }
+      setResetEmailSent(true);
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Could not send a password reset email. Try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleForgotPassword = () => {
-    alert(
-      'To reset your password or sign in with a one-time code, enter your email and click Create account or contact support.'
-    );
-  };
+  const submitLabel = isLoading
+    ? mode === 'signup'
+      ? 'Creating account...'
+      : 'Signing in...'
+    : mode === 'signup'
+      ? 'Create account'
+      : 'Sign in';
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        width: '100%',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        background: '#EDF2F7',
-        padding: '24px 16px',
-        boxSizing: 'border-box',
-        fontFamily:
-          "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
-      {/* Main Responsive Card Window */}
+    <div className="auth-page-shell">
       <div
         className="auth-main-window"
         style={{
           width: '100%',
-          maxWidth: mode === 'signup' ? '1020px' : '960px',
-          minHeight: '620px',
+          maxWidth: mode === 'signup' ? '1000px' : '940px',
+          minHeight: '600px',
           background: '#FFFFFF',
-          borderRadius: '24px',
-          boxShadow: '0 25px 60px -15px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(226, 232, 240, 0.8)',
+          borderRadius: '22px',
+          boxShadow: '0 20px 50px -15px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(226, 232, 240, 0.85)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'row',
@@ -381,9 +396,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
           transition: 'max-width 0.25s ease',
         }}
       >
-        {/* ======================================================== */}
-        {/* LEFT BRAND / MOUNTAIN PANEL (Desktop View >= 860px)      */}
-        {/* ======================================================== */}
+        {/* Left Scenic Brand Panel (Desktop & Web) */}
         <div
           className="auth-left-brand-panel"
           style={{
@@ -394,26 +407,70 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
             flexShrink: 0,
           }}
         >
-          {/* Mountain Scenic Artwork from Reference */}
           <img
-            src={
-              mode === 'signup'
-                ? '/assets/auth-mountain-desktop.png'
-                : '/assets/login-mountain-desktop.png'
-            }
-            alt="Scenic mountain learning path"
+            src="/assets/career-auth-desktop.png"
+            alt="Illuminated winding career path rising through layered navy mountains toward sunrise"
             style={{
               width: '100%',
               height: '100%',
               objectFit: 'cover',
               objectPosition: 'center',
+              display: 'block',
             }}
           />
+          <div className="auth-brand-header" aria-hidden="true">
+            <div className="auth-brand-lockup">
+              <span className="auth-brand-mark"><Compass size={25} strokeWidth={2.2} /></span>
+              <span>Career Pilot</span>
+            </div>
+            <p>Plan today,<br />build tomorrow.</p>
+          </div>
+          <div className="auth-brand-footer" aria-hidden="true">
+            <strong>200+ curated career paths</strong>
+            <span>A clear next step, built around you.</span>
+          </div>
         </div>
 
-        {/* ======================================================== */}
-        {/* RIGHT FORM CONTAINER (Desktop & Mobile)                  */}
-        {/* ======================================================== */}
+        {/* Mobile Brand Hero Banner (< 860px) */}
+        <div className="auth-mobile-header-graphic">
+          <img
+            src="/assets/career-auth-mobile.png"
+            alt="Career Pilot mountain pathway illustration"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'center 45%',
+              display: 'block',
+            }}
+          />
+          <div className="auth-mobile-header-overlay" aria-hidden="true">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span
+                style={{
+                  display: 'grid',
+                  placeItems: 'center',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '9px',
+                  background: '#123C69',
+                  border: '1px solid rgba(255, 255, 255, 0.22)',
+                  color: '#FFFFFF',
+                }}
+              >
+                <Compass size={18} strokeWidth={2.2} />
+              </span>
+              <span style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '-0.025em' }}>
+                Career Pilot
+              </span>
+            </div>
+            <span style={{ fontSize: '12px', color: 'rgba(255, 255, 255, 0.86)', marginTop: '4px', fontWeight: 500 }}>
+              Plan today, build tomorrow · 200+ curated career paths
+            </span>
+          </div>
+        </div>
+
+        {/* Right Form Panel */}
         <div
           className="auth-right-form-panel"
           style={{
@@ -427,8 +484,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
             overflowY: 'auto',
           }}
         >
-          {/* Top-Right Toggle Link for Sign Up Screen */}
-          {mode === 'signup' && signupStep === 'form' && (
+          {mode === 'signup' && verificationStep === 'form' && (
             <div
               className="auth-top-switch-link"
               style={{
@@ -443,18 +499,9 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               Already have an account?{' '}
               <button
                 type="button"
-                onClick={() => {
-                  setError(null);
-                  setMode('signin');
-                  setSignupStep('form');
-                }}
+                className="auth-link-btn"
+                onClick={() => switchMode('signin')}
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#1D68F2',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  padding: 0,
                   fontSize: '12.5px',
                 }}
               >
@@ -463,36 +510,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
             </div>
           )}
 
-          {/* Mobile Header Graphic (Only visible on screens < 860px) */}
-          <div
-            className="auth-mobile-header-graphic"
-            style={{
-              display: 'none',
-              margin: '-40px -48px 24px -48px',
-              position: 'relative',
-              height: '150px',
-              overflow: 'hidden',
-              background: '#0B1E38',
-            }}
-          >
-            <img
-              src={
-                mode === 'signup'
-                  ? '/assets/auth-mountain-mobile.png'
-                  : '/assets/login-mountain-mobile.png'
-              }
-              alt="Mountain landscape"
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center',
-              }}
-            />
-          </div>
-
-          <div style={{ maxWidth: '440px', width: '100%', margin: '0 auto' }}>
-            {/* Step Progress Pills for Sign Up */}
+          <div style={{ maxWidth: '420px', width: '100%', margin: '0 auto' }}>
             {mode === 'signup' && (
               <div
                 style={{
@@ -504,18 +522,18 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               >
                 <div
                   style={{
-                    width: '42px',
+                    width: '40px',
                     height: '4px',
                     borderRadius: '9999px',
-                    background: '#1D68F2',
+                    background: ACCENT_BORDER,
                   }}
                 />
                 <div
                   style={{
-                    width: '42px',
+                    width: '40px',
                     height: '4px',
                     borderRadius: '9999px',
-                    background: signupStep === 'otp' ? '#1D68F2' : '#E2E8F0',
+                    background: verificationStep === 'otp' ? ACCENT_BORDER : '#E2E8F0',
                     transition: 'background 0.2s',
                   }}
                 />
@@ -525,22 +543,19 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     fontWeight: 700,
                     color: '#64748B',
                     marginLeft: '4px',
-                    letterSpacing: '0.04em',
-                    textTransform: 'uppercase',
                   }}
                 >
-                  {signupStep === 'form' ? 'Step 1: Details' : 'Step 2: Verification'}
+                  {verificationStep === 'form' ? 'Step 1 of 2' : 'Step 2 of 2'}
                 </span>
               </div>
             )}
 
-            {/* Back Button if in OTP step */}
-            {mode === 'signup' && signupStep === 'otp' && (
+            {verificationStep === 'otp' && (
               <button
                 type="button"
                 onClick={() => {
                   setError(null);
-                  setSignupStep('form');
+                  setVerificationStep('form');
                 }}
                 style={{
                   background: 'none',
@@ -556,25 +571,24 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 }}
               >
                 <ArrowLeft size={14} />
-                <span>Back to edit details</span>
+                <span>{verificationSource === 'signup' ? 'Back to edit details' : 'Back to sign in'}</span>
               </button>
             )}
 
-            {/* Header Titles */}
             <h1
               style={{
-                fontSize: '26px',
+                fontSize: '25px',
                 fontWeight: 800,
                 color: '#0F172A',
                 letterSpacing: '-0.025em',
                 margin: '0 0 6px 0',
               }}
             >
-              {mode === 'signup'
-                ? signupStep === 'form'
+              {verificationStep === 'otp'
+                ? 'Verify your email'
+                : mode === 'signup'
                   ? 'Create your account'
-                  : 'Verify your email'
-                : 'Welcome back'}
+                  : 'Welcome back'}
             </h1>
             <p
               style={{
@@ -584,16 +598,16 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 lineHeight: 1.5,
               }}
             >
-              {mode === 'signup'
-                ? signupStep === 'form'
-                  ? 'Join thousands of learners exploring tech careers with structured roadmaps.'
-                  : 'Enter the 6-digit authorization code sent to ' + email
-                : 'Continue your learning journey'}
+              {verificationStep === 'otp'
+                ? `Enter the 6-digit verification code sent to ${email.trim()}.`
+                : mode === 'signup'
+                  ? 'Start your personalized career roadmap.'
+                  : 'Sign in to continue your roadmap.'}
             </p>
 
-            {/* Error Message Alert */}
             {error && (
               <div
+                role="alert"
                 style={{
                   background: '#FEF2F2',
                   border: '1px solid #FECACA',
@@ -608,82 +622,50 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   gap: '8px',
                 }}
               >
-                <span style={{ flexShrink: 0 }}>⚠️</span>
+                <AlertCircle size={16} style={{ flexShrink: 0 }} aria-hidden="true" />
                 <span>{error}</span>
               </div>
             )}
 
-            {/* In-Development Preview Badge / Sandbox Notice */}
-            {mode === 'signup' && signupStep === 'otp' && previewOtp && (
+            {!supabaseConfigured && (
               <div
+                role="status"
                 style={{
-                  background: resendStatus === 'delivered' ? '#F0FDF4' : '#EFF6FF',
-                  border: `1px solid ${resendStatus === 'delivered' ? '#BBF7D0' : '#BFDBFE'}`,
-                  borderRadius: '12px',
+                  background: '#FFF7ED',
+                  border: '1px solid #FED7AA',
+                  borderRadius: '10px',
                   padding: '10px 14px',
-                  marginBottom: '18px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '10px',
+                  fontSize: '12.5px',
+                  color: '#9A3412',
+                  marginBottom: '16px',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Sparkles
-                    size={16}
-                    color={resendStatus === 'delivered' ? '#16A34A' : '#1D68F2'}
-                    style={{ flexShrink: 0 }}
-                  />
-                  <div style={{ fontSize: '11.5px', color: '#1E293B', lineHeight: 1.35 }}>
-                    {resendStatus === 'delivered' ? (
-                      <span>
-                        <strong style={{ color: '#166534' }}>Email dispatched via Resend!</strong>{' '}
-                        Check your inbox.
-                      </span>
-                    ) : (
-                      <span>
-                        <strong style={{ color: '#1E40AF' }}>Dev Test Code:</strong> Instant
-                        verification helper ready.
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleAutoFillOtp(previewOtp)}
-                  style={{
-                    background: '#1D68F2',
-                    color: '#FFFFFF',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '6px 12px',
-                    fontSize: '11px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                    boxShadow: '0 2px 6px rgba(29, 104, 242, 0.25)',
-                  }}
-                  title="Click to fill code automatically"
-                >
-                  Auto Fill ({previewOtp})
-                </button>
+                Account services require valid `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` values in the frontend environment.
               </div>
             )}
 
-            {/* =================================================== */}
-            {/* SIGN UP STEP 2: 6-DIGIT OTP VERIFICATION FORM       */}
-            {/* =================================================== */}
-            {mode === 'signup' && signupStep === 'otp' ? (
+            {resetEmailSent && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  background: '#EFF6FF',
+                  border: '1px solid #BFDBFE',
+                  borderRadius: '10px',
+                  padding: '10px 14px',
+                  fontSize: '12.5px',
+                  color: ACCENT_LINK,
+                  marginBottom: '16px',
+                  fontWeight: 500,
+                }}
+              >
+                If an account exists for {email.trim()}, a password reset link is on its way. Check your inbox and spam folder.
+              </div>
+            )}
+
+            {verificationStep === 'otp' ? (
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {/* 6 Digit Inputs */}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: '8px',
-                    margin: '6px 0 10px 0',
-                  }}
-                >
+                <div className="auth-otp-grid">
                   {otpDigits.map((digit, idx) => (
                     <input
                       key={idx}
@@ -692,32 +674,31 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                       }}
                       type="text"
                       inputMode="numeric"
+                      aria-label={`Verification digit ${idx + 1} of 6`}
                       maxLength={6}
                       value={digit}
                       onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
                       onKeyDown={(e) => handleOtpKeyDown(idx, e)}
                       autoComplete={idx === 0 ? 'one-time-code' : 'off'}
                       style={{
-                        width: '50px',
-                        height: '56px',
-                        borderRadius: '12px',
-                        border: `2px solid ${digit ? '#1D68F2' : '#CBD5E1'}`,
+                        width: '100%',
+                        minWidth: 0,
+                        height: '52px',
+                        borderRadius: '11px',
+                        border: `1.5px solid ${digit ? ACCENT_BORDER : '#CBD5E1'}`,
                         background: digit ? '#F8FAFC' : '#FFFFFF',
                         color: '#0F172A',
-                        fontSize: '24px',
+                        fontSize: '21px',
                         fontWeight: 800,
                         textAlign: 'center',
                         outline: 'none',
-                        boxShadow: digit
-                          ? '0 0 0 3px rgba(29, 104, 242, 0.15)'
-                          : '0 1px 2px rgba(0,0,0,0.03)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s',
+                        transition: 'border-color 0.15s',
+                        boxSizing: 'border-box',
                       }}
                     />
                   ))}
                 </div>
 
-                {/* Resend Code Row */}
                 <div
                   style={{
                     display: 'flex',
@@ -727,7 +708,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     color: '#64748B',
                   }}
                 >
-                  <span>Didn't receive the code?</span>
+                  <span>Didn&apos;t receive the code?</span>
                   {resendCountdown > 0 ? (
                     <span style={{ fontWeight: 600, color: '#94A3B8' }}>
                       Resend in {resendCountdown}s
@@ -735,72 +716,55 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   ) : (
                     <button
                       type="button"
-                      onClick={handleResendOtp}
+                      className="auth-link-btn"
+                      onClick={() => void handleResendVerification()}
                       disabled={isLoading}
                       style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#1D68F2',
-                        fontWeight: 700,
                         cursor: isLoading ? 'wait' : 'pointer',
-                        padding: 0,
                         fontSize: '12px',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '4px',
                       }}
                     >
-                      <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                      <RefreshCw size={12} className={isLoading ? 'spin-animation' : ''} />
                       Resend code
                     </button>
                   )}
                 </div>
 
-                {/* Submit Verification Button */}
                 <button
                   type="submit"
+                  className="auth-primary-btn"
                   disabled={isLoading || otpDigits.join('').length < 6}
                   style={{
                     width: '100%',
-                    marginTop: '8px',
+                    marginTop: '4px',
                     padding: '13px 20px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    background: '#1D68F2',
-                    color: '#FFFFFF',
                     fontSize: '14px',
-                    fontWeight: 700,
-                    cursor: isLoading || otpDigits.join('').length < 6 ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    boxShadow: '0 4px 14px rgba(29, 104, 242, 0.35)',
-                    opacity: isLoading || otpDigits.join('').length < 6 ? 0.6 : 1,
-                    transition: 'all 0.15s ease',
                   }}
                 >
                   {isLoading ? (
                     <>
-                      <RefreshCw size={16} className="animate-spin" />
-                      <span>Verifying Code...</span>
+                      <RefreshCw size={16} className="spin-animation" />
+                      <span>Verifying...</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 size={16} />
-                      <span>Verify & Complete Sign Up</span>
+                      <span>Verify &amp; Continue</span>
                     </>
                   )}
                 </button>
               </form>
             ) : (
-              /* =================================================== */
-              /* STANDARD FORM: SIGN IN OR SIGN UP STEP 1 (DETAILS)  */
-              /* =================================================== */
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                {/* Sign Up: First Name & Last Name (2 columns) */}
                 {mode === 'signup' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="auth-name-row">
                     <div
                       style={{
                         display: 'flex',
@@ -808,14 +772,14 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                         gap: '10px',
                         background: '#FFFFFF',
                         border: '1px solid #E2E8F0',
-                        borderRadius: '12px',
+                        borderRadius: '11px',
                         padding: '10px 14px',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                       }}
                     >
-                      <User size={16} color="#94A3B8" />
+                      <User size={16} color="#94A3B8" aria-hidden="true" />
                       <input
                         type="text"
+                        autoComplete="given-name"
                         placeholder="First name"
                         value={firstName}
                         onChange={(e) => setFirstName(e.target.value)}
@@ -838,14 +802,14 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                         gap: '10px',
                         background: '#FFFFFF',
                         border: '1px solid #E2E8F0',
-                        borderRadius: '12px',
+                        borderRadius: '11px',
                         padding: '10px 14px',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                       }}
                     >
-                      <User size={16} color="#94A3B8" />
+                      <User size={16} color="#94A3B8" aria-hidden="true" />
                       <input
                         type="text"
+                        autoComplete="family-name"
                         placeholder="Last name"
                         value={lastName}
                         onChange={(e) => setLastName(e.target.value)}
@@ -862,7 +826,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   </div>
                 )}
 
-                {/* Email Address */}
                 <div
                   style={{
                     display: 'flex',
@@ -870,17 +833,20 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     gap: '10px',
                     background: '#FFFFFF',
                     border: '1px solid #E2E8F0',
-                    borderRadius: '12px',
+                    borderRadius: '11px',
                     padding: '10px 14px',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                   }}
                 >
-                  <Mail size={16} color="#94A3B8" />
+                  <Mail size={16} color="#94A3B8" aria-hidden="true" />
                   <input
                     type="email"
+                    autoComplete="email"
                     placeholder="Email address"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setResetEmailSent(false);
+                    }}
                     required
                     style={{
                       border: 'none',
@@ -893,7 +859,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   />
                 </div>
 
-                {/* Password */}
                 <div
                   style={{
                     display: 'flex',
@@ -901,17 +866,18 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     gap: '10px',
                     background: '#FFFFFF',
                     border: '1px solid #E2E8F0',
-                    borderRadius: '12px',
+                    borderRadius: '11px',
                     padding: '10px 14px',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                   }}
                 >
-                  <Lock size={16} color="#94A3B8" />
+                  <Lock size={16} color="#94A3B8" aria-hidden="true" />
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Password (min 6 characters)"
+                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                    placeholder={mode === 'signup' ? 'Password (8+ characters)' : 'Password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    minLength={mode === 'signup' ? 8 : undefined}
                     required
                     style={{
                       border: 'none',
@@ -924,6 +890,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   />
                   <button
                     type="button"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
                     onClick={() => setShowPassword((prev) => !prev)}
                     style={{
                       background: 'none',
@@ -939,7 +906,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   </button>
                 </div>
 
-                {/* Confirm Password (Sign Up only) */}
                 {mode === 'signup' && (
                   <div
                     style={{
@@ -948,17 +914,18 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                       gap: '10px',
                       background: '#FFFFFF',
                       border: '1px solid #E2E8F0',
-                      borderRadius: '12px',
+                      borderRadius: '11px',
                       padding: '10px 14px',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.02)',
                     }}
                   >
-                    <Lock size={16} color="#94A3B8" />
+                    <Lock size={16} color="#94A3B8" aria-hidden="true" />
                     <input
                       type={showConfirmPassword ? 'text' : 'password'}
+                      autoComplete="new-password"
                       placeholder="Confirm password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      minLength={8}
                       required
                       style={{
                         border: 'none',
@@ -971,6 +938,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     />
                     <button
                       type="button"
+                      aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                       onClick={() => setShowConfirmPassword((prev) => !prev)}
                       style={{
                         background: 'none',
@@ -987,9 +955,9 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   </div>
                 )}
 
-                {/* Row: Checkboxes & Links */}
                 {mode === 'signin' ? (
                   <div
+                    className="auth-signin-options"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1012,7 +980,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                         checked={rememberMe}
                         onChange={(e) => setRememberMe(e.target.checked)}
                         style={{
-                          accentColor: '#1D68F2',
+                          accentColor: ACCENT_LINK,
                           width: '15px',
                           height: '15px',
                           cursor: 'pointer',
@@ -1022,14 +990,11 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     </label>
                     <button
                       type="button"
-                      onClick={handleForgotPassword}
+                      className="auth-link-btn"
+                      onClick={() => void handleForgotPassword()}
+                      disabled={!supabaseConfigured || isLoading}
                       style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#1D68F2',
                         fontWeight: 600,
-                        cursor: 'pointer',
-                        padding: 0,
                         fontSize: '12.5px',
                       }}
                     >
@@ -1038,81 +1003,66 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   </div>
                 ) : (
                   <div style={{ fontSize: '12px', marginTop: '2px' }}>
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        color: '#475569',
-                        lineHeight: 1.4,
-                      }}
-                    >
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', color: '#475569', lineHeight: 1.4 }}>
                       <input
+                        id="signup-legal-consent"
                         type="checkbox"
+                        aria-required="true"
+                        required
                         checked={agreeTerms}
                         onChange={(e) => setAgreeTerms(e.target.checked)}
                         style={{
-                          accentColor: '#1D68F2',
+                          accentColor: ACCENT_LINK,
                           width: '15px',
                           height: '15px',
                           marginTop: '2px',
                           cursor: 'pointer',
                         }}
                       />
-                      <span>
-                        I agree to the{' '}
-                        <span style={{ color: '#1D68F2', fontWeight: 600 }}>Terms of Service</span> and{' '}
-                        <span style={{ color: '#1D68F2', fontWeight: 600 }}>Privacy Policy</span>
-                      </span>
-                    </label>
+                      <div style={{ display: 'grid', gap: '3px' }}>
+                        <label htmlFor="signup-legal-consent" style={{ cursor: 'pointer' }}>
+                          I agree to the{' '}
+                          <a href="/legal/terms.html" target="_blank" rel="noopener noreferrer" style={{ color: ACCENT_LINK, fontWeight: 600 }}>
+                            Terms of Service
+                          </a>{' '}
+                          and{' '}
+                          <a href="/legal/privacy.html" target="_blank" rel="noopener noreferrer" style={{ color: ACCENT_LINK, fontWeight: 600 }}>
+                            Privacy Notice
+                          </a>.
+                        </label>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {/* Submit CTA Button */}
                 <button
                   type="submit"
-                  disabled={isLoading}
+                  className="auth-primary-btn"
+                  disabled={!supabaseConfigured || isLoading}
                   style={{
                     width: '100%',
-                    marginTop: '8px',
+                    marginTop: '6px',
                     padding: '12px 20px',
-                    borderRadius: '12px',
-                    border: 'none',
-                    background: '#1D68F2',
-                    color: '#FFFFFF',
                     fontSize: '13.5px',
-                    fontWeight: 700,
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: '8px',
-                    boxShadow: '0 4px 14px rgba(29, 104, 242, 0.35)',
-                    transition: 'background 0.15s ease, transform 0.1s ease',
-                    opacity: isLoading ? 0.7 : 1,
                   }}
                 >
-                  <span>
-                    {isLoading
-                      ? 'Sending Verification Code...'
-                      : mode === 'signup'
-                        ? 'Create account'
-                        : 'Sign in'}
-                  </span>
+                  <span>{submitLabel}</span>
                   {!isLoading && <ArrowRight size={16} />}
                 </button>
               </form>
             )}
 
-            {/* "or continue with" Divider */}
-            {!(mode === 'signup' && signupStep === 'otp') && (
+            {verificationStep !== 'otp' && (
               <>
                 <div
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    margin: '22px 0 16px 0',
+                    margin: '20px 0 14px 0',
                     gap: '12px',
                   }}
                 >
@@ -1123,112 +1073,35 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                   <div style={{ flex: 1, height: '1px', background: '#E2E8F0' }} />
                 </div>
 
-                {/* Social Authentication Buttons */}
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(3, 1fr)',
-                    gap: '10px',
-                  }}
+                <button
+                  type="button"
+                  className="auth-google-btn"
+                  aria-label="Continue with Google"
+                  onClick={() => void handleGoogleSignIn()}
+                  disabled={!supabaseConfigured || isLoading}
                 >
-                  <button
-                    type="button"
-                    onClick={() => handleSocialClick('google')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '9px 12px',
-                      background: '#FFFFFF',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      fontWeight: 600,
-                      color: '#1E293B',
-                      transition: 'background 0.15s ease, border-color 0.15s ease',
-                    }}
-                  >
-                    <GoogleIcon size={18} />
-                    {mode === 'signup' && <span className="auth-social-label">Google</span>}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSocialClick('twitter')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '9px 12px',
-                      background: '#FFFFFF',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      fontWeight: 600,
-                      color: '#1E293B',
-                      transition: 'background 0.15s ease, border-color 0.15s ease',
-                    }}
-                  >
-                    <GithubIcon size={18} />
-                    {mode === 'signup' && <span className="auth-social-label">GitHub</span>}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleSocialClick('facebook')}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '9px 12px',
-                      background: '#FFFFFF',
-                      border: '1px solid #E2E8F0',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      fontWeight: 600,
-                      color: '#1E293B',
-                      transition: 'background 0.15s ease, border-color 0.15s ease',
-                    }}
-                  >
-                    <MicrosoftIcon size={18} />
-                    {mode === 'signup' && <span className="auth-social-label">Microsoft</span>}
-                  </button>
-                </div>
+                  <GoogleIcon size={18} />
+                  <span>Continue with Google</span>
+                </button>
               </>
             )}
 
-            {/* Footer Bottom Link */}
             <div
               style={{
                 textAlign: 'center',
-                marginTop: '22px',
+                marginTop: '20px',
                 fontSize: '12.5px',
                 color: '#64748B',
               }}
             >
-              {mode === 'signin' ? (
+              {mode === 'signin' && verificationStep === 'form' ? (
                 <>
-                  Don't have an account?{' '}
+                  Don&apos;t have an account?{' '}
                   <button
                     type="button"
-                    onClick={() => {
-                      setError(null);
-                      setMode('signup');
-                      setSignupStep('form');
-                    }}
+                    className="auth-link-btn"
+                    onClick={() => switchMode('signup')}
                     style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#1D68F2',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      padding: 0,
                       fontSize: '12.5px',
                     }}
                   >
@@ -1238,97 +1111,21 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               ) : (
                 <div
                   className={
-                    signupStep === 'otp' ? 'auth-mobile-signin-bottom-visible' : 'auth-mobile-signin-bottom'
+                    verificationStep === 'otp' ? 'auth-mobile-signin-bottom-visible' : 'auth-mobile-signin-bottom'
                   }
-                  style={{ display: signupStep === 'otp' ? 'block' : 'none' }}
+                  style={{ display: verificationStep === 'otp' ? 'block' : 'none' }}
                 >
                   Already have an account?{' '}
                   <button
                     type="button"
-                    onClick={() => {
-                      setError(null);
-                      setMode('signin');
-                      setSignupStep('form');
-                    }}
+                    className="auth-link-btn"
+                    onClick={() => switchMode('signin')}
                     style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#1D68F2',
-                      fontWeight: 700,
-                      cursor: 'pointer',
-                      padding: 0,
                       fontSize: '12.5px',
                     }}
                   >
                     Sign in
                   </button>
-                </div>
-              )}
-            </div>
-
-            {/* Quick Demo Accounts Drawer (For easy testing) */}
-            <div
-              style={{
-                marginTop: '24px',
-                borderTop: '1px dashed #E2E8F0',
-                paddingTop: '12px',
-                textAlign: 'center',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setShowDemoList((prev) => !prev)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  color: '#94A3B8',
-                  cursor: 'pointer',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                <span>Quick Test Logins (Demo Profiles)</span>
-                <ChevronDown
-                  size={12}
-                  style={{
-                    transform: showDemoList ? 'rotate(180deg)' : 'none',
-                    transition: 'transform 0.15s',
-                  }}
-                />
-              </button>
-
-              {showDemoList && (
-                <div
-                  style={{
-                    display: 'flex',
-                    flexWrap: 'wrap',
-                    gap: '6px',
-                    justifyContent: 'center',
-                    marginTop: '10px',
-                  }}
-                >
-                  {demoAccounts.map((d) => (
-                    <button
-                      key={d.profile.id}
-                      type="button"
-                      onClick={() => handlePickDemo(d)}
-                      style={{
-                        background: '#F1F5F9',
-                        border: '1px solid #CBD5E1',
-                        borderRadius: '9999px',
-                        padding: '4px 10px',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        color: '#334155',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      {d.profile.full_name} ({d.label})
-                    </button>
-                  ))}
                 </div>
               )}
             </div>

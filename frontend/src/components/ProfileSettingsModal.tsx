@@ -7,17 +7,17 @@ import {
   Moon,
   Sun,
   Save,
-  Check,
 } from 'lucide-react';
 import { AvatarPicker } from '../features/auth/AuthIllustration';
 import type { Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   profile: Profile;
-  onUpdateProfile: (updated: Partial<Profile>) => void;
+  onUpdateProfile: (updated: Partial<Profile>) => Promise<void>;
   theme: ThemeMode;
   onToggleTheme: () => void;
   onOpenAuth: () => void;
@@ -39,20 +39,25 @@ export const ProfileSettingsModal: React.FC<Props> = ({
   const [fullName, setFullName] = useState(profile.full_name);
   const [avatarUrl, setAvatarUrl] = useState(profile.avatar_url || '/avatars/career_navigator.jpg');
   const [dailyMinutes, setDailyMinutes] = useState(profile.daily_minutes);
-  const [selectedPlan, setSelectedPlan] = useState<'free' | 'premium'>(profile.plan);
+  const selectedPlan = profile.plan;
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const dialogRef = useAccessibleDialog(isOpen, onClose);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
-    onUpdateProfile({
-      full_name: fullName,
-      avatar_url: avatarUrl,
-      daily_minutes: dailyMinutes,
-      plan: selectedPlan,
-      ai_prompts_left: selectedPlan === 'premium' ? 100 : Math.min(15, profile.ai_prompts_left),
-    });
-    onToast('✅ Profile & Settings successfully saved!');
-    onClose();
+  const handleSave = async () => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onUpdateProfile({ full_name: fullName, avatar_url: avatarUrl, daily_minutes: dailyMinutes });
+      onToast('✅ Profile & Settings successfully saved!');
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save your profile.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -72,7 +77,12 @@ export const ProfileSettingsModal: React.FC<Props> = ({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
         className="m3-surface-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Account and preferences"
+        tabIndex={-1}
         style={{
           width: '100%',
           maxWidth: '540px',
@@ -115,7 +125,9 @@ export const ProfileSettingsModal: React.FC<Props> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close account preferences"
             style={{
               background: 'var(--md-surface-variant)',
               border: 'none',
@@ -134,11 +146,13 @@ export const ProfileSettingsModal: React.FC<Props> = ({
 
         {/* Full Name & Target Role */}
         <div style={{ marginBottom: '18px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)', display: 'block', marginBottom: '6px' }}>
+          <label htmlFor="profile-settings-full-name" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)', display: 'block', marginBottom: '6px' }}>
             Full Name
           </label>
           <input
+            id="profile-settings-full-name"
             type="text"
+            data-dialog-initial-focus
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             style={{
@@ -233,55 +247,27 @@ export const ProfileSettingsModal: React.FC<Props> = ({
           </button>
         </div>
 
-        {/* Low-AI Subscription Tier Selection (Docx Section 9) */}
+        {/* Access status: billing is not connected in this build. */}
         <div style={{ marginBottom: '22px' }}>
           <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)', display: 'block', marginBottom: '8px' }}>
-            Subscription & Weekly AI Quota (Docx Section 9)
+            Account access
           </label>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            {/* Free Tier */}
-            <div
-              onClick={() => setSelectedPlan('free')}
-              style={{
-                border: `2px solid ${selectedPlan === 'free' ? '#6366f1' : 'var(--md-outline)'}`,
-                background: selectedPlan === 'free' ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
-                borderRadius: '14px',
-                padding: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <strong style={{ fontSize: '13.5px', color: selectedPlan === 'free' ? 'var(--md-on-primary-container)' : 'var(--md-text-primary)' }}>
-                  Free Explorer
-                </strong>
-                {selectedPlan === 'free' && <Check size={16} color="#6366f1" />}
-              </div>
-              <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                15 coach calls / wk • $0 base cost
-              </div>
-            </div>
-
-            {/* Premium Tier */}
-            <div
-              onClick={() => setSelectedPlan('premium')}
-              style={{
-                border: `2px solid ${selectedPlan === 'premium' ? '#7c3aed' : 'var(--md-outline)'}`,
-                background: selectedPlan === 'premium' ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
-                borderRadius: '14px',
-                padding: '14px',
-                cursor: 'pointer',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <strong style={{ fontSize: '13.5px', color: selectedPlan === 'premium' ? 'var(--md-on-primary-container)' : 'var(--md-text-primary)' }}>
-                  Pro Navigator
-                </strong>
-                {selectedPlan === 'premium' && <Check size={16} color="#7c3aed" />}
-              </div>
-              <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                100 coach calls / wk • Priority edge
-              </div>
+          <div
+            role="status"
+            style={{
+              border: '1px solid var(--md-outline)',
+              background: 'var(--md-surface-variant)',
+              borderRadius: '14px',
+              padding: '14px',
+              color: 'var(--md-text-primary)',
+              fontSize: '12px',
+              lineHeight: 1.5,
+            }}
+          >
+            <strong>{selectedPlan === 'premium' ? 'Pro access' : 'Free access'}</strong>
+            <div style={{ color: 'var(--md-text-secondary)', marginTop: '4px' }}>
+              Billing is not connected. Plan changes and payment management are unavailable.
+              Usage limits are available in the Plan & AI quota section.
             </div>
           </div>
         </div>
@@ -315,6 +301,7 @@ export const ProfileSettingsModal: React.FC<Props> = ({
 
             <button
               onClick={handleSave}
+              disabled={isSaving}
               style={{
                 flex: 1,
                 background: 'var(--md-violet-gradient)',
@@ -324,7 +311,8 @@ export const ProfileSettingsModal: React.FC<Props> = ({
                 fontSize: '13px',
                 fontWeight: 700,
                 color: '#ffffff',
-                cursor: 'pointer',
+                cursor: isSaving ? 'wait' : 'pointer',
+                opacity: isSaving ? 0.7 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -332,9 +320,10 @@ export const ProfileSettingsModal: React.FC<Props> = ({
                 boxShadow: 'var(--shadow-glow)',
               }}
             >
-              <Save size={16} /> Save Changes
+              <Save size={16} /> {isSaving ? 'Saving…' : 'Save Changes'}
             </button>
           </div>
+          {saveError && <p role="alert" style={{ margin: 0, color: '#B91C1C', fontSize: '12px' }}>{saveError}</p>}
 
           {profile.email && !profile.is_guest && onSignOut && (
             <button

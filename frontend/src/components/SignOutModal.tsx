@@ -1,5 +1,6 @@
 import React from 'react';
 import { LogOut, X } from 'lucide-react';
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
 
 interface Props {
   isOpen: boolean;
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export const SignOutModal: React.FC<Props> = ({ isOpen, onClose, onConfirmSignOut }) => {
+  const dialogRef = useAccessibleDialog(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
@@ -29,7 +31,12 @@ export const SignOutModal: React.FC<Props> = ({ isOpen, onClose, onConfirmSignOu
     >
       {/* Modal Dialog Window */}
       <div
+        ref={dialogRef}
         className="signout-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sign out confirmation"
+        tabIndex={-1}
         style={{
           width: '100%',
           maxWidth: '740px',
@@ -45,7 +52,9 @@ export const SignOutModal: React.FC<Props> = ({ isOpen, onClose, onConfirmSignOu
       >
         {/* Close Button at top right */}
         <button
+          type="button"
           onClick={onClose}
+          aria-label="Close sign out confirmation"
           style={{
             position: 'absolute',
             top: '16px',

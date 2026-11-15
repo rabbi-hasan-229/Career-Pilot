@@ -9,6 +9,7 @@ import {
   User,
 } from 'lucide-react';
 import type { ActiveNavTab } from '../types';
+import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
 
 interface Props {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export const QuickActionSheetModal: React.FC<Props> = ({
   onOpenRoleModal,
   onQuickReplan,
 }) => {
+  const dialogRef = useAccessibleDialog(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
@@ -43,6 +45,11 @@ export const QuickActionSheetModal: React.FC<Props> = ({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Quick actions and replanning"
+        tabIndex={-1}
         style={{
           width: '100%',
           maxWidth: '520px',
@@ -83,7 +90,9 @@ export const QuickActionSheetModal: React.FC<Props> = ({
             </span>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close quick actions"
             style={{
               background: 'var(--md-surface-variant)',
               border: 'none',
@@ -228,7 +237,7 @@ export const QuickActionSheetModal: React.FC<Props> = ({
                     Account & Professional Profile
                   </div>
                   <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                    Career persona, pacing goals, plan tier & telemetry
+                    Career goals, AI usage & account access
                   </div>
                 </div>
               </div>
@@ -279,7 +288,7 @@ export const QuickActionSheetModal: React.FC<Props> = ({
                 textAlign: 'center',
               }}
             >
-              "Finished Early"
+              Move Plan Earlier
             </button>
             <button
               onClick={() => {

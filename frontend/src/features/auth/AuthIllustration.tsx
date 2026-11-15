@@ -31,7 +31,7 @@ export const AuthHeroShowcase: React.FC<ShowcaseProps> = ({
           width: '320px',
           height: '320px',
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(142, 169, 91, 0.25) 0%, rgba(59, 130, 246, 0.15) 50%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(18, 60, 105, 0.25) 0%, rgba(59, 130, 246, 0.15) 50%, transparent 70%)',
           filter: 'blur(32px)',
           zIndex: 0,
         }}
@@ -70,7 +70,7 @@ export const AuthHeroShowcase: React.FC<ShowcaseProps> = ({
             bottom: '20px',
             right: '20px',
             background: '#0F172A',
-            border: '2px solid #8EA95B',
+            border: '2px solid #123C69',
             borderRadius: '9999px',
             padding: '4px 10px',
             display: 'flex',
@@ -84,8 +84,8 @@ export const AuthHeroShowcase: React.FC<ShowcaseProps> = ({
               width: '8px',
               height: '8px',
               borderRadius: '50%',
-              background: '#8EA95B',
-              boxShadow: '0 0 8px #8EA95B',
+              background: '#3B82F6',
+              boxShadow: '0 0 8px rgba(59, 130, 246, 0.65)',
             }}
           />
           <span style={{ fontSize: '11px', fontWeight: 700, color: '#FFFFFF', letterSpacing: '0.02em' }}>
@@ -118,7 +118,7 @@ export const AuthHeroShowcase: React.FC<ShowcaseProps> = ({
             width: '32px',
             height: '32px',
             borderRadius: '10px',
-            background: 'linear-gradient(135deg, #8EA95B, #6E8742)',
+            background: 'linear-gradient(135deg, #123C69, #255A96)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -215,8 +215,8 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelec
               type="button"
               onClick={() => onSelect(avatar.url)}
               style={{
-                background: isSelected ? '#F0FDF4' : '#F8FAFC',
-                border: isSelected ? '2px solid #8EA95B' : '1px solid #E2E8F0',
+                background: isSelected ? 'rgba(18, 60, 105, 0.08)' : '#F8FAFC',
+                border: isSelected ? '2px solid #123C69' : '1px solid #E2E8F0',
                 borderRadius: '14px',
                 padding: '6px',
                 cursor: 'pointer',
@@ -226,7 +226,7 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelec
                 gap: '4px',
                 position: 'relative',
                 transition: 'all 0.15s ease',
-                boxShadow: isSelected ? '0 4px 12px rgba(142, 169, 91, 0.2)' : 'none',
+                boxShadow: isSelected ? '0 4px 12px rgba(18, 60, 105, 0.16)' : 'none',
               }}
               title={`${avatar.name} (${avatar.role})`}
             >
@@ -249,7 +249,7 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelec
                 style={{
                   fontSize: '10.5px',
                   fontWeight: 700,
-                  color: isSelected ? '#2E5316' : '#64748B',
+                  color: isSelected ? '#123C69' : '#64748B',
                   whiteSpace: 'nowrap',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
@@ -265,7 +265,7 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelec
                     position: 'absolute',
                     top: '-4px',
                     right: '-4px',
-                    background: '#8EA95B',
+                    background: '#123C69',
                     color: '#FFFFFF',
                     width: '16px',
                     height: '16px',
@@ -312,8 +312,8 @@ export const MobileAuthHeader: React.FC<{ mode: 'signin' | 'signup'; avatarUrl?:
           height: '56px',
           borderRadius: '16px',
           overflow: 'hidden',
-          border: '2px solid #8EA95B',
-          boxShadow: '0 4px 12px rgba(142, 169, 91, 0.25)',
+          border: '2px solid #123C69',
+          boxShadow: '0 4px 12px rgba(18, 60, 105, 0.2)',
           flexShrink: 0,
         }}
       >
@@ -332,7 +332,7 @@ export const MobileAuthHeader: React.FC<{ mode: 'signin' | 'signup'; avatarUrl?:
             gap: '4px',
             fontSize: '11px',
             fontWeight: 800,
-            color: '#8EA95B',
+            color: '#123C69',
             textTransform: 'uppercase',
             letterSpacing: '0.04em',
           }}

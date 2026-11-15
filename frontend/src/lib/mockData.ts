@@ -10,7 +10,6 @@ export const initialProfile: Profile = {
   experience_level: 'junior',
   plan: 'free',
   daily_minutes: 90,
-  ai_prompts_left: 16,
   streak_days: 7,
   created_at: '2026-09-01T00:00:00Z',
   has_completed_onboarding: true,
@@ -169,7 +168,7 @@ export const initialCoachMessages: AICoachMessage[] = [
     text: "I analyzed your remaining effort hours. Shifting Stage 2 by +3 days rebalances your schedule and keeps your 6-month final target intact.",
     timestamp: '08:43 AM',
     proposal: {
-      action: 'shift_milestone',
+      action: 'behind',
       title: 'Shift Current Stage (+3 Days)',
       description: 'Shifts Stage 2 deadline by 3 days. Final target remains on track.',
       days: 3,

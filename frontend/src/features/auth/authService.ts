@@ -1,8 +1,69 @@
-import { supabase } from '../../lib/supabase';
+import {
+  getRememberMePreference,
+  getSupabasePublicConfig,
+  isSupabaseConfigured,
+  setRememberMePreference,
+  supabase,
+} from '../../lib/supabase';
 import type { Profile } from '../../types';
+import { PRIVACY_NOTICE_VERSION, TERMS_VERSION } from '../legal/policyVersions';
 
 const SESSION_STORAGE_KEY = 'career_pilot_user_session';
-const REMEMBER_ME_KEY = 'career_pilot_remember_me';
+const PROFILE_EXT_STORAGE_PREFIX = 'career_pilot_profile_ext_';
+const LEGAL_FALLBACK_PREFIX = 'career_pilot_legal_accepted_';
+const LEGAL_VERSION_TOKEN = `${TERMS_VERSION}:${PRIVACY_NOTICE_VERSION}`;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function readProfileExtensionCache(userId: string): Partial<Profile> {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return {};
+    const raw = window.localStorage.getItem(`${PROFILE_EXT_STORAGE_PREFIX}${userId}`);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Partial<Profile>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeProfileExtensionCache(userId: string, changes: Partial<Profile>): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const existing = readProfileExtensionCache(userId);
+    const merged: Record<string, unknown> = { ...existing };
+    for (const [key, value] of Object.entries(changes)) {
+      if (value !== undefined) merged[key] = value;
+    }
+    window.localStorage.setItem(`${PROFILE_EXT_STORAGE_PREFIX}${userId}`, JSON.stringify(merged));
+  } catch {
+    // Ignore storage fallback failures
+  }
+}
+
+const CORE_PROFILE_COLUMNS = 'id, full_name, avatar_url, target_role, plan, daily_minutes, created_at';
+const FULL_PROFILE_COLUMNS =
+  'id, full_name, avatar_url, target_role, target_role_category, target_timeline_months, target_completion_date, experience_level, phone, username, bio, location, portfolio_url, github_url, linkedin_url, notification_daily_reminder, notification_milestone_alerts, notification_weekly_digest, weekly_reminder_frequency, learning_style, plan, daily_minutes, created_at';
+const CORE_EDITABLE_FIELDS: ReadonlySet<string> = new Set(['full_name', 'avatar_url', 'target_role', 'daily_minutes']);
+
+function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return (
+    error.code === '42703' ||
+    error.code === 'PGRST204' ||
+    /column .* does not exist/i.test(error.message || '') ||
+    /could not find the '.*' column/i.test(error.message || '')
+  );
+}
+
+function isMissingTableError(error: { code?: string; message?: string } | null | undefined, tableName: string): boolean {
+  if (!error) return false;
+  return (
+    error.code === 'PGRST205' ||
+    error.code === '42P01' ||
+    new RegExp(`could not find the table 'public\\.${tableName}'`, 'i').test(error.message || '') ||
+    new RegExp(`relation "?(?:public\\.)?${tableName}"? does not exist`, 'i').test(error.message || '')
+  );
+}
 
 export interface AuthCredentials {
   email: string;
@@ -16,152 +77,55 @@ export interface AuthCredentials {
 export interface AuthResult {
   success: boolean;
   profile?: Profile;
+  mfaRequired?: boolean;
+  needsEmailVerification?: boolean;
   error?: string;
 }
 
-export interface SendOtpResult {
-  success: boolean;
-  emailSent: boolean;
-  resendStatus: string;
-  resendError?: string | null;
-  previewOtp?: string;
-  expiresIn?: number;
-  error?: string;
+export interface SignUpParams {
+  email: string;
+  password: string;
+  fullName: string;
+  phone?: string;
+  rememberMe?: boolean;
+  legalConsentAccepted: boolean;
 }
 
-export interface VerifyOtpResult {
-  success: boolean;
-  email?: string;
+export interface VerifySignUpOtpParams {
+  email: string;
+  otp: string;
   fullName?: string;
-  targetRole?: string;
-  profile?: Profile;
+  phone?: string;
+  rememberMe?: boolean;
+  legalConsentAccepted: boolean;
+  recordConsent?: boolean;
+}
+
+export interface SimpleAuthActionResult {
+  success: boolean;
   error?: string;
 }
 
-export const demoAccounts: { profile: Profile; label: string; badge: string }[] = [
-  {
-    profile: {
-      id: '00000000-0000-0000-0000-000000000001',
-      full_name: 'Alex Rivera',
-      email: 'alex.rivera@careerpilot.io',
-      phone: '+1 555-019-2834',
-      avatar_url: '/avatars/career_navigator.jpg',
-      target_role: 'UI/UX Designer',
-      target_timeline_months: 6,
-      experience_level: 'junior',
-      plan: 'free',
-      daily_minutes: 60,
-      ai_prompts_left: 16,
-      streak_days: 7,
-      created_at: '2026-10-01T00:00:00Z',
-      has_completed_onboarding: true,
-      is_guest: false,
-    },
-    label: 'Alex Rivera (UI/UX Designer)',
-    badge: '6 Months · 60m/day',
-  },
-  {
-    profile: {
-      id: '00000000-0000-0000-0000-000000000002',
-      full_name: 'Marcus Chen',
-      email: 'marcus.chen@careerpilot.io',
-      phone: '+1 555-014-9821',
-      avatar_url: '/avatars/career_pilot_male.jpg',
-      target_role: 'Full Stack Engineer',
-      target_timeline_months: 6,
-      experience_level: 'mid',
-      plan: 'premium',
-      daily_minutes: 90,
-      ai_prompts_left: 92,
-      streak_days: 14,
-      created_at: '2026-09-15T00:00:00Z',
-      has_completed_onboarding: true,
-      is_guest: false,
-    },
-    label: 'Marcus Chen (Full Stack)',
-    badge: '6 Months · 90m/day',
-  },
-  {
-    profile: {
-      id: '00000000-0000-0000-0000-000000000003',
-      full_name: 'Aria Patel',
-      email: 'aria.patel@careerpilot.io',
-      phone: '+1 555-018-4491',
-      avatar_url: '/avatars/career_designer.jpg',
-      target_role: 'Product Designer',
-      target_timeline_months: 4,
-      experience_level: 'beginner',
-      plan: 'free',
-      daily_minutes: 45,
-      ai_prompts_left: 15,
-      streak_days: 3,
-      created_at: '2026-10-10T00:00:00Z',
-      has_completed_onboarding: true,
-      is_guest: false,
-    },
-    label: 'Aria Patel (Product Designer)',
-    badge: '4 Months · 45m/day',
-  },
-];
-
-export function generateDeterministicUserId(email: string): string {
-  let hash = 0;
-  for (let i = 0; i < email.length; i++) {
-    hash = (hash << 5) - hash + email.charCodeAt(i);
-    hash |= 0;
+function mapAuthErrorMessage(message?: string): string {
+  const raw = (message || '').trim();
+  if (!raw) return 'Authentication failed. Please try again.';
+  if (/invalid login credentials/i.test(raw)) return 'Incorrect email or password.';
+  if (/email not confirmed/i.test(raw)) return 'Verify your email address before signing in.';
+  if (/user already registered|already exists/i.test(raw)) {
+    return 'An account with this email already exists. Try signing in instead.';
   }
-  const hex = Math.abs(hash).toString(16).padStart(8, '0');
-  return `00000000-0000-4000-8000-${hex.padEnd(12, '0')}`;
+  if (/rate limit|too many requests|for security purposes/i.test(raw)) {
+    return raw;
+  }
+  return raw;
 }
 
 export const authService = {
   /**
-   * Check if a valid, authenticated user exists
-   */
-  isAuthenticated(): boolean {
-    const session = this.getSession();
-    return Boolean(session && !session.is_guest && session.id);
-  },
-
-  /**
-   * Get active session
-   */
-  getSession(): Profile | null {
-    try {
-      const stored = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as Profile;
-        if (parsed && !parsed.is_guest) {
-          return parsed;
-        }
-      }
-    } catch {
-      // Fallback
-    }
-    return null;
-  },
-
-  /**
-   * Save session
-   */
-  saveSession(profile: Profile, rememberMe: boolean = true): void {
-    try {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(profile));
-      localStorage.setItem(REMEMBER_ME_KEY, rememberMe ? 'true' : 'false');
-    } catch (e) {
-      console.warn('Could not save session:', e);
-    }
-  },
-
-  /**
-   * Get remember me preference
+   * Get persisted remember-me preference
    */
   getRememberMe(): boolean {
-    try {
-      return localStorage.getItem(REMEMBER_ME_KEY) !== 'false';
-    } catch {
-      return true;
-    }
+    return getRememberMePreference();
   },
 
   /**
@@ -171,424 +135,502 @@ export const authService = {
     const { email, rememberMe = true } = credentials;
     const normalizedEmail = email.trim().toLowerCase();
 
-    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!credentials.password) {
+      return { success: false, error: 'Please enter your password.' };
+    }
+
+    setRememberMePreference(rememberMe);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: normalizedEmail,
+      password: credentials.password,
+    });
+
+    if (error || !data.user) {
+      const needsEmailVerification = Boolean(error?.message && /email not confirmed/i.test(error.message));
+      return {
+        success: false,
+        needsEmailVerification,
+        error: mapAuthErrorMessage(error?.message),
+      };
+    }
+
+    // Enrolled MFA accounts receive an AAL1 session first, which RLS intentionally
+    // restricts from reading profiles until the second factor is verified.
+    const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (!assuranceError && assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
+      return { success: true, mfaRequired: true };
+    }
+
+    const profile = await this.loadProfile(data.user);
+    if (!profile) {
+      return { success: false, error: 'Your account profile could not be loaded. Please try again.' };
+    }
+
+    return { success: true, profile };
+  },
+
+  /**
+   * Sign Up with Email, Password, and Profile Metadata via Supabase Auth.
+   * Respects Supabase's email confirmation setting: returns immediate session
+   * when confirmations are off, or prompts verification when confirmations are on.
+   */
+  async signUp(params: SignUpParams): Promise<AuthResult> {
+    const {
+      email,
+      password,
+      fullName,
+      phone,
+      rememberMe = true,
+      legalConsentAccepted,
+    } = params;
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanName = fullName.trim();
+
+    if (cleanName.length < 2) {
+      return { success: false, error: 'Please enter your name (at least 2 characters).' };
+    }
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!password || password.length < 8) {
+      return { success: false, error: 'Password must be at least 8 characters.' };
+    }
+    if (legalConsentAccepted !== true) {
+      return {
+        success: false,
+        error: 'Review and accept the Terms of Service and Privacy Notice before creating your account.',
+      };
+    }
+
+    setRememberMePreference(rememberMe);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: {
+        data: {
+          full_name: cleanName,
+          ...(phone?.trim() ? { phone: phone.trim() } : {}),
+        },
+      },
+    });
+
+    if (error) {
+      return { success: false, error: mapAuthErrorMessage(error.message) };
+    }
+
+    // Supabase returns a user with empty identities instead of an error when an
+    // account already exists and email confirmations are enabled (enumeration protection).
+    if (!data.user || (Array.isArray(data.user.identities) && data.user.identities.length === 0)) {
+      return {
+        success: false,
+        error: 'An account with this email already exists. Sign in or reset your password instead.',
+      };
+    }
+
+    if (!data.session) {
+      return { success: true, needsEmailVerification: true };
+    }
+
+    return this.finalizeNewAccount(data.user, { fullName: cleanName, phone: phone?.trim() });
+  },
+
+  /**
+   * Verify 6-digit Sign Up confirmation OTP issued by Supabase Auth
+   */
+  async verifySignUpOtp(params: VerifySignUpOtpParams): Promise<AuthResult> {
+    const {
+      email,
+      otp,
+      fullName,
+      phone,
+      rememberMe = true,
+      legalConsentAccepted,
+      recordConsent = true,
+    } = params;
+    const normalizedEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.replace(/\D/g, '').trim();
+
+    if (recordConsent && legalConsentAccepted !== true) {
+      return {
+        success: false,
+        error: 'Review and accept the Terms of Service and Privacy Notice before continuing.',
+      };
+    }
+    if (cleanOtp.length !== 6) {
+      return { success: false, error: 'Enter the 6-digit verification code from your email.' };
+    }
+
+    setRememberMePreference(rememberMe);
+
+    const { data, error } = await supabase.auth.verifyOtp({
+      email: normalizedEmail,
+      token: cleanOtp,
+      type: 'signup',
+    });
+
+    if (error || !data.user) {
+      return {
+        success: false,
+        error: mapAuthErrorMessage(error?.message) || 'Invalid or expired verification code.',
+      };
+    }
+
+    if (!recordConsent) {
+      const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (!assuranceError && assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
+        return { success: true, mfaRequired: true };
+      }
+      const profile = await this.loadProfile(data.user);
+      if (!profile) {
+        return { success: false, error: 'Email verified, but your profile could not be loaded. Try signing in.' };
+      }
+      return { success: true, needsEmailVerification: false, profile };
+    }
+
+    return this.finalizeNewAccount(data.user, {
+      fullName: fullName?.trim(),
+      phone: phone?.trim(),
+    });
+  },
+
+  /**
+   * Resend 6-digit signup verification OTP via Supabase Auth
+   */
+  async resendVerificationEmail(email: string): Promise<SimpleAuthActionResult> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
       return { success: false, error: 'Please enter a valid email address.' };
     }
 
-    try {
-      // Try Supabase auth first
-      if (credentials.password && credentials.password.length >= 6) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: normalizedEmail,
-            password: credentials.password,
-          });
-          if (!error && data.user) {
-            const profile: Profile = {
-              id: data.user.id,
-              full_name: data.user.user_metadata?.full_name || normalizedEmail.split('@')[0],
-              email: normalizedEmail,
-              phone: credentials.phone,
-              avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(normalizedEmail)}`,
-              target_role: data.user.user_metadata?.target_role || 'Full Stack Engineer',
-              target_timeline_months: 6,
-              plan: 'free',
-              daily_minutes: 60,
-              ai_prompts_left: 15,
-              streak_days: 1,
-              created_at: data.user.created_at || new Date().toISOString(),
-              is_guest: false,
-              has_completed_onboarding: Boolean(data.user.user_metadata?.target_role),
-            };
-            this.saveSession(profile, rememberMe);
-            return { success: true, profile };
-          }
-        } catch {
-          // Fall through to deterministic session
-        }
-      }
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: normalizedEmail,
+    });
 
-      // Check if matches known demo accounts
-      const match = demoAccounts.find((d) => d.profile.email?.toLowerCase() === normalizedEmail);
-      if (match) {
-        this.saveSession(match.profile, rememberMe);
-        return { success: true, profile: match.profile };
-      }
-
-      // Create or restore profile deterministically
-      const userId = generateDeterministicUserId(normalizedEmail);
-      const profile: Profile = {
-        id: userId,
-        full_name: credentials.fullName || normalizedEmail.split('@')[0].replace(/[._-]/g, ' '),
-        email: normalizedEmail,
-        phone: credentials.phone,
-        avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(normalizedEmail)}`,
-        target_role: 'Full Stack Engineer',
-        target_timeline_months: 6,
-        plan: 'free',
-        daily_minutes: 60,
-        ai_prompts_left: 15,
-        streak_days: 1,
-        created_at: new Date().toISOString(),
-        is_guest: false,
-        has_completed_onboarding: true,
-      };
-
-      this.saveSession(profile, rememberMe);
-      return { success: true, profile };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Failed to sign in.' };
+    if (error) {
+      return { success: false, error: mapAuthErrorMessage(error.message) };
     }
+    return { success: true };
   },
 
   /**
-   * Request an Email OTP code via server endpoint or Resend API
+   * Request a password reset email via Supabase Auth
    */
-  async sendEmailOtp(params: {
-    email: string;
-    fullName?: string;
-    targetRole?: string;
-  }): Promise<SendOtpResult> {
-    const { email, fullName, targetRole } = params;
+  async requestPasswordReset(email: string): Promise<SimpleAuthActionResult> {
     const normalizedEmail = email.trim().toLowerCase();
-
-    if (!normalizedEmail || !normalizedEmail.includes('@')) {
-      return {
-        success: false,
-        emailSent: false,
-        resendStatus: 'invalid_email',
-        error: 'Please provide a valid email address.',
-      };
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
+      return { success: false, error: 'Enter your account email first, then select Forgot password.' };
     }
 
+    const redirectUrl = new URL(window.location.href);
+    redirectUrl.search = '';
+    redirectUrl.hash = '';
+    redirectUrl.searchParams.set('recovery', '1');
+
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: redirectUrl.toString(),
+    });
+
+    if (error) {
+      return { success: false, error: mapAuthErrorMessage(error.message) };
+    }
+    return { success: true };
+  },
+
+  async finalizeNewAccount(
+    user: { id: string; email?: string; created_at?: string; user_metadata?: Record<string, unknown> },
+    details: { fullName?: string; phone?: string }
+  ): Promise<AuthResult> {
+    const cleanName = details.fullName || String(user.user_metadata?.full_name || user.email?.split('@')[0] || '');
+
     try {
-      const response = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail, fullName, targetRole }),
-      });
+      await this.acceptCurrentLegalPolicies(user.id);
+    } catch (legalError) {
+      // Do not block account activation if legal_acceptances write fails or is unavailable.
+      console.warn('Could not record policy acceptance during account setup:', legalError);
+    }
 
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          success: true,
-          emailSent: Boolean(data.emailSent),
-          resendStatus: data.resendStatus || 'delivered',
-          resendError: data.resendError,
-          previewOtp: data.previewOtp,
-          expiresIn: data.expiresIn || 600,
-        };
-      }
+    const updates: Record<string, string> = {};
+    if (cleanName) updates.full_name = cleanName;
+    if (details.phone) updates.phone = details.phone;
 
-      const errData = await response.json().catch(() => ({}));
-      return {
-        success: false,
-        emailSent: false,
-        resendStatus: 'error',
-        error: errData.error || 'Failed to dispatch verification code.',
-      };
-    } catch (err: any) {
-      console.warn('Network error requesting OTP endpoint:', err);
+    if (Object.keys(updates).length > 0) {
+      let { data: row, error: profileError } = await supabase
+        .from('profiles')
+        .update(updates)
+        .eq('id', user.id)
+        .select(FULL_PROFILE_COLUMNS)
+        .maybeSingle();
 
-      // Fallback: Check if client-side Resend API key is available
-      const clientResendKey = import.meta.env.VITE_RESEND_API_KEY;
-      if (clientResendKey && clientResendKey.startsWith('re_')) {
-        try {
-          const otp = Math.floor(100000 + Math.random() * 900000).toString();
-          sessionStorage.setItem(
-            `career_pilot_otp_${normalizedEmail}`,
-            JSON.stringify({
-              code: otp,
-              expiresAt: Date.now() + 10 * 60 * 1000,
-              fullName,
-              targetRole,
-            })
-          );
-
-          const resendRes = await fetch('https://api.resend.com/emails', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${clientResendKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              from: import.meta.env.VITE_RESEND_FROM_EMAIL || 'Career Pilot <onboarding@resend.dev>',
-              to: [normalizedEmail],
-              subject: `Your Career Pilot Verification Code: ${otp}`,
-              html: `
-                <div style="font-family: sans-serif; padding: 24px; background: #0f172a; color: #fff; border-radius: 12px;">
-                  <h2>🧭 Career Pilot Verification Code</h2>
-                  <p>Hello ${fullName || 'Pilot'},</p>
-                  <p>Your 6-digit email authorization code is:</p>
-                  <h1 style="letter-spacing: 6px; color: #60a5fa;">${otp}</h1>
-                  <p style="color: #94a3b8; font-size: 12px;">This code expires in 10 minutes.</p>
-                </div>
-              `,
-            }),
-          });
-
-          if (resendRes.ok) {
-            return {
-              success: true,
-              emailSent: true,
-              resendStatus: 'delivered',
-              previewOtp: otp,
-              expiresIn: 600,
-            };
-          }
-
-          const resendData = (await resendRes.json().catch(() => ({}))) as any;
-          return {
-            success: true,
-            emailSent: false,
-            resendStatus: 'sandbox_restricted',
-            resendError: resendData?.message,
-            previewOtp: otp,
-            expiresIn: 600,
-          };
-        } catch {
-          // Fall through
+      if (isMissingColumnError(profileError)) {
+        const coreUpdates: Record<string, string> = {};
+        if (updates.full_name) coreUpdates.full_name = updates.full_name;
+        if (Object.keys(coreUpdates).length > 0) {
+          const fallbackRes = await supabase
+            .from('profiles')
+            .update(coreUpdates)
+            .eq('id', user.id)
+            .select(CORE_PROFILE_COLUMNS)
+            .maybeSingle();
+          row = fallbackRes.data as typeof row;
+          profileError = fallbackRes.error;
         }
       }
 
-      return {
-        success: false,
-        emailSent: false,
-        resendStatus: 'network_error',
-        error: 'Unable to reach the authentication service. Please check your network connection.',
-      };
+      if (!profileError && row) {
+        return { success: true, needsEmailVerification: false, profile: this.mapProfile(user, row) };
+      }
     }
+
+    const profile = await this.loadProfile(user);
+    if (!profile) {
+      return { success: false, error: 'Account created, but your profile could not be loaded. Please sign in.' };
+    }
+    return { success: true, needsEmailVerification: false, profile };
   },
 
   /**
-   * Verify the 6-digit OTP code submitted by the user
+   * Social OAuth Authentication (Google)
    */
-  async verifyEmailOtp(params: {
-    email: string;
-    otp: string;
-  }): Promise<VerifyOtpResult> {
-    const { email, otp } = params;
-    const normalizedEmail = email.trim().toLowerCase();
-    const cleanOtp = otp.trim();
+  async signInWithSocial(
+    provider: 'google',
+    rememberMe: boolean = true
+  ): Promise<SimpleAuthActionResult> {
+    setRememberMePreference(rememberMe);
 
-    if (!cleanOtp || cleanOtp.length < 6) {
-      return { success: false, error: 'Please enter the complete 6-digit code.' };
-    }
-
-    try {
-      const response = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail, otp: cleanOtp }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          success: true,
-          email: data.email || normalizedEmail,
-          fullName: data.fullName,
-          targetRole: data.targetRole,
-        };
-      }
-
-      const errData = await response.json().catch(() => ({}));
-      return {
-        success: false,
-        error: errData.error || 'Invalid verification code. Please check your email and try again.',
-      };
-    } catch {
-      // Fallback check against sessionStorage
+    const { url, anonKey } = getSupabasePublicConfig();
+    if (isSupabaseConfigured() && url && anonKey && typeof fetch === 'function') {
       try {
-        const stored = sessionStorage.getItem(`career_pilot_otp_${normalizedEmail}`);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Date.now() > parsed.expiresAt) {
-            sessionStorage.removeItem(`career_pilot_otp_${normalizedEmail}`);
-            return { success: false, error: 'Verification code has expired. Please request a new code.' };
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 2500) : null;
+        try {
+          const response = await fetch(`${url.replace(/\/+$/, '')}/auth/v1/settings`, {
+            headers: { apikey: anonKey },
+            signal: controller?.signal,
+          });
+          if (response.ok) {
+            const settings = (await response.json()) as { external?: Record<string, boolean> };
+            if (settings?.external && settings.external[provider] === false) {
+              return {
+                success: false,
+                error:
+                  'Google sign-in is not enabled in your Supabase project yet. Enable Google under Authentication → Providers in the Supabase Dashboard.',
+              };
+            }
           }
-          if (parsed.code === cleanOtp) {
-            sessionStorage.removeItem(`career_pilot_otp_${normalizedEmail}`);
-            return {
-              success: true,
-              email: normalizedEmail,
-              fullName: parsed.fullName,
-              targetRole: parsed.targetRole,
-            };
-          }
+        } finally {
+          if (timeoutId !== null) clearTimeout(timeoutId);
         }
       } catch {
-        // Fall through
+        // Proceed with standard OAuth flow if the settings preflight is unreachable.
       }
-
-      return {
-        success: false,
-        error: 'Invalid verification code. Please check your email and try again.',
-      };
     }
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: window.location.origin,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'select_account',
+        },
+      },
+    });
+    return error ? { success: false, error: mapAuthErrorMessage(error.message) } : { success: true };
   },
 
-  /**
-   * Complete Sign Up after email OTP verification
-   */
-  async completeSignUp(params: {
-    email: string;
-    fullName: string;
-    password?: string;
-    phone?: string;
-    avatarUrl?: string;
-    rememberMe?: boolean;
-    targetRole?: string;
-  }): Promise<AuthResult> {
-    const { email, fullName, password, phone, avatarUrl, rememberMe = true, targetRole } = params;
-    const normalizedEmail = email.trim().toLowerCase();
+  async loadProfile(user: { id: string; email?: string; created_at?: string; user_metadata?: Record<string, unknown> }): Promise<Profile | null> {
+    let { data, error } = await supabase
+      .from('profiles')
+      .select(FULL_PROFILE_COLUMNS)
+      .eq('id', user.id)
+      .maybeSingle();
 
-    try {
-      // Background Supabase auth registration if password provided
-      if (password && password.length >= 6) {
+    if (isMissingColumnError(error)) {
+      const coreResult = await supabase
+        .from('profiles')
+        .select(CORE_PROFILE_COLUMNS)
+        .eq('id', user.id)
+        .maybeSingle();
+      data = coreResult.data as typeof data;
+      error = coreResult.error;
+    }
+
+    if (error || !data) return null;
+    const { data: gamification } = await supabase
+      .from('user_gamification')
+      .select('current_streak')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    return { ...this.mapProfile(user, data), streak_days: gamification?.current_streak ?? 0 };
+  },
+
+  async hasCurrentLegalAcceptance(userId: string): Promise<boolean> {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user || user.id !== userId) throw new Error('Your session expired. Sign in again to verify policy acceptance.');
+    const { data, error } = await supabase
+      .from('legal_acceptances')
+      .select('accepted_at')
+      .eq('user_id', user.id)
+      .eq('terms_version', TERMS_VERSION)
+      .eq('privacy_notice_version', PRIVACY_NOTICE_VERSION)
+      .maybeSingle();
+    if (error) {
+      if (isMissingTableError(error, 'legal_acceptances')) {
         try {
-          await supabase.auth.signUp({
-            email: normalizedEmail,
-            password,
-            options: {
-              data: { full_name: fullName.trim(), phone, target_role: targetRole },
-            },
-          });
+          return typeof window !== 'undefined' &&
+            window.localStorage?.getItem(`${LEGAL_FALLBACK_PREFIX}${user.id}`) === LEGAL_VERSION_TOKEN;
         } catch {
-          // Non-blocking
+          return false;
         }
       }
+      throw new Error(error.message);
+    }
+    return Boolean(data?.accepted_at);
+  },
 
-      const userId = generateDeterministicUserId(normalizedEmail);
-      const profile: Profile = {
-        id: userId,
-        full_name: fullName.trim(),
-        email: normalizedEmail,
-        phone,
-        avatar_url: avatarUrl || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(normalizedEmail)}`,
-        target_role: targetRole || '', // unset triggers onboarding modal
-        target_timeline_months: 6,
-        plan: 'free',
-        daily_minutes: 60,
-        ai_prompts_left: 15,
-        streak_days: 1,
-        created_at: new Date().toISOString(),
-        is_guest: false,
-        has_completed_onboarding: false,
-      };
-
-      // Attempt sync to Supabase profiles
-      try {
-        await supabase.from('profiles').upsert({
-          id: userId,
-          full_name: profile.full_name,
-          target_role: profile.target_role || 'Full Stack Engineer',
-          plan: profile.plan,
-          daily_minutes: profile.daily_minutes,
-        });
-      } catch {
-        // Offline / RLS fallback
+  async acceptCurrentLegalPolicies(expectedUserId?: string): Promise<void> {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user || (expectedUserId && expectedUserId !== user.id)) {
+      throw new Error('Your session expired. Sign in again to save policy acceptance.');
+    }
+    const { error } = await supabase.from('legal_acceptances').insert({
+      user_id: user.id,
+      terms_version: TERMS_VERSION,
+      privacy_notice_version: PRIVACY_NOTICE_VERSION,
+    });
+    if (error && error.code !== '23505') {
+      if (isMissingTableError(error, 'legal_acceptances')) {
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            window.localStorage.setItem(`${LEGAL_FALLBACK_PREFIX}${user.id}`, LEGAL_VERSION_TOKEN);
+          }
+        } catch {
+          // Ignore storage fallback failure
+        }
+        return;
       }
-
-      this.saveSession(profile, rememberMe);
-      return { success: true, profile };
-    } catch (err: any) {
-      return { success: false, error: err.message || 'Account creation failed.' };
+      throw new Error(error.message);
     }
   },
 
-  /**
-   * Direct signUp requires OTP verification.
-   * If invoked directly, guides caller to complete email verification flow.
-   */
-  async signUp(credentials: AuthCredentials): Promise<AuthResult> {
-    const { email, fullName } = credentials;
-    if (!fullName || fullName.trim().length < 2) {
-      return { success: false, error: 'Please enter your name.' };
-    }
-    if (!email || !email.includes('@')) {
-      return { success: false, error: 'Please enter a valid email address.' };
-    }
-
+  mapProfile(user: { id: string; email?: string; created_at?: string; user_metadata?: Record<string, unknown> }, row: Record<string, unknown>): Profile {
+    const ext = readProfileExtensionCache(user.id);
+    const fullName = String(row.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Career Pilot');
+    const targetRole = String(row.target_role || '');
     return {
-      success: false,
-      error: 'Email verification code required. Please verify the 6-digit code sent to your email to complete registration.',
+      id: user.id,
+      full_name: fullName,
+      email: user.email,
+      avatar_url: String(row.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.email || user.id)}`),
+      target_role: targetRole,
+      target_role_category: row.target_role_category ? String(row.target_role_category) as Profile['target_role_category'] : ext.target_role_category,
+      target_timeline_months: row.target_timeline_months ? Number(row.target_timeline_months) : ext.target_timeline_months,
+      target_completion_date: row.target_completion_date ? String(row.target_completion_date) : ext.target_completion_date,
+      experience_level: (row.experience_level as Profile['experience_level']) || ext.experience_level,
+      phone: row.phone ? String(row.phone) : ext.phone,
+      username: row.username ? String(row.username) : ext.username,
+      bio: row.bio ? String(row.bio) : ext.bio,
+      location: row.location ? String(row.location) : ext.location,
+      portfolio_url: row.portfolio_url ? String(row.portfolio_url) : ext.portfolio_url,
+      github_url: row.github_url ? String(row.github_url) : ext.github_url,
+      linkedin_url: row.linkedin_url ? String(row.linkedin_url) : ext.linkedin_url,
+      notification_daily_reminder: row.notification_daily_reminder !== undefined ? row.notification_daily_reminder !== false : (ext.notification_daily_reminder ?? true),
+      notification_milestone_alerts: row.notification_milestone_alerts !== undefined ? row.notification_milestone_alerts !== false : (ext.notification_milestone_alerts ?? true),
+      notification_weekly_digest: row.notification_weekly_digest !== undefined ? row.notification_weekly_digest !== false : (ext.notification_weekly_digest ?? true),
+      weekly_reminder_frequency: (row.weekly_reminder_frequency as Profile['weekly_reminder_frequency']) || ext.weekly_reminder_frequency || '3x',
+      learning_style: (row.learning_style as Profile['learning_style']) || ext.learning_style,
+      plan: row.plan === 'premium' ? 'premium' : 'free',
+      daily_minutes: Number(row.daily_minutes || 60),
+      streak_days: 0,
+      created_at: String(row.created_at || user.created_at || new Date().toISOString()),
+      is_guest: false,
+      has_completed_onboarding: Boolean(targetRole),
     };
   },
 
-  /**
-   * Social Authentication (Google, Facebook, Twitter)
-   */
-  async signInWithSocial(provider: 'google' | 'facebook' | 'twitter'): Promise<AuthResult> {
-    try {
-      const providerNames: Record<string, string> = {
-        google: 'Google Navigator',
-        facebook: 'Facebook Developer',
-        twitter: 'Tech Pioneer',
-      };
-      const email = `social.${provider}@careerpilot.io`;
-      const userId = generateDeterministicUserId(email);
-
-      const profile: Profile = {
-        id: userId,
-        full_name: providerNames[provider] || `${provider} User`,
-        email,
-        avatar_url: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(email)}`,
-        target_role: 'Full Stack Engineer',
-        target_timeline_months: 6,
-        plan: 'free',
-        daily_minutes: 60,
-        ai_prompts_left: 15,
-        streak_days: 1,
-        created_at: new Date().toISOString(),
-        is_guest: false,
-        has_completed_onboarding: true,
-      };
-
-      this.saveSession(profile, true);
-      return { success: true, profile };
-    } catch (err: any) {
-      return { success: false, error: err.message || `Failed to sign in with ${provider}` };
+  async updateProfile(currentProfile: Profile, changes: Partial<Profile>): Promise<Profile> {
+    const editableFields: (keyof Profile)[] = [
+      'full_name', 'avatar_url', 'target_role', 'target_role_category', 'target_timeline_months',
+      'target_completion_date', 'experience_level', 'daily_minutes', 'phone',
+      'username', 'bio', 'location', 'portfolio_url', 'github_url', 'linkedin_url',
+      'notification_daily_reminder', 'notification_milestone_alerts',
+      'notification_weekly_digest', 'learning_style',
+      'weekly_reminder_frequency',
+    ];
+    const payload: Record<string, unknown> = {};
+    for (const field of editableFields) {
+      if (Object.prototype.hasOwnProperty.call(changes, field)) payload[field] = changes[field];
     }
+    if (currentProfile.is_demo) return { ...currentProfile, ...payload } as Profile;
+    if (Object.keys(payload).length === 0) return currentProfile;
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user || user.id !== currentProfile.id) {
+      throw new Error('Your session expired. Sign in again to save profile changes.');
+    }
+    let { data: row, error } = await supabase
+      .from('profiles')
+      .update(payload)
+      .eq('id', user.id)
+      .select(FULL_PROFILE_COLUMNS)
+      .single();
+
+    if (isMissingColumnError(error)) {
+      writeProfileExtensionCache(user.id, payload as Partial<Profile>);
+      const corePayload: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(payload)) {
+        if (CORE_EDITABLE_FIELDS.has(key)) corePayload[key] = value;
+      }
+      if (Object.keys(corePayload).length === 0) {
+        return { ...currentProfile, ...payload } as Profile;
+      }
+      const fallbackResult = await supabase
+        .from('profiles')
+        .update(corePayload)
+        .eq('id', user.id)
+        .select(CORE_PROFILE_COLUMNS)
+        .single();
+      row = fallbackResult.data as typeof row;
+      error = fallbackResult.error;
+    }
+
+    if (error || !row) throw error || new Error('Could not save your profile.');
+    return { ...this.mapProfile(user, row), streak_days: currentProfile.streak_days };
   },
 
   /**
    * Save Career Goal and Roadmap Preferences from Post-Signup Onboarding
    */
-  saveOnboardingGoal(
+  async saveOnboardingGoal(
     currentProfile: Profile,
     params: {
       target_role: string;
+      target_role_category?: Profile['target_role_category'];
       target_timeline_months: number;
       target_completion_date?: string;
       daily_minutes: number;
       experience_level?: 'beginner' | 'switcher' | 'junior' | 'mid';
     }
-  ): Profile {
+  ): Promise<Profile> {
     const updated: Profile = {
       ...currentProfile,
       target_role: params.target_role,
+      target_role_category: params.target_role_category,
       target_timeline_months: params.target_timeline_months,
       target_completion_date: params.target_completion_date,
       daily_minutes: params.daily_minutes,
       experience_level: params.experience_level || 'beginner',
       has_completed_onboarding: true,
     };
-    this.saveSession(updated);
-
-    // Sync to Supabase profiles
-    try {
-      supabase.from('profiles').upsert({
-        id: updated.id,
-        full_name: updated.full_name,
-        target_role: updated.target_role,
-        daily_minutes: updated.daily_minutes,
-      }).then(() => {});
-    } catch {
-      // Offline fallback
-    }
-
-    return updated;
+    return this.updateProfile(currentProfile, updated);
   },
 
   /**
@@ -601,5 +643,21 @@ export const authService = {
     } catch (e) {
       console.warn('Error during sign out:', e);
     }
+  },
+
+  async deleteAccount(): Promise<void> {
+    const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
+    if (error) {
+      let message = error.message || 'Could not delete this account.';
+      const response = error.context as Response | undefined;
+      if (response && typeof response.clone === 'function') {
+        try {
+          const body = await response.clone().json() as { error?: string };
+          message = body.error || message;
+        } catch {}
+      }
+      throw new Error(message);
+    }
+    await this.signOut();
   },
 };
