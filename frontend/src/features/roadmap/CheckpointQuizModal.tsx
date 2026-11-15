@@ -2,22 +2,34 @@ import React, { useState } from 'react';
 import { X, CheckCircle2, AlertCircle, Sparkles, ShieldCheck } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { Task } from '../../types';
+import { supabase } from '../../lib/supabase';
+import { useAccessibleDialog } from '../../hooks/useAccessibleDialog';
+
+type QuizCompletion = { persisted: boolean; currentStreak?: number };
 
 interface Props {
   task: Task;
+  isDemo: boolean;
   onClose: () => void;
-  onPassTask: (taskId: string) => void;
+  onPassTask: (taskId: string, completion?: QuizCompletion) => void;
 }
 
 export const CheckpointQuizModal: React.FC<Props> = ({
   task,
+  isDemo,
   onClose,
   onPassTask,
 }) => {
+  const dialogRef = useAccessibleDialog(true, onClose);
   const quiz = task.quiz;
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [correctOptionId, setCorrectOptionId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState('');
+  const [currentStreak, setCurrentStreak] = useState<number | undefined>();
 
   if (!quiz) {
     return (
@@ -36,6 +48,11 @@ export const CheckpointQuizModal: React.FC<Props> = ({
         onClick={onClose}
       >
         <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={isDemo ? `Confirm completion of ${task.title}` : `Checkpoint unavailable for ${task.title}`}
+          tabIndex={-1}
           style={{
             background: 'var(--md-surface, #FFFFFF)',
             borderRadius: '20px',
@@ -46,18 +63,22 @@ export const CheckpointQuizModal: React.FC<Props> = ({
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          <h3 style={{ fontSize: '16px', fontWeight: 800, margin: '0 0 8px 0' }}>Mark Task Complete</h3>
+          <h3 style={{ fontSize: '16px', fontWeight: 800, margin: '0 0 8px 0' }}>
+            {isDemo ? 'Mark Task Complete' : 'Checkpoint unavailable'}
+          </h3>
           <p style={{ fontSize: '13px', color: '#64748B', margin: '0 0 16px 0' }}>
-            Confirm completion of: <strong>{task.title}</strong>
+            {isDemo
+              ? <>Confirm completion of: <strong>{task.title}</strong></>
+              : <>This checkpoint assessment could not be loaded. Close this dialog and retry after your roadmap refreshes.</>}
           </p>
           <button
             onClick={() => {
-              onPassTask(task.id);
+              if (isDemo) onPassTask(task.id, { persisted: false });
               onClose();
             }}
             style={{
               width: '100%',
-              background: '#8EA95B',
+              background: 'var(--md-primary)',
               color: '#FFFFFF',
               border: 'none',
               borderRadius: '12px',
@@ -67,7 +88,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
               cursor: 'pointer',
             }}
           >
-            Mark Done
+            {isDemo ? 'Mark Done' : 'Close'}
           </button>
         </div>
       </div>
@@ -79,13 +100,47 @@ export const CheckpointQuizModal: React.FC<Props> = ({
     setSelectedOptionId(optId);
   };
 
-  const handleSubmit = () => {
-    if (!selectedOptionId) return;
+  const handleSubmit = async () => {
+    if (!selectedOptionId || isSubmitting) return;
     const chosen = quiz.options.find((o) => o.id === selectedOptionId);
-    const correct = Boolean(chosen?.is_correct);
+    setSubmitError('');
+    setIsSubmitting(true);
+    let correct: boolean;
+    let correctId: string | null = null;
+    let resultFeedback = quiz.explanation;
+    let streak: number | undefined;
 
+    if (isDemo) {
+      correct = Boolean(chosen?.is_correct);
+      correctId = quiz.options.find((option) => option.is_correct)?.id ?? null;
+    } else {
+      const { data, error } = await supabase.rpc('submit_task_quiz', {
+        p_task_id: task.id,
+        p_selected_option: selectedOptionId,
+      });
+      if (error) {
+        setSubmitError(error.message || 'Could not verify your answer. Please try again.');
+        setIsSubmitting(false);
+        return;
+      }
+      const result = data as {
+        is_correct: boolean;
+        correct_option_id: string;
+        explanation: string;
+        current_streak: number;
+      };
+      correct = result.is_correct;
+      correctId = result.correct_option_id;
+      resultFeedback = result.explanation || quiz.explanation;
+      streak = result.current_streak;
+    }
+
+    setCorrectOptionId(correctId);
+    setFeedback(resultFeedback);
+    setCurrentStreak(streak);
     setIsCorrect(correct);
     setIsSubmitted(true);
+    setIsSubmitting(false);
 
     if (correct) {
       try {
@@ -93,14 +148,14 @@ export const CheckpointQuizModal: React.FC<Props> = ({
           particleCount: 50,
           spread: 60,
           origin: { y: 0.6 },
-          colors: ['#8EA95B', '#10B981', '#6366F1'],
+          colors: ['#123C69', '#059669', '#38BDF8'],
         });
       } catch {}
     }
   };
 
   const handleFinish = () => {
-    onPassTask(task.id);
+    if (isCorrect) onPassTask(task.id, { persisted: !isDemo, currentStreak });
     onClose();
   };
 
@@ -121,6 +176,11 @@ export const CheckpointQuizModal: React.FC<Props> = ({
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Checkpoint quiz for ${task.title}`}
+        tabIndex={-1}
         style={{
           width: '100%',
           maxWidth: '460px',
@@ -141,7 +201,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
                 width: '32px',
                 height: '32px',
                 borderRadius: '50%',
-                background: '#8EA95B',
+                background: 'var(--md-primary)',
                 color: '#FFFFFF',
                 display: 'flex',
                 alignItems: 'center',
@@ -151,7 +211,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
               <ShieldCheck size={18} />
             </div>
             <div>
-              <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#8EA95B', textTransform: 'uppercase' }}>
+              <span style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--md-primary)', textTransform: 'uppercase' }}>
                 Checkpoint Quiz
               </span>
               <h3 style={{ fontSize: '14.5px', fontWeight: 800, margin: 0 }}>
@@ -161,7 +221,9 @@ export const CheckpointQuizModal: React.FC<Props> = ({
           </div>
 
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Close checkpoint quiz"
             style={{
               background: '#F1F5F9',
               border: 'none',
@@ -203,19 +265,19 @@ export const CheckpointQuizModal: React.FC<Props> = ({
             let textColor = '#1E293B';
 
             if (isSubmitted) {
-              if (opt.is_correct) {
+              if (isSubmitted && opt.id === correctOptionId) {
                 border = '1.5px solid #10B981';
                 bg = 'rgba(16, 185, 129, 0.08)';
                 textColor = '#065F46';
-              } else if (isSelected && !opt.is_correct) {
+              } else if (isSubmitted && isSelected && opt.id !== correctOptionId) {
                 border = '1.5px solid #EF4444';
                 bg = 'rgba(239, 68, 68, 0.08)';
                 textColor = '#991B1B';
               }
             } else if (isSelected) {
-              border = '1.5px solid #8EA95B';
-              bg = 'rgba(142, 169, 91, 0.08)';
-              textColor = '#4A6223';
+              border = '1.5px solid var(--md-primary)';
+              bg = 'var(--md-primary-container)';
+              textColor = 'var(--md-on-primary-container)';
             }
 
             return (
@@ -240,8 +302,8 @@ export const CheckpointQuizModal: React.FC<Props> = ({
                 <span style={{ fontSize: '13px', fontWeight: isSelected ? 700 : 500, color: textColor }}>
                   {opt.text}
                 </span>
-                {isSubmitted && opt.is_correct && <CheckCircle2 size={16} color="#10B981" />}
-                {isSubmitted && isSelected && !opt.is_correct && <AlertCircle size={16} color="#EF4444" />}
+                {isSubmitted && opt.id === correctOptionId && <CheckCircle2 size={16} color="#10B981" />}
+                {isSubmitted && isSelected && opt.id !== correctOptionId && <AlertCircle size={16} color="#EF4444" />}
               </button>
             );
           })}
@@ -261,31 +323,34 @@ export const CheckpointQuizModal: React.FC<Props> = ({
             }}
           >
             <strong>{isCorrect ? '✨ Correct Verification!' : 'Review Concept:'}</strong>
-            <p style={{ margin: '4px 0 0 0', lineHeight: 1.4 }}>{quiz.explanation}</p>
+            <p style={{ margin: '4px 0 0 0', lineHeight: 1.4 }}>{feedback}</p>
+            {isCorrect && currentStreak !== undefined && <p style={{ margin: '6px 0 0 0' }}>Current streak: {currentStreak} days</p>}
           </div>
         )}
+
+        {submitError && <p role="alert" style={{ color: '#B91C1C', fontSize: '12px' }}>{submitError}</p>}
 
         {/* Action Button */}
         {!isSubmitted ? (
           <button
             type="button"
-            disabled={!selectedOptionId}
+            disabled={!selectedOptionId || isSubmitting}
             onClick={handleSubmit}
             style={{
               width: '100%',
-              background: '#8EA95B',
+              background: 'var(--md-primary)',
               color: '#FFFFFF',
               border: 'none',
               borderRadius: '12px',
               padding: '13px',
               fontSize: '13.5px',
               fontWeight: 700,
-              cursor: selectedOptionId ? 'pointer' : 'not-allowed',
-              opacity: selectedOptionId ? 1 : 0.6,
-              boxShadow: '0 4px 12px rgba(142, 169, 91, 0.3)',
+              cursor: selectedOptionId && !isSubmitting ? 'pointer' : 'not-allowed',
+              opacity: selectedOptionId && !isSubmitting ? 1 : 0.6,
+              boxShadow: 'var(--shadow-sm)',
             }}
           >
-            Verify Answer
+            {isSubmitting ? 'Verifying…' : 'Verify Answer'}
           </button>
         ) : (
           <button
@@ -293,7 +358,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
             onClick={handleFinish}
             style={{
               width: '100%',
-              background: isCorrect ? '#8EA95B' : '#64748B',
+              background: isCorrect ? 'var(--md-primary)' : '#64748B',
               color: '#FFFFFF',
               border: 'none',
               borderRadius: '12px',
