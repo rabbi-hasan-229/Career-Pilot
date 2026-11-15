@@ -1,9 +1,9 @@
-# 🧭 Career Pilot (JobSeeker)
+# Career Pilot
 
 > **Low-AI-Cost Career Roadmapping, Skill-Gap Analyzer & Interview Arena built on Supabase, React & Material 3.**
 
 [![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=black)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8.3-646cff?logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20RLS-3ecf8e?logo=supabase&logoColor=white)](https://supabase.com/)
 [![Capacitor](https://img.shields.io/badge/Capacitor-Android%20APK%20Ready-119eff?logo=capacitor&logoColor=white)](https://capacitorjs.com/)
@@ -14,7 +14,7 @@
 
 ## 💡 The Core Philosophy: "Rules First, AI Last"
 
-Most modern AI apps suffer from runaway token costs by invoking Large Language Models for simple calculations, schedule adjustments, or repetitive evaluations. **Career Pilot** replaces heavy AI with **deterministic math, Postgres SQL queries, and local browser engines**, driving operating costs down by over 95%.
+Routine planning, scoring, and schedule adjustments use deterministic code and database transactions. Optional AI actions are explicit, quota-metered requests, which keeps model use bounded and makes those actions available when configured.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -23,23 +23,29 @@ Most modern AI apps suffer from runaway token costs by invoking Large Language M
 │   [ Client Browser / Android APK ]                                     │
 │      │                                                                 │
 │      ├─► Proportional Mathematical Planner ($0 AI)                     │
-│      ├─► Keyword & STAR Rubric Interview Scoring ($0 AI)               │
+│      ├─► Authenticated Interview Scoring ($0 AI)                        │
 │      ├─► Local CV Form Wizard & HTML-to-PDF ($0 AI)                    │
 │      │                                                                 │
 │   [ Supabase PostgreSQL + Row Level Security ]                         │
-│      ├─► Vacancy Skill Matching via SQL Overlap ($0 AI)                │
-│      ├─► 16 Core Tables (Shared Curated Content & Private User Data)   │
-│      ├─► Automated Nightly Re-plan via pg_cron ($0 AI)                 │
+│      ├─► Curated Skill Profiles + Live Remote Job Search               │
+│      ├─► Account-owned data with PostgreSQL RLS                        │
+│      ├─► Transactional roadmap and task progression                    │
 │      │                                                                 │
-│   [ Supabase Edge Functions: ai-gateway ] ───► [ LLM Provider ]        │
-│      ├─► SHA-256 Hashed Response Cache (ai_cache)                      │
-│      └─► Strict Weekly Token Quotas (ai_usage)                         │
+│   [ Supabase Edge Functions ] ───► [ LLM Provider ]                     │
+│      ├─► Optional Responses API calls (provider secrets stay server-side)│
+│      ├─► Atomic rolling 7-day per-feature quotas (ai_usage)             │
+│      └─► Global UTC daily token budget and operator usage summary        │
+│      └─► Interview scoring keeps answer keys server-side until submit   │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## ⚡ Key Features
+
+### Workspace navigation
+- Workspace sections can be opened directly with `?view=plan`, `?view=overview`, `?view=coach`, `?view=interview`, `?view=cv`, `?view=skills`, or `?view=profile`. The home roadmap is the default (`?view=home` is also accepted).
+- Switching sections updates browser history, so Back and Forward restore the previous workspace section.
 
 ### 1. 📐 Mathematical Proportional Planner ($0 Cost)
 - Calculates time allocation using deterministic proportional effort formulas:
@@ -48,7 +54,7 @@ Most modern AI apps suffer from runaway token costs by invoking Large Language M
   - **"I'm Behind"**: Automatically shifts current milestones by $+3$ days and redistributes overdue tasks into upcoming weekday slots.
   - **"Finished Early"**: Pulls subsequent stages forward.
   - **"Pause a Week"**: Shifts all deadlines by $+7$ days without resetting active streaks.
-- Scheduled via `pg_cron` for nightly maintenance at 02:00 UTC.
+- Optional overdue-task maintenance is available as a protected Edge Function. Migrations do not schedule it; configure a scheduler only after setting its dedicated secret and reviewing the operational behavior.
 
 ### 2. 🎨 Material 3 Responsive Design & Obsidian Dark Mode
 - Built mobile-first for smartphones with an adaptive multi-column widescreen command center on desktop ( $\ge 1024\text{px}$ ).
@@ -68,23 +74,17 @@ Most modern AI apps suffer from runaway token costs by invoking Large Language M
 - Live Material 3 preview with dual-pane split editor and one-click PDF print export (`window.print()`).
 - Optional **"Improve Wording"** button for executive summaries and quantifiable bullet points.
 
-### 6. 🎯 SQL-Powered Skill-Gap Matrix & Vacancy Matcher
-- Computes role readiness percentages and vacancy matches directly in Postgres SQL:
-  ```sql
-  select v.id, v.title,
-    round(100.0 * count(*) filter (where us.skill_id is not null) / count(*)) as match_pct
-  from vacancies v
-  join vacancy_skills vs on vs.vacancy_id = v.id
-  left join user_skills us on us.skill_id = vs.skill_id and us.user_id = auth.uid()
-  group by v.id, v.title
-  order by match_pct desc limit 20;
-  ```
-- Highlights acquired competencies vs. high-impact missing skills with a single-click **"Queue into Plan"** action.
+### 6. 🎯 Role Skill Profiles & Vacancy Search
+- Loads curated role-specific skill requirements and the account's acquired skills; custom roles use an explicitly selected category baseline built from recurring skills across curated roles.
+- Shows bundled listings as samples and searches live vacancies through the authenticated `search-remote-jobs` Edge Function. Remote listings use Remote OK; user-submitted regional searches use Jooble. Listings are transient and link to the provider source. Regional searches require a country-specific Jooble API key; hybrid search is limited to results whose available title or summary explicitly says “hybrid”.
+- Calculates skill overlap from listing text and the active role profile. This is a practice signal, not a hiring prediction; no score is shown when no profile skills are detected in a listing.
+- Lets learners mark skills acquired and queue a missing skill into their plan.
 
 ### 7. 🛡️ Supabase Low-Cost AI Gateway (`ai-gateway`)
-- Single secure entrypoint for all LLM calls.
-- Enforces rolling 7-day quotas (*Free: 15 coach / 5 cv / 5 interview / 1 role; Premium: 100 coach / 40 cv / 40 interview / 5 role*).
-- Computes SHA-256 hashes of feature inputs to serve duplicate requests from `ai_cache` at **$0 cost**.
+- Single authenticated entrypoint for optional AI requests using the OpenAI Responses API.
+- Enforces rolling seven-day per-feature quotas (*Free: 15 coach / 5 CV / 5 interview / 1 custom role; Premium: 100 coach / 40 CV / 40 interview / 5 custom role*) with atomic quota reservations.
+- Provider failures release the quota reservation; abandoned reservations expire after five minutes. Personal coach, resume, and interview content is not cached.
+- Resume edits and interview feedback send only the selected text after an explicit user action. AI availability requires the Edge Function secrets below; without them the app returns a clear unavailable message and keeps deterministic features usable.
 
 ### 8. 📱 Android APK Native Packaging
 - Pre-configured Capacitor integration (`com.careerpilot.app`).
@@ -97,16 +97,16 @@ Most modern AI apps suffer from runaway token costs by invoking Large Language M
 | Feature | Execution Method | Model Call? | Cost per Use |
 | :--- | :--- | :---: | :---: |
 | **Roadmap for Common Jobs** | Curated database templates adjusted by math | **No** | **$0.00** |
-| **Roadmap for Custom Roles** | Gateway builds template, caches for all users | Yes | Metered (1/wk) |
+| **Roadmap for Custom Roles** | Curated category playbook and deterministic planning | **No** | **$0.00** |
 | **Daily & Weekly Tasks** | Proportional math engine | **No** | **$0.00** |
 | **Skill-Gap Analysis** | Direct PostgreSQL query | **No** | **$0.00** |
 | **Planner Quick Actions** | Deterministic calendar algorithm | **No** | **$0.00** |
-| **Coach Free-Text Chat** | Context-bounded AI response | Yes | Metered (15/wk) |
+| **Coach Free-Text Chat** | Context-bounded AI response; user and assistant messages saved | Optional | Metered (15/wk) |
 | **Mock Interview Question Bank** | Curated database rows | **No** | **$0.00** |
 | **Mock Interview Evaluation** | Keyword matching & STAR rubric scoring | **No** | **$0.00** |
-| **AI Interview Coaching** | Senior reviewer critique | Optional | Metered (5/wk) |
+| **AI Interview Coaching** | Optional feedback against the saved deterministic score and rubric | Optional | Metered (5/wk) |
 | **CV Builder & Export** | Local form wizard & print engine | **No** | **$0.00** |
-| **CV "Improve Wording"** | Targeted section refinement | Optional | Metered (5/wk) |
+| **CV "Improve Wording"** | Explicitly requested, selected-section rewrite that preserves facts | Optional | Metered (5/wk) |
 | **Job Vacancy Matching** | SQL skill overlap calculation | **No** | **$0.00** |
 
 ---
@@ -116,48 +116,21 @@ Most modern AI apps suffer from runaway token costs by invoking Large Language M
 ```
 Career Pilot/
 ├── frontend/
-│   ├── android/                  # Native Android Studio Capacitor project
-│   ├── capacitor.config.json     # Capacitor configuration
-│   ├── index.html
+│   ├── android/                 # Capacitor Android project
 │   ├── package.json
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── AICoachView.tsx              # Coach chat with quota indicator
-│   │   │   ├── AuthModal.tsx                # Supabase Auth & 1-click demo switcher
-│   │   │   ├── BottomNav.tsx                # Material 3 curved mobile dock with FAB
-│   │   │   ├── CheckpointQuestionModal.tsx  # Assessment modal with timer & choices
-│   │   │   ├── CVBuilderView.tsx            # Form wizard, live preview & PDF export
-│   │   │   ├── DesktopSidebar.tsx           # Widescreen navigation sidebar
-│   │   │   ├── InterviewSimulatorView.tsx   # STAR rubric & keyword scoring
-│   │   │   ├── Navbar.tsx                   # Header with dark mode toggle & quota
-│   │   │   ├── OverviewAnalyticsView.tsx    # SVG metrics & subject donut charts
-│   │   │   ├── ProfileSettingsModal.tsx     # Study commitment, theme & quotas
-│   │   │   ├── QuickActionSheetModal.tsx    # Mobile slide-up speed dial
-│   │   │   ├── RoadmapTimelineView.tsx      # Interactive roadmap & replan buttons
-│   │   │   ├── RoleQuestSelectorModal.tsx   # Career role & deadline picker
-│   │   │   ├── SkillGapView.tsx             # Skill matrix & SQL vacancy matcher
-│   │   │   └── TodayPlanView.tsx            # Daily focus hero card & task dials
-│   │   ├── lib/
-│   │   │   ├── aiGateway.ts                 # Client gateway connector
-│   │   │   ├── mockData.ts                  # Seed data & fallback records
-│   │   │   ├── plannerEngine.ts             # Mathematical scheduling algorithms
-│   │   │   ├── supabase.ts                  # Supabase client instantiation
-│   │   │   └── theme.ts                     # Dark/light theme persistence
-│   │   ├── types/
-│   │   │   └── index.ts                     # TypeScript interfaces & models
-│   │   ├── App.tsx                          # Root application shell
-│   │   └── index.css                        # Material 3 design tokens & dark mode
-│   └── tsconfig.json
+│   └── src/
+│       ├── components/          # Workspace screens and shared UI
+│       ├── features/            # Account, auth, AI, coach, CV, notifications, roadmap
+│       ├── hooks/               # Shared accessibility and interaction hooks
+│       ├── lib/                 # Supabase client, dates, theme, and local utilities
+│       ├── types/               # Shared application types
+│       ├── App.tsx              # Authenticated workspace shell and navigation
+│       └── index.css            # Design tokens and global styles
 └── supabase/
-    ├── functions/
-    │   ├── ai-gateway/index.ts       # Metered gateway with SHA-256 caching
-    │   ├── nightly-replan/index.ts   # Automated overdue task rebalancer
-    │   └── plan-roadmap/index.ts     # Serverless proportional planner
-    ├── migrations/
-    │   ├── 20261013000000_phase1_schema.sql         # 16 core tables & RLS
-    │   ├── 20261013000001_public_shared_content.sql # Seed roles, skills & questions
-    │   └── 20261013000002_phase4_career_tools.sql   # Vacancies, attempts & metrics
-    └── seed.sql
+    ├── functions/               # Authenticated AI, planning, account, and job endpoints
+    ├── migrations/              # Ordered schema, policy, and content migrations
+    ├── config.toml              # Local Supabase service configuration
+    └── seed.sql                 # Curated shared career and learning content
 ```
 
 ---
@@ -165,15 +138,17 @@ Career Pilot/
 ## 🚀 Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or newer)
+- [Node.js](https://nodejs.org/) (v20.19+ or v22.12+; required by the installed Vite 8 toolchain)
 - [npm](https://www.npmjs.com/)
 - (Optional for Android APK) [Android Studio](https://developer.android.com/studio) or JDK 17+
 
 ### 1. Clone & Install Dependencies
+Use Node.js 24.x for local development and CI. The repository records this in `frontend/.node-version`.
+
 ```bash
-git clone https://github.com/your-username/career-pilot.git
+git clone https://github.com/rabbi-hasan-229/Career-Pilot.git
 cd career-pilot/frontend
-npm install
+npm ci
 ```
 
 ### 2. Configure Environment Variables
@@ -181,7 +156,18 @@ Create a `.env` file inside `frontend/`:
 ```env
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_WEB_PUSH_PUBLIC_KEY=your-vapid-public-key
 ```
+
+Replace both example values with the intended project URL and publishable/anon key. Example placeholders are detected and disable real account actions with an in-app setup message rather than sending requests to a fake project.
+
+The signup screen uses Supabase Auth email OTP. Configure the Auth confirmation email template to include the one-time token (`{{ .Token }}`), configure the recovery template to use the confirmation link (`{{ .ConfirmationURL }}`), and configure a production SMTP provider before enabling real signups. Google, GitHub, and Microsoft sign-in also require their providers and redirect URLs to be configured in Supabase Auth. Add the deployed app origin with the `?recovery=1` redirect URL to Auth's redirect allow list for password resets.
+
+Signup requires an explicit, unchecked-by-default acknowledgment and links to `/legal/terms.html` and `/legal/privacy.html`. Acceptance is recorded in an append-only, account-owned table with the accepted document versions and a database-generated timestamp. New and existing authenticated accounts must accept the current versions before workspace data loads. Apply migration `20261112020000_record_legal_acceptance.sql` before deploying this frontend. Whenever a policy changes, update its version in `frontend/src/features/legal/policyVersions.ts` and add a migration that updates the matching database constraint. These pages currently contain product-specific drafts that describe the implemented data flows; they intentionally identify the operator, support contact, jurisdiction, retention policy, and legal review as unresolved. Complete and approve those details before public registration.
+
+Optional background reminders use browser Web Push. Generate one VAPID key pair with `npx web-push generate-vapid-keys` and keep it stable: put the public key in `VITE_WEB_PUSH_PUBLIC_KEY` and in the Edge Function's `WEB_PUSH_PUBLIC_KEY`; keep the private key only in Supabase Edge Function secrets. Also configure `WEB_PUSH_SUBJECT` as a valid `mailto:` or HTTPS contact URI and a random `PUSH_SCHEDULER_SECRET` of at least 32 characters. The migration creates private, account-owned browser subscriptions. Users opt in from Notifications; reminders are checked hourly and sent around 9–10 AM in each browser's saved timezone when unfinished tasks remain on an active roadmap. Browser push requires HTTPS (localhost is allowed for development), notification permission, and a browser that supports Push API. Demo accounts remain local-only.
+
+Authenticator-based two-factor verification is available in Profile → Security. Users can enroll multiple named TOTP authenticators and choose one at sign-in; a separately stored backup authenticator provides recovery if the primary device is unavailable. Before deployment, enable TOTP enrollment and verification in the hosted Supabase project's Auth → Multi-Factor Authentication settings. The local Supabase configuration enables TOTP for development. Enrolled accounts must satisfy AAL2 in protected table policies, account-writing database functions, the AI gateway, and account deletion. The app also requires a verified authenticator challenge before loading a signed-in user's workspace.
 
 ### 3. Run Development Server
 ```bash
@@ -193,6 +179,12 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 ```bash
 npm run build
 ```
+
+GitHub Actions runs the frontend lint and production build for pushes and pull requests that change frontend files. The workflow uses the committed lockfile and requires no application secrets.
+
+See [CONTRIBUTION_WORKFLOW.md](CONTRIBUTION_WORKFLOW.md) for branch, review, and database-change guidance.
+
+Edge Functions return a request ID and emit privacy-safe structured logs for operator correlation. See [docs/edge-function-observability.md](docs/edge-function-observability.md) for the log fields, sensitive-data exclusions, and hosted monitoring work still required.
 
 ---
 
@@ -235,14 +227,58 @@ npm run build
 3. **Deploy Edge Functions**:
    ```bash
    supabase functions deploy ai-gateway
+   supabase functions deploy apply-action
+   supabase functions deploy delete-account
    supabase functions deploy nightly-replan
    supabase functions deploy plan-roadmap
+   supabase functions deploy search-remote-jobs
+   supabase functions deploy score-interview-answer
+   supabase functions deploy send-push-reminders
+   supabase functions deploy send-email-otp
    ```
+
+   `send-email-otp` is a retired endpoint that now returns HTTP 410; keeping it deployed prevents old clients from writing raw OTP codes. New clients use Supabase Auth directly.
+
+   Regional vacancy search is optional. Register for a Jooble REST API key on the intended country domain and configure the matching hostname (`jooble.org` for the US API, or a country domain such as `uk.jooble.org`) with the key as Supabase Edge Function secrets. Jooble documents a 500-request lifetime limit per key, so regional searches are user-submitted and should not be automatically polled. Example: `supabase secrets set JOOBLE_API_HOST=uk.jooble.org JOOBLE_API_KEY=your_country_specific_key`. If these secrets are omitted, remote search continues and regional search reports that it is unavailable. Search terms and locations are sent to Jooble; results are not persisted by Career Pilot. Review the current [Jooble REST API documentation](https://help.jooble.org/en/support/solutions/articles/60001448238-rest-api-documentation) and [API portal](https://jooble.org/api/about) before deployment.
+
+   `nightly-replan` is not scheduled by the migration chain. If you enable it, set a dedicated high-entropy `NIGHTLY_REPLAN_SECRET` (at least 32 characters), configure the function with a scheduled POST that sends it as `Authorization: Bearer <secret>`, and keep the secret out of source control and browser configuration. Do not call it with a user session; it uses the service role to process overdue task records.
+
+   `send-push-reminders` also requires a scheduled POST with `Authorization: Bearer <PUSH_SCHEDULER_SECRET>`. Configure the Edge Function secrets before enabling its schedule:
+   ```bash
+   supabase secrets set PUSH_SCHEDULER_SECRET=replace-with-a-random-64-character-value WEB_PUSH_PUBLIC_KEY=your-vapid-public-key WEB_PUSH_PRIVATE_KEY=your-vapid-private-key WEB_PUSH_SUBJECT=mailto:ops@example.com
+   ```
+   Then store the project function URL and the same scheduler secret in Supabase Vault, and schedule the hourly call with `pg_cron`/`pg_net` (the hosted dashboard or SQL editor can enable these extensions). Example after replacing the values with real secrets:
+   ```sql
+   select vault.create_secret('https://YOUR_PROJECT_REF.supabase.co', 'career_pilot_project_url');
+   select vault.create_secret('YOUR_PUSH_SCHEDULER_SECRET', 'career_pilot_push_scheduler_secret');
+
+   select cron.schedule('career-pilot-push-reminders', '0 * * * *', $$
+     select net.http_post(
+       url := (select decrypted_secret from vault.decrypted_secrets where name = 'career_pilot_project_url') || '/functions/v1/send-push-reminders',
+       headers := jsonb_build_object(
+         'Content-Type', 'application/json',
+         'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'career_pilot_push_scheduler_secret')
+       ),
+       body := '{}'::jsonb
+     );
+   $$);
+   ```
+   Do not commit real VAPID or scheduler keys. The worker records delivery in notification history and removes subscriptions that the push service reports as expired.
+
+   The account deletion endpoint verifies the caller's Supabase session and deletes only that caller's Auth user. Profile-owned rows cascade in PostgreSQL. The current app does not upload user files to Supabase Storage.
+
+   See [data backup and retention guidance](docs/data-backup-retention.md) for what account export/deletion cover and the required production backup/restore drill. See [AI usage limits and operations](docs/ai-cost-controls.md) for the system-wide token budget, kill switch, and daily usage summary.
 
 4. **Set Edge Function Secrets**:
    ```bash
-   supabase secrets set MODEL_API_KEY=your_llm_api_key
+   supabase secrets set OPENAI_API_KEY=your_api_key OPENAI_MODEL=your_enabled_model
    ```
+
+   For the optional nightly function, generate a random secret with at least 32 characters and configure it separately, for example: `supabase secrets set NIGHTLY_REPLAN_SECRET=replace-with-a-random-64-character-value`.
+
+   Optional: set `OPENAI_API_BASE_URL` when using a compatible Responses API endpoint. Configure the function with a model enabled for the provider account. Never put the provider key in frontend environment variables.
+
+   The AI gateway sends bounded requests to the configured model through the Responses API. Requests set `store: false`; resume and interview inputs are never cached in `ai_cache`. AI use is recorded only after successful provider responses, and failed provider requests release their quota reservation. Configure the global daily token allowance and provider-side currency limits before enabling AI. See the [AI operations guide](docs/ai-cost-controls.md) and the [Responses API create reference](https://developers.openai.com/api/reference/resources/responses/methods/create) for provider request behavior.
 
 ---
 

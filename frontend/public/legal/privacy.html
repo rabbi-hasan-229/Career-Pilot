@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8fafc" />
+    <meta name="description" content="Draft privacy notice for the Career Pilot career development workspace." />
+    <title>Privacy Notice | Career Pilot</title>
+    <style>
+      :root { color-scheme: light; font: 16px/1.65 Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f8fafc; }
+      body { margin: 0; padding: 32px 18px 64px; }
+      main { max-width: 760px; margin: 0 auto; padding: 32px; background: #fff; border: 1px solid #dbe3ed; border-radius: 18px; box-shadow: 0 8px 32px #1720330d; }
+      h1, h2 { line-height: 1.25; color: #152238; }
+      h1 { margin: 0 0 8px; font-size: clamp(1.8rem, 5vw, 2.4rem); }
+      h2 { margin-top: 28px; font-size: 1.15rem; }
+      p, li { color: #475569; }
+      a { color: #315f9c; }
+      .draft { margin: 20px 0; padding: 14px 16px; border: 1px solid #fed7aa; border-radius: 12px; background: #fff7ed; color: #7c2d12; }
+      @media (max-width: 520px) { body { padding: 16px 12px 40px; } main { padding: 22px 18px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a href="/">Career Pilot</a>
+      <h1>Privacy Notice</h1>
+      <p>Draft prepared 11 November 2026</p>
+      <p class="draft"><strong>Launch review required.</strong> This is a product-data summary, not an operator-approved privacy policy. The operator must confirm the legal entity, contact details, operating jurisdictions, provider configuration, and applicable retention requirements before public registration.</p>
+
+      <h2>1. Information stored for your account</h2>
+      <p>Depending on the features you use, Career Pilot stores your account profile and career goal; roadmap milestones and tasks; acquired skills and quiz attempts; resume data; interview prompts, answers, and scores; coach conversation history; notification preferences and history; AI usage counters; and optional browser push subscription and timezone data.</p>
+
+      <h2>2. Providers used to operate the service</h2>
+      <ul>
+        <li><strong>Supabase:</strong> account authentication and the application's database. The service-role key is intended to remain server-side.</li>
+        <li><strong>AI provider:</strong> when you explicitly request an AI coach response, resume rewrite, interview feedback, or another enabled AI action, the text needed for that action is sent to the configured provider. Personal action inputs are not cached by Career Pilot.</li>
+        <li><strong>Job providers:</strong> Remote OK receives a category-tagged feed request. When you choose regional or hybrid search, Career Pilot sends your role query and location to the configured Jooble country endpoint. Job listings are shown transiently and are not copied into the Career Pilot database.</li>
+        <li><strong>Browser push service:</strong> if you opt in, the browser's push endpoint and subscription keys are stored so scheduled reminders can be delivered.</li>
+      </ul>
+      <p>Each provider may process information under its own terms and privacy policy. The operator must verify the actual provider, service region, configuration, and applicable data-processing terms before launch.</p>
+
+      <h2>3. Retention and account controls</h2>
+      <p>Product records remain associated with your account until you delete the account, unless an operator-approved retention period is configured. Account export downloads a JSON file in your browser; it includes policy acceptance versions and timestamps but excludes push subscriptions and Supabase authentication credentials or factors. Account deletion removes active profile-linked records, while provider-managed backups may retain earlier copies until their configured expiry.</p>
+
+      <h2>4. Security</h2>
+      <p>The application uses authenticated sessions, account-scoped database policies, and server-side functions for privileged operations. No internet-connected system can guarantee absolute security. Avoid entering sensitive information that is unnecessary for career planning.</p>
+
+      <h2>5. Your choices</h2>
+      <p>You can use account settings to export or delete your account and can enable or disable optional browser push. You can choose whether to submit text for optional AI actions and whether to run regional job searches. To ask questions or exercise rights that are not available in the application, a verified operator contact must be published here before launch.</p>
+
+      <h2>6. Operator and notice updates</h2>
+      <p>The responsible operator, support contact, applicable jurisdictions, and final retention periods have not been supplied for this project. They must be confirmed before launch. The operator should update this notice whenever providers or product data flows change.</p>
+
+      <p>See the <a href="/legal/terms.html">Terms of Service draft</a>.</p>
+    </main>
+  </body>
+</html>
