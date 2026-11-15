@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FileText,
   Sparkles,
@@ -10,60 +10,44 @@ import {
   Briefcase,
   GraduationCap,
   Code2,
+  Save,
+  Layout,
 } from 'lucide-react';
-import type { CVData } from '../types';
+import type { CVData, CVTemplateId, Profile } from '../types';
+import { loadCV, saveCV } from '../features/cv/cvRepository';
+import { requestAI } from '../features/ai/aiGateway';
+import { CVPreviewDocument } from '../features/cv/CVTemplates';
+import { CV_TEMPLATES } from '../features/cv/cvTemplatesCatalog';
+import { CVSkeleton } from './SkeletonScreen';
 
 interface Props {
-  aiPromptsLeft: number;
-  onUseAICall?: () => void;
+  profile: Profile;
+  onAIUsageChanged?: () => Promise<void> | void;
   onToast: (msg: string) => void;
 }
 
-const initialCV: CVData = {
-  full_name: 'Abdullah Al Mamun',
-  email: 'mamun.dev@example.com',
-  phone: '+880 1712-345678',
-  headline: 'Aspiring Full Stack Engineer & Software Architect',
-  summary:
-    'Dedicated computer engineering student specializing in scalable PostgreSQL databases, React micro-frontends, and deterministic backend architecture. Strong problem-solving foundations with 80+ DSA problems solved and hands-on experience in cloud microservices.',
-  skills: [
-    'PostgreSQL',
-    'TypeScript',
-    'React',
-    'Node.js',
-    'SQL Optimization',
-    'Supabase',
-    'Data Structures',
-    'Docker',
-    'REST APIs',
-  ],
-  experience: [
-    {
-      title: 'Software Engineering Trainee',
-      company: 'TechCraft Solutions',
-      period: 'Jan 2026 - Present',
-      highlights: [
-        'Optimized Postgres query performance across 12 high-traffic tables using partial B-Tree indexes, reducing p95 latency by 45%.',
-        'Built responsive Material 3 user interfaces using React and Tailwind/Vanilla CSS tokens, supporting 10k+ daily active users.',
-        'Collaborated on zero-downtime database migrations using Supabase CLI and Row Level Security policies.',
-      ],
-    },
-  ],
-  education: [
-    {
-      degree: 'B.Sc. in Computer Science & Engineering',
-      institution: 'Southeast University',
-      year: '2023 - 2027',
-    },
-  ],
-};
+const emptyCV = (profile: Profile): CVData => ({
+  full_name: profile.full_name,
+  email: profile.email || '',
+  phone: profile.phone || '',
+  headline: profile.target_role || '',
+  summary: '',
+  skills: [],
+  experience: [],
+  education: [],
+});
 
 export const CVBuilderView: React.FC<Props> = ({
-  aiPromptsLeft,
-  onUseAICall,
+  profile,
+  onAIUsageChanged,
   onToast,
 }) => {
-  const [cvData, setCvData] = useState<CVData>(initialCV);
+  const [cvData, setCvData] = useState<CVData>(() => emptyCV(profile));
+  const [cvDocumentId, setCvDocumentId] = useState<string | null>(null);
+  const [loadedCVForProfileId, setLoadedCVForProfileId] = useState<string | null>(null);
+  const [isSavingCV, setIsSavingCV] = useState(false);
+  const [loadError, setLoadError] = useState<{ profileId: string; message: string } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<
     'personal' | 'experience' | 'education' | 'skills' | 'preview'
   >('personal');
@@ -71,47 +55,94 @@ export const CVBuilderView: React.FC<Props> = ({
   const [previewMode, setPreviewMode] = useState<'editor' | 'preview' | 'split'>(
     typeof window !== 'undefined' && window.innerWidth >= 1024 ? 'split' : 'editor'
   );
+  const isLoadingCV = loadedCVForProfileId !== profile.id;
+  const cvError = (loadError?.profileId === profile.id ? loadError.message : null) ?? saveError;
 
-  // Metered "Improve Wording" AI Functionality (Docx Section 8 & 9)
-  const handleImproveSummary = () => {
-    if (aiPromptsLeft <= 0) {
-      onToast('⚠️ Weekly AI quota reached. Upgrade or wait for next reset.');
+  useEffect(() => {
+    let active = true;
+    void loadCV(profile.id).then((saved) => {
+      if (!active) return;
+      setCvDocumentId(saved?.id || null);
+      setCvData(saved?.data || emptyCV(profile));
+      setLoadError(null);
+    }).catch(() => {
+      if (active) setLoadError({ profileId: profile.id, message: 'Your saved resume could not be loaded.' });
+    }).finally(() => {
+      if (active) setLoadedCVForProfileId(profile.id);
+    });
+    return () => { active = false; };
+  }, [profile]);
+
+  const handleSaveCV = async () => {
+    setIsSavingCV(true);
+    setSaveError(null);
+    try {
+      const id = await saveCV(profile.id, cvDocumentId, cvData);
+      setCvDocumentId(id);
+      onToast('Resume saved to your account.');
+    } catch {
+      setSaveError('Your resume could not be saved. Check your connection and try again.');
+    } finally {
+      setIsSavingCV(false);
+    }
+  };
+
+  // Explicit, server-metered rewrite requests send only the selected section.
+  const handleImproveSummary = async () => {
+    if (!cvData.summary.trim()) {
+      onToast('Write a first draft before asking AI to improve your summary.');
       return;
     }
 
     setIsImprovingSection('summary');
-    onUseAICall?.();
-
-    setTimeout(() => {
+    try {
+      const result = await requestAI<{ improved_text: string }>('cv', {
+        section: 'summary',
+        text: cvData.summary,
+        target_role: cvData.headline || profile.target_role,
+      });
       setCvData((prev) => ({
         ...prev,
-        summary:
-          'High-performing Computer Engineering specialist with proven expertise in PostgreSQL performance optimization, robust TypeScript full-stack systems, and resilient cloud architectures. Delivered 45% latency improvements across production database tables with strict adherence to clean architecture principles.',
+        summary: result.response.improved_text,
       }));
+      onToast('AI wording applied. Review the claims and save your resume when ready.');
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : 'Could not improve the summary.');
+    } finally {
       setIsImprovingSection(null);
-      onToast('✨ Professional wording applied! Metered 1 AI call.');
-    }, 800);
+      await onAIUsageChanged?.();
+    }
   };
 
-  const handleImproveBullet = (expIndex: number, bulletIndex: number) => {
-    if (aiPromptsLeft <= 0) {
-      onToast('⚠️ Weekly AI quota reached.');
+  const handleImproveBullet = async (expIndex: number, bulletIndex: number) => {
+    const sourceText = cvData.experience[expIndex]?.highlights[bulletIndex];
+    if (!sourceText?.trim()) {
+      onToast('Add a draft accomplishment before asking AI to improve it.');
       return;
     }
 
-    setIsImprovingSection(`bullet_${expIndex}_${bulletIndex}`);
-    onUseAICall?.();
-
-    setTimeout(() => {
+    const sectionId = `bullet_${expIndex}_${bulletIndex}`;
+    setIsImprovingSection(sectionId);
+    try {
+      const result = await requestAI<{ improved_text: string }>('cv', {
+        section: 'bullet',
+        text: sourceText,
+        target_role: cvData.headline || profile.target_role,
+      });
       setCvData((prev) => {
         const nextExp = [...prev.experience];
-        const oldText = nextExp[expIndex].highlights[bulletIndex];
-        nextExp[expIndex].highlights[bulletIndex] = `Spearheaded ${oldText.toLowerCase()} Resulted in quantified metric uplift and elevated system reliability.`;
+        if (!nextExp[expIndex]?.highlights[bulletIndex]) return prev;
+        nextExp[expIndex] = { ...nextExp[expIndex], highlights: [...nextExp[expIndex].highlights] };
+        nextExp[expIndex].highlights[bulletIndex] = result.response.improved_text;
         return { ...prev, experience: nextExp };
       });
+      onToast('AI wording applied. Confirm it accurately describes your work, then save your resume.');
+    } catch (error) {
+      onToast(error instanceof Error ? error.message : 'Could not improve this accomplishment.');
+    } finally {
       setIsImprovingSection(null);
-      onToast('✨ Achievement impact highlighted! Metered 1 AI call.');
-    }, 800);
+      await onAIUsageChanged?.();
+    }
   };
 
   const handleAddSkill = (skill: string) => {
@@ -133,7 +164,7 @@ export const CVBuilderView: React.FC<Props> = ({
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', paddingBottom: '40px' }}>
       {/* Header Card */}
-      <div className="m3-surface-card" style={{ marginBottom: '20px' }}>
+      <div className="m3-surface-card no-print" style={{ marginBottom: '20px', padding: '20px 24px' }}>
         <div
           style={{
             display: 'flex',
@@ -144,102 +175,81 @@ export const CVBuilderView: React.FC<Props> = ({
           }}
         >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span
-                style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  color: '#6366f1',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Local Form Wizard · Docx Section 8
-              </span>
-              <span
-                style={{
-                  fontSize: '11px',
-                  background: 'rgba(16, 185, 129, 0.2)',
-                  color: '#10b981',
-                  padding: '2px 8px',
-                  borderRadius: '9999px',
-                  fontWeight: 700,
-                }}
-              >
-                Zero-Cost Editor
-              </span>
-            </div>
             <h2
               style={{
-                fontSize: '22px',
-                fontWeight: 800,
+                fontSize: '20px',
+                fontWeight: 700,
                 color: 'var(--md-text-primary)',
-                margin: '4px 0',
+                margin: '0 0 4px 0',
               }}
             >
-              Professional CV & Resume Builder
+              Resume Builder
             </h2>
             <p style={{ fontSize: '13px', color: 'var(--md-text-secondary)', margin: 0 }}>
-              Form wizard structures your resume locally. AI wording polish is strictly opt-in and metered.
+              Draft, format, and export as PDF.
             </p>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px' }}>
-            {/* View Switcher for smaller screens */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            {/* View Switcher */}
             <div
               style={{
                 display: 'flex',
                 background: 'var(--md-surface-variant)',
-                borderRadius: '12px',
+                borderRadius: '10px',
                 padding: '3px',
                 border: '1px solid var(--md-outline)',
               }}
             >
               <button
+                type="button"
                 onClick={() => setPreviewMode('editor')}
                 style={{
                   background: previewMode === 'editor' ? 'var(--md-surface)' : 'transparent',
                   border: 'none',
-                  borderRadius: '10px',
+                  borderRadius: '8px',
                   padding: '6px 12px',
                   fontSize: '12px',
-                  fontWeight: 700,
-                  color: previewMode === 'editor' ? 'var(--md-primary)' : 'var(--md-text-secondary)',
+                  fontWeight: 600,
+                  color: previewMode === 'editor' ? 'var(--md-text-primary)' : 'var(--md-text-secondary)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px',
+                  gap: '5px',
                 }}
               >
-                <Edit3 size={14} /> Form
+                <Edit3 size={13} /> Edit
               </button>
               <button
+                type="button"
                 onClick={() => setPreviewMode('preview')}
                 style={{
                   background: previewMode === 'preview' ? 'var(--md-surface)' : 'transparent',
                   border: 'none',
-                  borderRadius: '10px',
+                  borderRadius: '8px',
                   padding: '6px 12px',
                   fontSize: '12px',
-                  fontWeight: 700,
-                  color: previewMode === 'preview' ? 'var(--md-primary)' : 'var(--md-text-secondary)',
+                  fontWeight: 600,
+                  color: previewMode === 'preview' ? 'var(--md-text-primary)' : 'var(--md-text-secondary)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '4px',
+                  gap: '5px',
                 }}
               >
-                <Eye size={14} /> Preview
+                <Eye size={13} /> Preview
               </button>
               <button
+                type="button"
                 onClick={() => setPreviewMode('split')}
                 style={{
                   background: previewMode === 'split' ? 'var(--md-surface)' : 'transparent',
                   border: 'none',
-                  borderRadius: '10px',
+                  borderRadius: '8px',
                   padding: '6px 12px',
                   fontSize: '12px',
-                  fontWeight: 700,
-                  color: previewMode === 'split' ? 'var(--md-primary)' : 'var(--md-text-secondary)',
+                  fontWeight: 600,
+                  color: previewMode === 'split' ? 'var(--md-text-primary)' : 'var(--md-text-secondary)',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
@@ -251,70 +261,83 @@ export const CVBuilderView: React.FC<Props> = ({
             </div>
 
             <button
+              type="button"
+              onClick={() => void handleSaveCV()}
+              disabled={isLoadingCV || isSavingCV || Boolean(cvError)}
+              style={{
+                background: 'var(--md-surface)',
+                color: 'var(--md-text-primary)',
+                border: '1px solid var(--md-outline)',
+                borderRadius: '10px',
+                padding: '8px 14px',
+                fontSize: '12.5px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: isSavingCV ? 'wait' : 'pointer',
+                opacity: isSavingCV ? 0.7 : 1,
+              }}
+            >
+              <Save size={14} /> {isSavingCV ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
               onClick={handlePrintDownload}
               style={{
-                background: 'var(--md-violet-gradient)',
+                background: 'var(--md-primary)',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '12px',
-                padding: '8px 16px',
-                fontSize: '13px',
+                borderRadius: '10px',
+                padding: '8px 14px',
+                fontSize: '12.5px',
                 fontWeight: 700,
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                gap: '6px',
                 cursor: 'pointer',
-                boxShadow: 'var(--shadow-glow)',
               }}
             >
-              <Download size={16} /> Export PDF
+              <Download size={14} /> Export PDF
             </button>
           </div>
         </div>
 
-        {/* Wizard Step Selector */}
+        {/* Section Tabs */}
         <div
           style={{
             display: 'flex',
             gap: '8px',
             marginTop: '16px',
+            paddingTop: '14px',
+            borderTop: '1px solid var(--md-outline)',
             overflowX: 'auto',
-            paddingBottom: '4px',
           }}
         >
           {[
-            { id: 'personal', label: '1. Personal Info', icon: FileText },
-            { id: 'experience', label: '2. Experience', icon: Briefcase },
-            { id: 'education', label: '3. Education', icon: GraduationCap },
-            { id: 'skills', label: '4. Skills Matrix', icon: Code2 },
+            { id: 'personal', label: 'Personal', icon: FileText },
+            { id: 'experience', label: 'Experience', icon: Briefcase },
+            { id: 'education', label: 'Education', icon: GraduationCap },
+            { id: 'skills', label: 'Skills', icon: Code2 },
           ].map((st) => (
             <button
               key={st.id}
+              type="button"
               onClick={() => {
                 setActiveStep(st.id as any);
                 if (previewMode === 'preview') setPreviewMode('editor');
               }}
-              style={{
-                background: activeStep === st.id ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
-                border: `1px solid ${activeStep === st.id ? 'var(--md-primary)' : 'var(--md-outline)'}`,
-                borderRadius: '10px',
-                padding: '7px 14px',
-                fontSize: '12.5px',
-                fontWeight: activeStep === st.id ? 800 : 600,
-                color: activeStep === st.id ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-              }}
+              className={`m3-tab-pill ${activeStep === st.id ? 'active' : ''}`}
             >
-              <st.icon size={15} color={activeStep === st.id ? '#6366f1' : 'var(--md-text-muted)'} />
+              <st.icon size={14} />
               {st.label}
             </button>
           ))}
         </div>
       </div>
+
+      {isLoadingCV && <CVSkeleton />}
+      {cvError && <p role="alert" style={{ color: '#B91C1C', fontSize: '13px' }}>{cvError}</p>}
 
       {/* Main Container: Split or Full */}
       <div
@@ -434,6 +457,7 @@ export const CVBuilderView: React.FC<Props> = ({
                     <button
                       onClick={handleImproveSummary}
                       disabled={isImprovingSection === 'summary'}
+                      title="Sends only this summary to the configured AI provider. Review the result before saving."
                       style={{
                         background: 'var(--md-primary-container)',
                         color: 'var(--md-on-primary-container)',
@@ -449,7 +473,7 @@ export const CVBuilderView: React.FC<Props> = ({
                       }}
                     >
                       <Sparkles size={13} />
-                      {isImprovingSection === 'summary' ? 'Optimizing...' : 'Improve Wording (Metered AI)'}
+                      {isImprovingSection === 'summary' ? 'Improving…' : 'Improve with AI'}
                     </button>
                   </div>
                   <textarea
@@ -598,6 +622,7 @@ export const CVBuilderView: React.FC<Props> = ({
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                         <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Key Accomplishments</span>
                         <button
+                          type="button"
                           onClick={() => {
                             const next = [...cvData.experience];
                             next[idx].highlights.push('New accomplishment detail.');
@@ -606,8 +631,8 @@ export const CVBuilderView: React.FC<Props> = ({
                           style={{
                             background: 'none',
                             border: 'none',
-                            color: '#6366f1',
-                            fontSize: '11px',
+                            color: 'var(--md-primary)',
+                            fontSize: '11.5px',
                             fontWeight: 700,
                             cursor: 'pointer',
                           }}
@@ -638,7 +663,8 @@ export const CVBuilderView: React.FC<Props> = ({
                           />
                           <button
                             onClick={() => handleImproveBullet(idx, bIdx)}
-                            title="Improve with AI (Metered)"
+                            disabled={isImprovingSection === `bullet_${idx}_${bIdx}`}
+                            title="Sends only this bullet to the configured AI provider. Review the result before saving."
                             style={{
                               background: 'var(--md-primary-container)',
                               border: '1px solid var(--md-outline)',
@@ -792,6 +818,7 @@ export const CVBuilderView: React.FC<Props> = ({
                     }}
                   />
                   <button
+                    type="button"
                     onClick={() => {
                       const inp = document.getElementById('new-skill-input') as HTMLInputElement;
                       if (inp) {
@@ -800,7 +827,7 @@ export const CVBuilderView: React.FC<Props> = ({
                       }
                     }}
                     style={{
-                      background: 'var(--md-violet-gradient)',
+                      background: 'var(--md-primary)',
                       color: '#ffffff',
                       border: 'none',
                       borderRadius: '10px',
@@ -810,7 +837,7 @@ export const CVBuilderView: React.FC<Props> = ({
                       cursor: 'pointer',
                     }}
                   >
-                    Add Skill
+                    Add
                   </button>
                 </div>
 
@@ -852,93 +879,58 @@ export const CVBuilderView: React.FC<Props> = ({
           </div>
         )}
 
-        {/* RIGHT / LIVE MATERIAL 3 PREVIEW */}
+        {/* RIGHT / LIVE MULTI-TEMPLATE PREVIEW */}
         {(previewMode === 'preview' || previewMode === 'split') && (
-          <div
-            id="cv-printable-document"
-            style={{
-              background: 'var(--md-surface)',
-              borderRadius: '16px',
-              border: '1px solid var(--md-outline)',
-              boxShadow: 'var(--shadow-md)',
-              padding: '36px',
-              fontFamily: 'Inter, -apple-system, sans-serif',
-              color: 'var(--md-text-primary)',
-            }}
-          >
-            {/* Header */}
-            <div style={{ borderBottom: '2px solid #6366f1', paddingBottom: '16px', marginBottom: '20px' }}>
-              <h1 style={{ fontSize: '24px', fontWeight: 800, margin: '0 0 4px 0', color: 'var(--md-text-primary)' }}>
-                {cvData.full_name}
-              </h1>
-              <p style={{ fontSize: '14px', fontWeight: 700, color: '#6366f1', margin: '0 0 10px 0' }}>
-                {cvData.headline}
-              </p>
-              <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: 'var(--md-text-secondary)' }}>
-                <span>{cvData.email}</span>
-                <span>•</span>
-                <span>{cvData.phone}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', minWidth: 0 }}>
+            {/* Template Selector Bar */}
+            <div
+              className="m3-surface-card no-print"
+              style={{
+                padding: '14px 18px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Layout size={15} color="var(--md-primary)" />
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+                    Template
+                  </span>
+                </div>
+                <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>
+                  {CV_TEMPLATES.find((t) => t.id === (cvData.template_id || 'modern'))?.description}
+                </span>
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {CV_TEMPLATES.map((tmpl) => {
+                  const isSelected = (cvData.template_id || 'modern') === tmpl.id;
+                  return (
+                    <button
+                      key={tmpl.id}
+                      type="button"
+                      onClick={() => setCvData((prev) => ({ ...prev, template_id: tmpl.id as CVTemplateId }))}
+                      className={`m3-tab-pill ${isSelected ? 'active' : ''}`}
+                    >
+                      <span
+                        style={{
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          background: tmpl.accentColor,
+                          display: 'inline-block',
+                        }}
+                      />
+                      {tmpl.name}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Summary */}
-            <div style={{ marginBottom: '20px' }}>
-              <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                Executive Summary
-              </h4>
-              <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--md-text-secondary)', margin: 0 }}>
-                {cvData.summary}
-              </p>
-            </div>
-
-            {/* Experience */}
-            <div style={{ marginBottom: '20px' }}>
-              <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
-                Experience & Impact
-              </h4>
-              {cvData.experience.map((exp, i) => (
-                <div key={i} style={{ marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <strong style={{ fontSize: '14px', color: 'var(--md-text-primary)' }}>{exp.title}</strong>
-                    <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>{exp.period}</span>
-                  </div>
-                  <div style={{ fontSize: '12.5px', color: '#6366f1', fontWeight: 600, marginBottom: '6px' }}>
-                    {exp.company}
-                  </div>
-                  <ul style={{ margin: '4px 0 0 16px', padding: 0, fontSize: '12.5px', color: 'var(--md-text-secondary)', lineHeight: 1.5 }}>
-                    {exp.highlights.map((h, hi) => (
-                      <li key={hi} style={{ marginBottom: '4px' }}>{h}</li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-
-            {/* Education */}
-            <div style={{ marginBottom: '20px' }}>
-              <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px' }}>
-                Education
-              </h4>
-              {cvData.education.map((edu, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <div>
-                    <strong style={{ fontSize: '13px', color: 'var(--md-text-primary)' }}>{edu.degree}</strong>
-                    <div style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>{edu.institution}</div>
-                  </div>
-                  <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>{edu.year}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Skills */}
-            <div>
-              <h4 style={{ fontSize: '13px', fontWeight: 800, color: '#6366f1', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>
-                Technical Competencies
-              </h4>
-              <p style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', lineHeight: 1.6, margin: 0 }}>
-                {cvData.skills.join(' • ')}
-              </p>
-            </div>
+            {/* Live Rendered Template Document */}
+            <CVPreviewDocument data={cvData} templateId={cvData.template_id || 'modern'} />
           </div>
         )}
       </div>

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import confetti from 'canvas-confetti';
-import { Bell } from 'lucide-react';
+import { Bell, Compass, Send } from 'lucide-react';
 import type { Milestone, Task, Profile } from '../../types';
 import { notificationService } from '../notifications/notificationService';
 
@@ -12,6 +12,7 @@ interface Props {
   onToggleTaskComplete: (taskId: string) => void;
   onOpenGoalSettings: () => void;
   onOpenNotifications: () => void;
+  onUpdateReminderFrequency: (frequency: '2x' | '3x' | '4x') => Promise<void>;
 }
 
 // ─── Icon Types ────────────────────────────────────────────────────────────────
@@ -20,22 +21,22 @@ type IconName = 'user' | 'monitor' | 'star' | 'bag' | 'team' | 'target' | 'spark
 const MILESTONE_ICONS: IconName[] = ['user', 'monitor', 'star', 'bag', 'team', 'target', 'layers', 'spark', 'flag', 'trophy'];
 
 // ─── Sizing Constants ──────────────────────────────────────────────────────────
-// Desktop Coordinate System (generous, wide, readable, stage cards clearly beside stoppages)
+// Desktop Coordinate System (smooth S-curve proportions & clear stage spacing)
 const DESKTOP_REF_WIDTH = 1200;
-const DESKTOP_START_Y = 230;
-const DESKTOP_STEP_Y = 250;
-const DESKTOP_LEFT_PIN_X = 480;
-const DESKTOP_RIGHT_PIN_X = 720;
+const DESKTOP_START_Y = 235;
+const DESKTOP_STEP_Y = 260;
+const DESKTOP_LEFT_PIN_X = 490;
+const DESKTOP_RIGHT_PIN_X = 710;
 const DESKTOP_CARD_WIDTH = 370;
 const DESKTOP_LEFT_CARD_X = 35;
 const DESKTOP_RIGHT_CARD_X = 795;
 
 // Mobile Coordinate System (edge-to-edge, compact, readable, clean gap between pin and card)
 const MOBILE_REF_WIDTH = 420;
-const MOBILE_START_Y = 180;
-const MOBILE_STEP_Y = 250;
-const MOBILE_LEFT_PIN_X = 176;
-const MOBILE_RIGHT_PIN_X = 244;
+const MOBILE_START_Y = 185;
+const MOBILE_STEP_Y = 255;
+const MOBILE_LEFT_PIN_X = 178;
+const MOBILE_RIGHT_PIN_X = 242;
 const MOBILE_CARD_WIDTH = 150;
 const MOBILE_LEFT_CARD_X = 6;
 const MOBILE_RIGHT_CARD_X = 264;
@@ -74,35 +75,35 @@ function playCarHorn() {
 }
 
 // ─── Road Geometry & Bézier Mathematics ────────────────────────────────────────
-export interface BezierSegment {
+interface BezierSegment {
   p0: { x: number; y: number };
   p1: { x: number; y: number };
   p2: { x: number; y: number };
   p3: { x: number; y: number };
 }
 
-export function getRoadSegments(count: number, isMobile: boolean): BezierSegment[] {
+function getRoadSegments(count: number, isMobile: boolean): BezierSegment[] {
   const refWidth = isMobile ? MOBILE_REF_WIDTH : DESKTOP_REF_WIDTH;
   const startY = isMobile ? MOBILE_START_Y : DESKTOP_START_Y;
   const stepY = isMobile ? MOBILE_STEP_Y : DESKTOP_STEP_Y;
   const leftX = isMobile ? MOBILE_LEFT_PIN_X : DESKTOP_LEFT_PIN_X;
   const rightX = isMobile ? MOBILE_RIGHT_PIN_X : DESKTOP_RIGHT_PIN_X;
   const centerX = refWidth / 2;
-  const topRoadY = startY - (isMobile ? 75 : 95);
+  const topRoadY = isMobile ? 54 : 68;
 
   const segments: BezierSegment[] = [];
   if (count === 0) return segments;
 
-  // Segment 0: Top entrance to milestone 0
+  // Segment 0: Smooth C1 vertical-tangent S-entry from top center into milestone 0 apex
   const initDy = startY - topRoadY;
   segments.push({
     p0: { x: centerX, y: topRoadY },
-    p1: { x: centerX + (isMobile ? 18 : 36), y: topRoadY + initDy * 0.42 },
-    p2: { x: rightX + (isMobile ? 8 : 20), y: startY - initDy * 0.42 },
+    p1: { x: centerX, y: topRoadY + initDy * 0.56 },
+    p2: { x: rightX, y: startY - initDy * 0.56 },
     p3: { x: rightX, y: startY },
   });
 
-  // Segments 1 to count - 1: S-curves connecting milestone i to milestone i + 1
+  // Segments 1 to count - 1: C1 continuous S-curves with vertical tangents through each pin
   for (let i = 0; i < count - 1; i += 1) {
     const fromX = i % 2 === 0 ? rightX : leftX;
     const fromY = startY + i * stepY;
@@ -110,36 +111,32 @@ export function getRoadSegments(count: number, isMobile: boolean): BezierSegment
     const toY = startY + (i + 1) * stepY;
     const dy = toY - fromY;
 
-    const cp1X = fromX + (fromX > centerX ? (isMobile ? 14 : 26) : (isMobile ? -14 : -26));
-    const cp1Y = fromY + dy * 0.46;
-    const cp2X = toX + (toX > centerX ? (isMobile ? 14 : 26) : (isMobile ? -14 : -26));
-    const cp2Y = toY - dy * 0.46;
-
     segments.push({
       p0: { x: fromX, y: fromY },
-      p1: { x: cp1X, y: cp1Y },
-      p2: { x: cp2X, y: cp2Y },
+      p1: { x: fromX, y: fromY + dy * 0.54 },
+      p2: { x: toX, y: toY - dy * 0.54 },
       p3: { x: toX, y: toY },
     });
   }
 
-  // Final Segment: Tail exit past the last milestone
+  // Final Segment: Smooth C1 tail exit returning to centerline
   const lastIndex = count - 1;
   const lastPinX = lastIndex % 2 === 0 ? rightX : leftX;
   const lastPinY = startY + lastIndex * stepY;
-  const exitY = lastPinY + (isMobile ? 150 : 200);
+  const tailDy = isMobile ? 155 : 195;
+  const exitY = lastPinY + tailDy;
 
   segments.push({
     p0: { x: lastPinX, y: lastPinY },
-    p1: { x: lastPinX + (lastPinX > centerX ? (isMobile ? 8 : 16) : (isMobile ? -8 : -16)), y: lastPinY + 45 },
-    p2: { x: centerX, y: exitY - 30 },
+    p1: { x: lastPinX, y: lastPinY + tailDy * 0.55 },
+    p2: { x: centerX, y: exitY - tailDy * 0.55 },
     p3: { x: centerX, y: exitY },
   });
 
   return segments;
 }
 
-export function evalBezier(seg: BezierSegment, t: number): { x: number; y: number; angle: number } {
+function evalBezier(seg: BezierSegment, t: number): { x: number; y: number; angle: number } {
   const clampedT = Math.max(0, Math.min(1, t));
   const mt = 1 - clampedT;
   const mt2 = mt * mt;
@@ -160,7 +157,7 @@ export function evalBezier(seg: BezierSegment, t: number): { x: number; y: numbe
   return { x, y, angle };
 }
 
-export function getParkingPosition(seg: BezierSegment, targetDist: number): { x: number; y: number; angle: number; t: number } {
+function getParkingPosition(seg: BezierSegment, targetDist: number): { x: number; y: number; angle: number; t: number } {
   let low = 0.2;
   let high = 0.98;
   for (let iter = 0; iter < 14; iter++) {
@@ -182,8 +179,7 @@ export function getParkingPosition(seg: BezierSegment, targetDist: number): { x:
 function generateRoadPath(count: number, isMobile: boolean): { path: string; totalHeight: number } {
   const segments = getRoadSegments(count, isMobile);
   const refWidth = isMobile ? MOBILE_REF_WIDTH : DESKTOP_REF_WIDTH;
-  const startY = isMobile ? MOBILE_START_Y : DESKTOP_START_Y;
-  const topRoadY = startY - (isMobile ? 75 : 95);
+  const topRoadY = isMobile ? 54 : 68;
 
   if (segments.length === 0) {
     const d = `M ${refWidth / 2} ${topRoadY} L ${refWidth / 2} ${topRoadY + 200}`;
@@ -196,7 +192,7 @@ function generateRoadPath(count: number, isMobile: boolean): { path: string; tot
   }
 
   const lastSeg = segments[segments.length - 1];
-  return { path: d, totalHeight: lastSeg.p3.y + (isMobile ? 70 : 90) };
+  return { path: d, totalHeight: lastSeg.p3.y + (isMobile ? 75 : 95) };
 }
 
 // ─── Pilot Roadster (High-Tech Highway Car) ────────────────────────────────────
@@ -327,6 +323,7 @@ export const Road3DGameView: React.FC<Props> = ({
   onToggleTaskComplete,
   onOpenGoalSettings,
   onOpenNotifications,
+  onUpdateReminderFrequency,
 }) => {
   const [announcement, setAnnouncement] = useState('');
 
@@ -380,13 +377,36 @@ export const Road3DGameView: React.FC<Props> = ({
 
   // ── Notification reminder frequency state ─────────────────────────────────
   const [reminderFreq, setReminderFreq] = useState<'2x' | '3x' | '4x'>(
-    () => notificationService.getWeeklyReminderFrequency()
+    () => notificationService.getWeeklyReminderFrequency(profile || undefined)
   );
+  const [reminderError, setReminderError] = useState('');
+  const handleReminderFrequencyChange = async (frequency: '2x' | '3x' | '4x') => {
+    const previous = reminderFreq;
+    setReminderFreq(frequency);
+    setReminderError('');
+    try {
+      await onUpdateReminderFrequency(frequency);
+    } catch {
+      setReminderFreq(previous);
+      setReminderError('Could not save this preference. Try again.');
+    }
+  };
   const [isReminderTesting, setIsReminderTesting] = useState(false);
+  const [reminderNotice, setReminderNotice] = useState('');
   const handleTestPush = async () => {
     setIsReminderTesting(true);
-    await notificationService.triggerWeeklyReminder(tasks, milestones[0], profile);
-    setTimeout(() => setIsReminderTesting(false), 2000);
+    setReminderNotice('');
+    setReminderError('');
+    try {
+      const sent = await notificationService.triggerWeeklyReminder(tasks, milestones[0], profile);
+      setReminderNotice(sent
+        ? 'Check-in saved to your notification history.'
+        : 'Turn on weekly check-in reminders in Profile settings to use this action.');
+    } catch {
+      setReminderError('Could not save the check-in. Please try again.');
+    } finally {
+      setIsReminderTesting(false);
+    }
   };
 
   // ── Responsive Layout Detection ───────────────────────────────────────────
@@ -578,49 +598,56 @@ export const Road3DGameView: React.FC<Props> = ({
         </div>
 
         <div className="rp-header-controls">
-          <div className="rp-header-btn-row">
+          <div className="rp-toolbar-row">
+            <div className="rp-remind-bar" role="group" aria-label="Weekly check-in cadence">
+              <span className="rp-remind-label" title="Saved check-in preference">Cadence</span>
+              <div className="rp-remind-segmented">
+                {(['2x', '3x', '4x'] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => void handleReminderFrequencyChange(f)}
+                    aria-label={`${f[0]} times per week`}
+                    aria-pressed={reminderFreq === f}
+                    className={`rp-remind-chip ${reminderFreq === f ? 'active' : ''}`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={handleTestPush}
+                disabled={isReminderTesting}
+                className="rp-remind-test-btn"
+                title="Send check-in now"
+              >
+                <Send size={11} />
+                <span>{isReminderTesting ? 'Sending…' : 'Check-in'}</span>
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={onOpenNotifications}
               className="rp-btn-alerts"
-              title="Notification Center"
+              title="Open Push & Notification Alerts"
             >
-              <Bell size={13} className="rp-btn-bell-icon" /> Alerts
+              <Bell size={13} className="rp-btn-bell-icon" />
+              <span>Alerts</span>
             </button>
+
             <button
               type="button"
               onClick={onOpenGoalSettings}
               className="rp-btn-career"
             >
-              Change Career
+              <Compass size={13} />
+              <span>Change Role</span>
             </button>
           </div>
-
-          {/* Reminder frequency */}
-          <div className="rp-remind-bar">
-            <span className="rp-remind-label">Remind:</span>
-            {(['2x', '3x', '4x'] as const).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => {
-                  setReminderFreq(f);
-                  notificationService.setWeeklyReminderFrequency(f);
-                }}
-                className={`rp-remind-chip ${reminderFreq === f ? 'active' : ''}`}
-              >
-                {f}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={handleTestPush}
-              disabled={isReminderTesting}
-              className="rp-remind-test-btn"
-            >
-              {isReminderTesting ? 'Sent!' : 'Test'}
-            </button>
-          </div>
+          {reminderError && <span role="alert" className="rp-remind-status error">{reminderError}</span>}
+          {reminderNotice && <span role="status" aria-live="polite" className="rp-remind-status">{reminderNotice}</span>}
         </div>
       </div>
 
@@ -634,40 +661,36 @@ export const Road3DGameView: React.FC<Props> = ({
           aria-label={`${roleName} career roadmap with ${milestones.length} milestones`}
         >
 
-          {/* ── SVG Road Art (3D Asphalt Highway) ── */}
+          {/* ── SVG Road Art (Smooth C1 3D Asphalt Highway) ── */}
           <svg
             className="rp-road-art"
             viewBox={`0 0 ${refWidth} ${posterHeight}`}
-            preserveAspectRatio="none"
+            preserveAspectRatio="xMidYMid meet"
             aria-hidden="true"
           >
             <defs>
               <linearGradient id="rp-asphalt" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#2c3748" />
-                <stop offset="22%" stopColor="#182130" />
-                <stop offset="52%" stopColor="#222c3b" />
-                <stop offset="78%" stopColor="#141d2b" />
-                <stop offset="100%" stopColor="#090f19" />
+                <stop offset="0%" stopColor="#263142" />
+                <stop offset="50%" stopColor="#17202E" />
+                <stop offset="100%" stopColor="#0E1521" />
               </linearGradient>
               <linearGradient id="rp-roadRim" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#b7c1d1" />
-                <stop offset="25%" stopColor="#e8edf5" />
-                <stop offset="54%" stopColor="#9da9bb" />
-                <stop offset="78%" stopColor="#f1f4fa" />
-                <stop offset="100%" stopColor="#c5cedc" />
+                <stop offset="0%" stopColor="#CBD5E1" />
+                <stop offset="50%" stopColor="#E2E8F0" />
+                <stop offset="100%" stopColor="#CBD5E1" />
               </linearGradient>
               <linearGradient id="rp-roadSheen" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#647187" stopOpacity=".35" />
-                <stop offset="44%" stopColor="#647187" stopOpacity=".08" />
-                <stop offset="100%" stopColor="#020711" stopOpacity=".45" />
+                <stop offset="0%" stopColor="#64748B" stopOpacity=".22" />
+                <stop offset="50%" stopColor="#475569" stopOpacity=".06" />
+                <stop offset="100%" stopColor="#020617" stopOpacity=".28" />
               </linearGradient>
               <filter id="rp-roadShadow" x="-20%" y="-15%" width="150%" height="140%">
                 <feGaussianBlur in="SourceAlpha" stdDeviation={isMobile ? "3" : "4.5"} result="blur" />
-                <feOffset in="blur" dx="2" dy={isMobile ? "4" : "7"} result="offsetBlur" />
+                <feOffset in="blur" dx="0" dy={isMobile ? "4" : "6"} result="offsetBlur" />
                 <feColorMatrix
                   in="offsetBlur"
                   type="matrix"
-                  values="0 0 0 0 0.04  0 0 0 0 0.07  0 0 0 0 0.13  0 0 0 .38 0"
+                  values="0 0 0 0 0.04  0 0 0 0 0.07  0 0 0 0 0.13  0 0 0 .32 0"
                   result="shadow"
                 />
                 <feMerge>
@@ -677,20 +700,18 @@ export const Road3DGameView: React.FC<Props> = ({
               </filter>
             </defs>
 
-            {/* Road layers for rich 3D highway bevel & asphalt depth */}
-            <path d={roadPath} className="rp-road-shadow" filter="url(#rp-roadShadow)" strokeWidth={isMobile ? 38 : 58} />
-            <path d={roadPath} className="rp-road-extrusion" transform="translate(1 6)" strokeWidth={isMobile ? 35 : 54} />
-            <path d={roadPath} className="rp-road-rim" strokeWidth={isMobile ? 33 : 51} />
-            <path d={roadPath} className="rp-road-bevel" transform="translate(0 -1.4)" strokeWidth={isMobile ? 31 : 47} />
-            <path d={roadPath} className="rp-road-edge-shadow" transform="translate(0 1.8)" strokeWidth={isMobile ? 29 : 44} />
-            <path d={roadPath} className="rp-road-face" transform="translate(0 -1.5)" strokeWidth={isMobile ? 26 : 40} />
-            <path d={roadPath} className="rp-road-sheen" transform="translate(0 -3)" strokeWidth={isMobile ? 22 : 35} />
+            {/* Concentric smooth highway layers */}
+            <path d={roadPath} className="rp-road-shadow" filter="url(#rp-roadShadow)" strokeWidth={isMobile ? 36 : 54} />
+            <path d={roadPath} className="rp-road-extrusion" transform="translate(0 4)" strokeWidth={isMobile ? 34 : 51} />
+            <path d={roadPath} className="rp-road-rim" strokeWidth={isMobile ? 32 : 48} />
+            <path d={roadPath} className="rp-road-bevel" strokeWidth={isMobile ? 30 : 45} />
+            <path d={roadPath} className="rp-road-face" strokeWidth={isMobile ? 26 : 39} />
+            <path d={roadPath} className="rp-road-sheen" strokeWidth={isMobile ? 22 : 33} />
             <path
               d={roadPath}
               className="rp-road-dashes"
-              transform="translate(0 -2)"
-              strokeWidth={isMobile ? 1.6 : 2.2}
-              strokeDasharray={isMobile ? "6 5" : "9 7"}
+              strokeWidth={isMobile ? 1.5 : 2.1}
+              strokeDasharray={isMobile ? "6 6" : "9 7"}
             />
 
             {/* Connector lines from road/pins to goal cards */}
@@ -786,8 +807,8 @@ export const Road3DGameView: React.FC<Props> = ({
                 <article className={`rp-goal-copy ${rightSide ? 'right' : 'left'} ${isCompleted ? 'completed' : ''}`} style={cardStyle}>
                   <div className="rp-card-header">
                     <div className="rp-card-title-group">
-                      <span className="rp-card-step-kicker">STAGE {String(index + 1).padStart(2, '0')}</span>
-                      <h2>{milestone.title.toUpperCase()}</h2>
+                      <span className="rp-card-step-kicker">Stage {String(index + 1).padStart(2, '0')}</span>
+                      <h2>{milestone.title}</h2>
                     </div>
                     <div className="rp-card-icon-badge">
                       <StepIcon name={iconName} />
@@ -811,19 +832,19 @@ export const Road3DGameView: React.FC<Props> = ({
                       {milestoneTasks.slice(0, 4).map((task) => {
                         const done = task.done_at != null;
                         return (
-                          <li
-                            key={task.id}
+                          <li key={task.id}>
+                            <button
+                            type="button"
                             className={`rp-task-item${done ? ' done' : ''}`}
                             onClick={(e) => handleTaskClick(task, e)}
-                            role="checkbox"
-                            aria-checked={done}
-                            tabIndex={0}
-                            onKeyDown={(e) => e.key === 'Enter' && handleTaskClick(task, e as unknown as React.MouseEvent)}
+                            aria-pressed={done}
+                            aria-label={done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
                           >
                             <span className={`rp-checkbox${done ? ' checked' : ''}`} aria-hidden="true">
                               {done ? '✓' : ''}
                             </span>
                             <span className="rp-task-title">{task.title}</span>
+                            </button>
                           </li>
                         );
                       })}
@@ -863,15 +884,15 @@ export const Road3DGameView: React.FC<Props> = ({
             <div className="rp-stat-label">MILESTONES</div>
           </div>
           <div className="rp-stat-card">
-            <div className="rp-stat-value" style={{ color: '#10b981' }}>{completedCount}</div>
+            <div className="rp-stat-value" style={{ color: '#059669' }}>{completedCount}</div>
             <div className="rp-stat-label">TASKS DONE</div>
           </div>
           <div className="rp-stat-card">
-            <div className="rp-stat-value" style={{ color: '#3b82f6' }}>{overallPct}%</div>
+            <div className="rp-stat-value" style={{ color: 'var(--rp-header-accent)' }}>{overallPct}%</div>
             <div className="rp-stat-label">COMPLETE</div>
           </div>
           <div className="rp-stat-card">
-            <div className="rp-stat-value" style={{ color: '#8b5cf6' }}>{totalTaskCount - completedCount}</div>
+            <div className="rp-stat-value" style={{ color: '#475569' }}>{totalTaskCount - completedCount}</div>
             <div className="rp-stat-label">REMAINING</div>
           </div>
         </div>
@@ -881,7 +902,8 @@ export const Road3DGameView: React.FC<Props> = ({
           className="rp-settings-button"
           onClick={onOpenGoalSettings}
         >
-          ⚙️ Adjust Career Goal & Timeline ↗
+          <Compass size={13} />
+          <span>Adjust Career Goal &amp; Timeline</span>
         </button>
 
         <p className="rp-editor-count">
@@ -910,40 +932,40 @@ const roadmapStyles = String.raw`
   /* Card Surfaces */
   --rp-card-bg: #FFFFFF;
   --rp-card-border: #E2E8F0;
-  --rp-card-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
-  --rp-card-hover-border: #3B82F6;
-  --rp-card-hover-shadow: 0 8px 24px rgba(59, 130, 246, 0.12);
+  --rp-card-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+  --rp-card-hover-border: #123C69;
+  --rp-card-hover-shadow: 0 8px 24px rgba(18, 60, 105, 0.1);
 
   /* Header Bar */
   --rp-header-title: #0F172A;
-  --rp-header-accent: #2563EB;
+  --rp-header-accent: #123C69;
   --rp-header-subtitle: #1E293B;
   --rp-header-progress: #64748B;
   --rp-btn-bg: #FFFFFF;
   --rp-btn-border: #E2E8F0;
-  --rp-btn-text: #334155;
+  --rp-btn-text: #1E293B;
   --rp-btn-hover: #F8FAFC;
-  --rp-remind-bg: #F8FAFC;
+  --rp-remind-bg: #FFFFFF;
   --rp-remind-border: #E2E8F0;
   --rp-remind-text: #64748B;
-  --rp-remind-active-bg: #2563EB;
+  --rp-remind-active-bg: #123C69;
   --rp-remind-active-text: #FFFFFF;
 
   /* Poster Typography */
   --rp-wordmark: #0F172A;
   --rp-wordmark-i: #64748B;
-  --rp-wordmark-accent: #2563EB;
+  --rp-wordmark-accent: #123C69;
   --rp-h1: #0F172A;
-  --rp-rule: #2563EB;
+  --rp-rule: #123C69;
   --rp-desc: #475569;
-  --rp-desc-strong: #1D4ED8;
+  --rp-desc-strong: #123C69;
 
   /* Goal Layers & Milestones */
   --rp-pin-bg: #FFFFFF;
   --rp-pin-text: #0F172A;
   --rp-pin-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
-  --rp-pin-blue: #2563EB;
-  --rp-pin-purple: #7C3AED;
+  --rp-pin-blue: #123C69;
+  --rp-pin-purple: #255A96;
   --rp-icon-color: #64748B;
 
   /* Goal Info & Checklist */
@@ -951,12 +973,12 @@ const roadmapStyles = String.raw`
   --rp-goal-hint: #64748B;
   --rp-task-title: #1E293B;
   --rp-task-title-done: #94A3B8;
-  --rp-task-hover-bg: rgba(37, 99, 235, 0.06);
+  --rp-task-hover-bg: rgba(18, 60, 105, 0.06);
 
   /* Checkbox */
   --rp-check-bg: #FFFFFF;
   --rp-check-border: #CBD5E1;
-  --rp-check-hover-border: #2563EB;
+  --rp-check-hover-border: #123C69;
 
   /* Skill Tags */
   --rp-skill-bg: #F1F5F9;
@@ -973,16 +995,16 @@ const roadmapStyles = String.raw`
 
   /* Goal Editor / Footer */
   --rp-footer-border: #E2E8F0;
-  --rp-footer-title: #2563EB;
+  --rp-footer-title: #123C69;
   --rp-footer-text: #64748B;
   --rp-stat-card-bg: #FFFFFF;
   --rp-stat-card-border: #E2E8F0;
   --rp-stat-value: #0F172A;
   --rp-stat-label: #64748B;
-  --rp-settings-btn-bg: #EFF6FF;
-  --rp-settings-btn-border: #93C5FD;
-  --rp-settings-btn-text: #1D4ED8;
-  --rp-settings-btn-hover: #DBEAFE;
+  --rp-settings-btn-bg: rgba(18, 60, 105, 0.08);
+  --rp-settings-btn-border: rgba(18, 60, 105, 0.25);
+  --rp-settings-btn-text: #123C69;
+  --rp-settings-btn-hover: rgba(18, 60, 105, 0.14);
 
   width: 100%;
   min-height: 100vh;
@@ -1148,99 +1170,127 @@ body.dark .rp-page,
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
-@media (max-width: 680px) {
+@media (max-width: 780px) {
   .rp-header-controls {
     align-items: flex-start;
     width: 100%;
   }
 }
-.rp-header-btn-row {
+.rp-toolbar-row {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 .rp-btn-alerts {
+  height: 34px;
   background: var(--rp-btn-bg);
   border: 1px solid var(--rp-btn-border);
   border-radius: 9px;
-  padding: 7px 12px;
+  padding: 0 12px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--rp-btn-text);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .rp-btn-alerts:hover {
   background: var(--rp-btn-hover);
+  border-color: var(--rp-header-accent);
+  color: var(--rp-header-accent);
 }
 .rp-btn-bell-icon {
   color: var(--rp-header-accent);
 }
 .rp-btn-career {
-  background: #2563EB;
+  height: 34px;
+  background: #123C69;
   color: #FFFFFF;
-  border: none;
+  border: 1px solid #123C69;
   border-radius: 9px;
-  padding: 7px 14px;
+  padding: 0 14px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.35);
-  transition: background 0.15s ease, transform 0.1s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .rp-btn-career:hover {
-  background: #1D4ED8;
-  transform: translateY(-1px);
+  background: #0D2E52;
+  border-color: #0D2E52;
 }
 .rp-remind-bar {
-  display: flex;
+  height: 34px;
+  display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   background: var(--rp-remind-bg);
   border: 1px solid var(--rp-remind-border);
   border-radius: 9px;
-  padding: 4px 10px;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  padding: 0 4px 0 10px;
 }
 .rp-remind-label {
   font-size: 11px;
   color: var(--rp-remind-text);
   font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.rp-remind-segmented {
+  display: inline-flex;
+  align-items: center;
+  background: var(--rp-skill-bg);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 1px;
 }
 .rp-remind-chip {
-  padding: 2px 7px;
+  height: 22px;
+  padding: 0 7px;
   border-radius: 5px;
   border: none;
   background: transparent;
   color: var(--rp-remind-text);
-  font-size: 10.5px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.14s ease;
 }
 .rp-remind-chip.active {
-  background: var(--rp-remind-active-bg);
-  color: var(--rp-remind-active-text);
+  background: #123C69;
+  color: #FFFFFF;
 }
 .rp-remind-test-btn {
-  background: #2563EB;
-  color: #FFFFFF;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  color: var(--rp-header-accent);
   border: none;
-  border-radius: 5px;
-  padding: 2px 8px;
-  font-size: 10.5px;
-  font-weight: 700;
+  border-left: 1px solid var(--rp-remind-border);
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: opacity 0.14s ease;
 }
 .rp-remind-test-btn:hover {
-  background: #1D4ED8;
+  opacity: 0.8;
+}
+.rp-remind-status {
+  font-size: 11px;
+  color: var(--rp-header-progress);
+  font-weight: 500;
+}
+.rp-remind-status.error {
+  color: #B91C1C;
 }
 
 /* ── POSTER SHELL & BOARD ── */
@@ -1603,13 +1653,13 @@ body.dark .rp-milestone.completed,
 }
 @keyframes rpStoppageBeacon {
   0% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7), var(--rp-pin-shadow);
+    box-shadow: 0 0 0 0 rgba(18, 60, 105, 0.55), var(--rp-pin-shadow);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(59, 130, 246, 0), var(--rp-pin-shadow);
+    box-shadow: 0 0 0 10px rgba(18, 60, 105, 0), var(--rp-pin-shadow);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0), var(--rp-pin-shadow);
+    box-shadow: 0 0 0 0 rgba(18, 60, 105, 0), var(--rp-pin-shadow);
   }
 }
 
@@ -1618,15 +1668,15 @@ body.dark .rp-milestone.completed,
   bottom: -18px;
   left: 50%;
   transform: translateX(-50%);
-  background: #2563EB;
+  background: #123C69;
   color: #FFFFFF;
   font-size: 7.5px;
   font-weight: 800;
   letter-spacing: 0.6px;
-  padding: 1px 6px;
+  padding: 1.5px 6px;
   border-radius: 9999px;
   white-space: nowrap;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.4);
+  box-shadow: 0 2px 6px rgba(18, 60, 105, 0.3);
   z-index: 4;
 }
 @media (max-width: 680px) {
@@ -1815,6 +1865,12 @@ body.dark .rp-goal-copy.completed,
   border-radius: 6px;
   transition: background 0.12s ease;
   pointer-events: auto;
+  width: 100%;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  background: transparent;
 }
 @media (max-width: 680px) {
   .rp-task-item {
@@ -1825,7 +1881,7 @@ body.dark .rp-goal-copy.completed,
 .rp-task-item:hover {
   background: var(--rp-task-hover-bg);
 }
-.rp-task-item:focus {
+.rp-task-item:focus-visible {
   outline: 1.5px solid var(--rp-header-accent);
   outline-offset: 1px;
 }

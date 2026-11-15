@@ -39,9 +39,11 @@ export const RoadHighwayView: React.FC<Props> = ({
   const [scrollProgress, setScrollProgress] = useState(0);
   const [selectedPhase, setSelectedPhase] = useState<'all' | number>('all');
   const [reminderFreq, setReminderFreq] = useState<'2x' | '3x' | '4x'>(() =>
-    notificationService.getWeeklyReminderFrequency()
+    notificationService.getWeeklyReminderFrequency(profile)
   );
+  const [reminderError, setReminderError] = useState('');
   const [isReminderTesting, setIsReminderTesting] = useState(false);
+  const [reminderStatus, setReminderStatus] = useState('');
 
   // Dynamic scroll-driven moving road effect
   useEffect(() => {
@@ -84,7 +86,7 @@ export const RoadHighwayView: React.FC<Props> = ({
         );
 
   // Handle task click with celebratory confetti
-  const handleGoalTap = (task: Task, e: React.MouseEvent<HTMLDivElement>) => {
+  const handleGoalTap = (task: Task, e: React.MouseEvent<HTMLButtonElement>) => {
     const isCurrentlyDone = task.done_at != null;
     onToggleTaskComplete(task.id);
 
@@ -96,22 +98,36 @@ export const RoadHighwayView: React.FC<Props> = ({
         particleCount: 40,
         spread: 60,
         origin: { x, y },
-        colors: ['#8EA95B', '#F97316', '#38BDF8', '#FBBF24', '#A855F7'],
+        colors: ['#123C69', '#255A96', '#059669', '#38BDF8', '#64748B'],
         disableForReducedMotion: true,
       });
     }
   };
 
-  // Trigger test weekly reminder
+  // Send a weekly check-in now. The saved cadence is a preference; delivery is manual.
   const handleTestWeeklyReminder = async () => {
     setIsReminderTesting(true);
-    await notificationService.triggerWeeklyReminder(tasks, activeMilestone, profile);
-    setTimeout(() => setIsReminderTesting(false), 2000);
+    setReminderStatus('');
+    try {
+      const sent = await notificationService.triggerWeeklyReminder(tasks, activeMilestone, profile);
+      setReminderStatus(sent
+        ? 'Check-in saved to your notification history.'
+        : 'Turn on weekly check-in reminders in Profile settings to use this action.');
+    } catch {
+      setReminderStatus('Could not save the check-in. Please try again.');
+    } finally {
+      setIsReminderTesting(false);
+    }
   };
 
-  const handleFrequencyChange = (freq: '2x' | '3x' | '4x') => {
-    setReminderFreq(freq);
-    notificationService.setWeeklyReminderFrequency(freq);
+  const handleFrequencyChange = async (freq: '2x' | '3x' | '4x') => {
+    try {
+      await notificationService.setWeeklyReminderFrequency(profile, freq);
+      setReminderFreq(freq);
+      setReminderError('');
+    } catch {
+      setReminderError('Could not save this preference. Try again.');
+    }
   };
 
   // Title formatting
@@ -126,11 +142,11 @@ export const RoadHighwayView: React.FC<Props> = ({
 
   const categoryIcons = [Compass, Layers, Monitor, Briefcase, Users, Trophy];
 
-  // Dynamic SVG Serpentine Geometry
-  const START_Y = 160;
-  const STEP_Y = 250;
-  const PIN_RIGHT_X = 620;
-  const PIN_LEFT_X = 380;
+  // Dynamic SVG Serpentine Geometry (smooth C1 vertical-tangent curves)
+  const START_Y = 185;
+  const STEP_Y = 265;
+  const PIN_RIGHT_X = 595;
+  const PIN_LEFT_X = 405;
   const nodeCount = displayedMilestones.length;
 
   const nodes = displayedMilestones.map((m, idx) => {
@@ -148,14 +164,15 @@ export const RoadHighwayView: React.FC<Props> = ({
     };
   });
 
-  const finishY = nodeCount > 0 ? START_Y + nodeCount * STEP_Y + 120 : 600;
+  const finishY = nodeCount > 0 ? START_Y + nodeCount * STEP_Y + 40 : 600;
   const totalSvgHeight = finishY + 180;
 
   // Build mathematical smooth S-curve highway path
   let roadPathD = '';
   if (nodeCount > 0) {
     const firstNode = nodes[0];
-    roadPathD = `M 500,20 C 500,70 ${firstNode.x},80 ${firstNode.x},${firstNode.y}`;
+    const startMidY = (20 + firstNode.y) / 2;
+    roadPathD = `M 500,20 C 500,${startMidY} ${firstNode.x},${startMidY} ${firstNode.x},${firstNode.y}`;
 
     for (let i = 1; i < nodeCount; i++) {
       const prev = nodes[i - 1];
@@ -165,7 +182,8 @@ export const RoadHighwayView: React.FC<Props> = ({
     }
 
     const last = nodes[nodeCount - 1];
-    roadPathD += ` C ${last.x},${last.y + 70} 500,${last.y + 70} 500,${finishY}`;
+    const endMidY = (last.y + finishY) / 2;
+    roadPathD += ` C ${last.x},${endMidY} 500,${endMidY} 500,${finishY}`;
   }
 
   return (
@@ -187,8 +205,8 @@ export const RoadHighwayView: React.FC<Props> = ({
             display: 'inline-flex',
             alignItems: 'center',
             gap: '8px',
-            background: 'rgba(142, 169, 91, 0.12)',
-            border: '1px solid rgba(142, 169, 91, 0.25)',
+            background: 'rgba(18, 60, 105, 0.12)',
+            border: '1px solid rgba(18, 60, 105, 0.25)',
             borderRadius: '9999px',
             padding: '4px 14px',
             marginBottom: '10px',
@@ -198,7 +216,7 @@ export const RoadHighwayView: React.FC<Props> = ({
             style={{
               fontSize: '11px',
               fontWeight: 800,
-              color: '#5C7433',
+              color: '#123C69',
               textTransform: 'uppercase',
               letterSpacing: '0.06em',
             }}
@@ -232,9 +250,7 @@ export const RoadHighwayView: React.FC<Props> = ({
         >
           <span
             style={{
-              background: 'linear-gradient(135deg, #4338CA 0%, #6366F1 50%, #8EA95B 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
+              color: 'var(--md-primary)',
               display: 'inline-block',
               marginRight: '8px',
             }}
@@ -285,14 +301,14 @@ export const RoadHighwayView: React.FC<Props> = ({
               }}
             >
               <span>
-                Roadmap Progress: {completedTasks}/{totalTasks} Goals Completed
+                Roadmap Progress: {completedTasks}/{totalTasks} Tasks
               </span>
-              <span style={{ color: '#8EA95B', fontWeight: 800 }}>{overallPct}%</span>
+              <span style={{ color: 'var(--md-primary)', fontWeight: 800 }}>{overallPct}%</span>
             </div>
             <div
               style={{
                 width: '100%',
-                height: '8px',
+                height: '6px',
                 borderRadius: '9999px',
                 background: '#E2E8F0',
                 overflow: 'hidden',
@@ -303,7 +319,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                   width: `${overallPct}%`,
                   height: '100%',
                   borderRadius: '9999px',
-                  background: 'linear-gradient(90deg, #8EA95B 0%, #10B981 100%)',
+                  background: 'var(--md-primary)',
                   transition: 'width 0.4s ease',
                 }}
               />
@@ -353,11 +369,11 @@ export const RoadHighwayView: React.FC<Props> = ({
               borderRadius: '9999px',
               fontSize: '12px',
               fontWeight: 700,
-              border: selectedPhase === 'all' ? '1.5px solid #8EA95B' : '1px solid #E2E8F0',
-              background: selectedPhase === 'all' ? '#8EA95B' : '#FFFFFF',
+              border: selectedPhase === 'all' ? '1.5px solid var(--md-primary)' : '1px solid #E2E8F0',
+              background: selectedPhase === 'all' ? 'var(--md-primary)' : '#FFFFFF',
               color: selectedPhase === 'all' ? '#FFFFFF' : '#64748B',
               cursor: 'pointer',
-              boxShadow: selectedPhase === 'all' ? '0 2px 8px rgba(142, 169, 91, 0.3)' : 'none',
+              boxShadow: selectedPhase === 'all' ? '0 2px 8px rgba(18, 60, 105, 0.25)' : 'none',
               transition: 'all 0.15s ease',
             }}
           >
@@ -380,11 +396,11 @@ export const RoadHighwayView: React.FC<Props> = ({
                   borderRadius: '9999px',
                   fontSize: '12px',
                   fontWeight: 700,
-                  border: isSelected ? '1.5px solid #8EA95B' : '1px solid #E2E8F0',
-                  background: isSelected ? '#8EA95B' : '#FFFFFF',
+                  border: isSelected ? '1.5px solid var(--md-primary)' : '1px solid #E2E8F0',
+                  background: isSelected ? 'var(--md-primary)' : '#FFFFFF',
                   color: isSelected ? '#FFFFFF' : '#64748B',
                   cursor: 'pointer',
-                  boxShadow: isSelected ? '0 2px 8px rgba(142, 169, 91, 0.3)' : 'none',
+                  boxShadow: isSelected ? '0 2px 8px rgba(18, 60, 105, 0.25)' : 'none',
                   transition: 'all 0.15s ease',
                 }}
               >
@@ -437,7 +453,7 @@ export const RoadHighwayView: React.FC<Props> = ({
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <strong style={{ fontSize: '13px', color: '#1E293B' }}>
-                  Weekly Cadence: {reminderFreq.toUpperCase()} Active (
+                  Preferred Cadence: {reminderFreq.toUpperCase()} (
                   {notificationService
                     .getWeeklyReminderDays(reminderFreq)
                     .map((d) => d.split(' ')[0])
@@ -461,15 +477,17 @@ export const RoadHighwayView: React.FC<Props> = ({
               </div>
               <p style={{ fontSize: '11.5px', color: '#64748B', margin: '2px 0 0 0' }}>
                 {unfinishedActiveTasksCount > 0
-                  ? `You have unfinished goals for ${activeMilestone?.title || 'this week'}. Reminders trigger multiple times per week.`
-                  : `Terrific progress! All weekly goals for ${activeMilestone?.title || 'this stage'} are complete.`}
+                  ? `You have unfinished goals for ${activeMilestone?.title || 'this week'}. Weekly check-ins are on demand; enable daily background reminders from Alerts if you want reminders while the app is closed.`
+                  : `All goals for ${activeMilestone?.title || 'this stage'} are complete. You can send a check-in now.`}
               </p>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Frequency Selector */}
+            {/* Saved cadence preference; delivery remains manual. */}
             <div
+              role="group"
+              aria-label="Preferred weekly check-in cadence"
               style={{
                 display: 'flex',
                 background: '#FFFFFF',
@@ -482,7 +500,9 @@ export const RoadHighwayView: React.FC<Props> = ({
                 <button
                   key={f}
                   type="button"
-                  onClick={() => handleFrequencyChange(f)}
+                  onClick={() => void handleFrequencyChange(f)}
+                  aria-label={`${f[0]} times per week`}
+                  aria-pressed={reminderFreq === f}
                   style={{
                     padding: '3px 8px',
                     borderRadius: '8px',
@@ -490,7 +510,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                     fontSize: '10.5px',
                     fontWeight: 700,
                     cursor: 'pointer',
-                    background: reminderFreq === f ? '#8EA95B' : 'transparent',
+                    background: reminderFreq === f ? 'var(--md-primary)' : 'transparent',
                     color: reminderFreq === f ? '#FFFFFF' : '#64748B',
                     transition: 'all 0.15s ease',
                   }}
@@ -499,6 +519,8 @@ export const RoadHighwayView: React.FC<Props> = ({
                 </button>
               ))}
             </div>
+            {reminderError && <span role="alert" style={{ color: '#B91C1C', fontSize: 11 }}>{reminderError}</span>}
+            {reminderStatus && <span role="status" aria-live="polite" style={{ color: '#475569', fontSize: 11 }}>{reminderStatus}</span>}
 
             <button
               type="button"
@@ -520,7 +542,7 @@ export const RoadHighwayView: React.FC<Props> = ({
               }}
             >
               <Bell size={13} color="#F97316" />
-              {isReminderTesting ? 'Push Sent!' : 'Test Push'}
+              {isReminderTesting ? 'Saving…' : 'Send check-in'}
             </button>
           </div>
         </div>
@@ -671,7 +693,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                   cx={pin.x}
                   cy={pin.y}
                   r="21"
-                  fill={isDone ? '#8EA95B' : isDoing ? '#38BDF8' : '#1E293B'}
+                  fill={isDone ? '#10B981' : isDoing ? '#123C69' : '#334155'}
                   stroke="#FFFFFF"
                   strokeWidth="3.5"
                   filter="drop-shadow(0 4px 8px rgba(0,0,0,0.25))"
@@ -750,12 +772,12 @@ export const RoadHighwayView: React.FC<Props> = ({
                   style={{
                     background: isAllDone ? '#F0FDF4' : '#FFFFFF',
                     border: `1.5px solid ${
-                      isAllDone ? '#86EFAC' : isCurrent ? '#8EA95B' : '#E2E8F0'
+                      isAllDone ? '#86EFAC' : isCurrent ? 'var(--md-primary)' : '#E2E8F0'
                     }`,
-                    borderRadius: '20px',
+                    borderRadius: '16px',
                     padding: '16px 18px',
                     boxShadow: isCurrent
-                      ? '0 12px 30px rgba(142, 169, 91, 0.15)'
+                      ? '0 10px 26px rgba(18, 60, 105, 0.12)'
                       : '0 4px 16px rgba(0, 0, 0, 0.04)',
                     transition: 'all 0.2s ease',
                   }}
@@ -825,7 +847,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                         background: isAllDone
                           ? '#DCFCE7'
                           : isCurrent
-                          ? 'rgba(142, 169, 91, 0.15)'
+                          ? 'rgba(18, 60, 105, 0.15)'
                           : '#F1F5F9',
                         color: isAllDone ? '#15803D' : isCurrent ? '#5C7433' : '#64748B',
                         flexShrink: 0,
@@ -842,21 +864,26 @@ export const RoadHighwayView: React.FC<Props> = ({
                     {mTasks.map((t) => {
                       const isDone = t.done_at != null;
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={t.id}
                           onClick={(e) => handleGoalTap(t, e)}
-                          role="button"
-                          tabIndex={0}
+                          aria-pressed={isDone}
+                          aria-label={isDone ? `Mark ${t.title} incomplete` : `Mark ${t.title} complete`}
                           style={{
                             display: 'flex',
                             alignItems: 'center',
                             gap: '8px',
+                            width: '100%',
                             padding: '6px 8px',
                             borderRadius: '10px',
                             background: isDone ? 'rgba(240, 253, 244, 0.8)' : '#F8FAFC',
                             border: `1px solid ${isDone ? '#BBF7D0' : '#F1F5F9'}`,
                             cursor: 'pointer',
                             transition: 'all 0.15s ease',
+                            color: 'inherit',
+                            font: 'inherit',
+                            textAlign: 'left',
                           }}
                         >
                           {/* Checkbox Icon */}
@@ -913,7 +940,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                           >
                             {t.type}
                           </span>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -985,10 +1012,10 @@ export const RoadHighwayView: React.FC<Props> = ({
           <div
             style={{
               background: '#FFFFFF',
-              border: '2px solid #8EA95B',
-              borderRadius: '24px',
+              border: '1.5px solid var(--md-primary)',
+              borderRadius: '18px',
               padding: '22px 20px',
-              boxShadow: '0 15px 40px rgba(142, 169, 91, 0.25)',
+              boxShadow: '0 12px 30px rgba(18, 60, 105, 0.14)',
             }}
           >
             <div
@@ -1039,11 +1066,11 @@ export const RoadHighwayView: React.FC<Props> = ({
                     particleCount: 80,
                     spread: 80,
                     origin: { y: 0.8 },
-                    colors: ['#8EA95B', '#F59E0B', '#38BDF8'],
+                    colors: ['#123C69', '#255A96', '#10B981'],
                   });
                 }}
                 style={{
-                  background: '#8EA95B',
+                  background: 'var(--md-primary)',
                   color: '#FFFFFF',
                   border: 'none',
                   borderRadius: '12px',
@@ -1054,7 +1081,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '6px',
-                  boxShadow: '0 4px 14px rgba(142, 169, 91, 0.35)',
+                  boxShadow: '0 4px 14px rgba(18, 60, 105, 0.35)',
                 }}
               >
                 <Sparkles size={15} />
@@ -1079,7 +1106,7 @@ export const RoadHighwayView: React.FC<Props> = ({
                 }}
               >
                 <Calendar size={14} />
-                Weekly Reminders
+              Send Check-In
               </button>
             </div>
           </div>
