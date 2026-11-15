@@ -3,9 +3,9 @@
 // Zero-AI Cost: Mathematical proportional effort distribution
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { serveObservedEdgeFunction } from '../_shared/observability.ts';
 
 interface PlanRequest {
-  user_id: string;
   role_slug: string;
   target_date: string; // ISO date 'YYYY-MM-DD'
   daily_minutes?: number; // default 60
@@ -19,7 +19,7 @@ interface MilestoneTemplate {
   island_zone?: string;
 }
 
-Deno.serve(async (req: Request) => {
+serveObservedEdgeFunction('plan-roadmap', async (req: Request) => {
   // CORS headers
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -35,9 +35,19 @@ Deno.serve(async (req: Request) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const sb = createClient(supabaseUrl, supabaseKey);
 
-    const { user_id, role_slug, target_date, daily_minutes = 60 } = await req.json() as PlanRequest;
+    const authorization = req.headers.get('Authorization') || '';
+    const jwt = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+    const { data: { user }, error: authError } = await sb.auth.getUser(jwt);
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
-    if (!user_id || !role_slug || !target_date) {
+    const { role_slug, target_date, daily_minutes = 60 } = await req.json() as PlanRequest;
+
+    if (!role_slug || !target_date || !Number.isFinite(daily_minutes) || daily_minutes < 5 || daily_minutes > 1440) {
       return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },

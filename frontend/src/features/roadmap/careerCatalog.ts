@@ -9,9 +9,22 @@ export interface CareerOption {
   skills: string[];
   stages: {
     title: string;
+    focus?: string;
     skills: string[];
     effortHours: number;
   }[];
+}
+
+export interface RolePlanOutline {
+  role_title: string;
+  total_hours: number;
+  milestones: Array<{
+    position: number;
+    title: string;
+    focus: string;
+    skills: string[];
+    effort_hours: number;
+  }>;
 }
 
 export type CareerCategory =
@@ -11334,12 +11347,139 @@ export const comprehensiveCareerCatalog: CareerOption[] = [
   }
 ];
 
+export function findCuratedCareerBlueprint(titleOrSlug: string): CareerOption | undefined {
+  const query = titleOrSlug.trim();
+  const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return comprehensiveCareerCatalog.find((career) =>
+    career.slug === normalized || career.title.toLowerCase() === query.toLowerCase()
+  );
+}
+
+function inferCareerCategory(query: string): CareerCategory {
+  const qLower = query.toLowerCase();
+  if (
+    qLower.includes('ai') ||
+    qLower.includes('data') ||
+    qLower.includes('machine') ||
+    qLower.includes('ml') ||
+    qLower.includes('learning') ||
+    qLower.includes('neural') ||
+    qLower.includes('vision') ||
+    qLower.includes('nlp') ||
+    qLower.includes('llm')
+  ) return 'AI & Data Science';
+  if (
+    qLower.includes('cloud') ||
+    qLower.includes('devops') ||
+    qLower.includes('sre') ||
+    qLower.includes('infra') ||
+    qLower.includes('kubernetes') ||
+    qLower.includes('k8s') ||
+    qLower.includes('aws') ||
+    qLower.includes('azure')
+  ) return 'Cloud & DevOps';
+  if (
+    qLower.includes('security') ||
+    qLower.includes('hacker') ||
+    qLower.includes('cyber') ||
+    qLower.includes('soc') ||
+    qLower.includes('pentest') ||
+    qLower.includes('infosec')
+  ) return 'Cybersecurity';
+  if (
+    qLower.includes('mobile') ||
+    qLower.includes('ios') ||
+    qLower.includes('android') ||
+    qLower.includes('flutter') ||
+    qLower.includes('react native') ||
+    qLower.includes('swift') ||
+    qLower.includes('kotlin')
+  ) return 'Mobile & Multiplatform';
+  if (
+    qLower.includes('game') ||
+    qLower.includes('unity') ||
+    qLower.includes('unreal') ||
+    qLower.includes('3d') ||
+    qLower.includes('shader') ||
+    qLower.includes('godot')
+  ) return 'Game Dev & 3D';
+  if (
+    qLower.includes('design') ||
+    qLower.includes('ui') ||
+    qLower.includes('ux') ||
+    qLower.includes('figma') ||
+    qLower.includes('product designer')
+  ) return 'UI/UX & Product Design';
+  if (
+    qLower.includes('product') ||
+    qLower.includes('scrum') ||
+    qLower.includes('agile') ||
+    qLower.includes('manager') ||
+    qLower.includes('owner')
+  ) return 'Product & Agile Leadership';
+  if (
+    qLower.includes('qa') ||
+    qLower.includes('test') ||
+    qLower.includes('automation') ||
+    qLower.includes('sdet') ||
+    qLower.includes('quality')
+  ) return 'QA & Reliability';
+  if (
+    qLower.includes('finance') ||
+    qLower.includes('fintech') ||
+    qLower.includes('trading') ||
+    qLower.includes('crypto') ||
+    qLower.includes('web3') ||
+    qLower.includes('blockchain') ||
+    qLower.includes('defi')
+  ) return 'FinTech & Web3';
+  if (
+    qLower.includes('robot') ||
+    qLower.includes('hardware') ||
+    qLower.includes('iot') ||
+    qLower.includes('embedded') ||
+    qLower.includes('firmware') ||
+    qLower.includes('circuit')
+  ) return 'Hardware & Robotics';
+  if (
+    qLower.includes('sales') ||
+    qLower.includes('enterprise') ||
+    qLower.includes('sap') ||
+    qLower.includes('bio') ||
+    qLower.includes('crm') ||
+    qLower.includes('erp') ||
+    qLower.includes('consultant')
+  ) return 'Enterprise & Applied Tech';
+  return 'Software & Web';
+}
+
+export function createCustomCareerBlueprint(title: string, category = inferCareerCategory(title)): CareerOption {
+  const cleanTitle = title.trim().slice(0, 80) || 'Software Specialist';
+  const normalized = cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  return {
+    id: `custom_${normalized}`,
+    slug: normalized,
+    title: cleanTitle,
+    category,
+    shortDesc: `Customized professional career roadmap path for ${cleanTitle}.`,
+    effortHours: 125,
+    skills: ['Core Foundations', 'Domain Architecture', 'Advanced Systems', 'Production Portfolio'],
+    stages: [
+      { title: `Phase 1: ${cleanTitle} Fundamentals & Core Tooling`, skills: ['Core Principles', 'Tooling Setup', 'Standard Libraries'], effortHours: 28 },
+      { title: `Phase 2: Architecture Patterns & Hands-on Projects`, skills: ['Design Patterns', 'Project Milestones', 'Data Modeling'], effortHours: 35 },
+      { title: `Phase 3: Advanced Systems, Scalability & Security`, skills: ['Scalability', 'Performance', 'Automated Verification'], effortHours: 35 },
+      { title: `Phase 4: Capstone Delivery & Interview Readiness`, skills: ['Portfolio Delivery', 'Interview Preparation', 'CI/CD Deployment'], effortHours: 27 },
+    ],
+  };
+}
+
 /**
  * Intelligent Blueprint Resolver:
  * Matches from curated database of 200+ careers or dynamically generates
  * an authentic custom 4-phase career roadmap for ANY query!
  */
-export function getOrCreateCareerBlueprint(titleOrSlug: string): CareerOption {
+export function getOrCreateCareerBlueprint(titleOrSlug: string, customCategory?: CareerCategory): CareerOption {
   const query = titleOrSlug.trim();
   const normalized = query.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -11355,64 +11495,5 @@ export function getOrCreateCareerBlueprint(titleOrSlug: string): CareerOption {
   );
   if (partial) return partial;
 
-  // Determine an intelligent category based on keywords
-  let category: CareerCategory = 'Software & Web';
-  const qLower = query.toLowerCase();
-  if (qLower.includes('ai') || qLower.includes('data') || qLower.includes('machine') || qLower.includes('ml')) {
-    category = 'AI & Data Science';
-  } else if (qLower.includes('cloud') || qLower.includes('devops') || qLower.includes('sre') || qLower.includes('infra')) {
-    category = 'Cloud & DevOps';
-  } else if (qLower.includes('security') || qLower.includes('hacker') || qLower.includes('cyber') || qLower.includes('soc')) {
-    category = 'Cybersecurity';
-  } else if (qLower.includes('mobile') || qLower.includes('ios') || qLower.includes('android') || qLower.includes('flutter')) {
-    category = 'Mobile & Multiplatform';
-  } else if (qLower.includes('game') || qLower.includes('unity') || qLower.includes('unreal') || qLower.includes('3d')) {
-    category = 'Game Dev & 3D';
-  } else if (qLower.includes('design') || qLower.includes('ui') || qLower.includes('ux') || qLower.includes('figma')) {
-    category = 'UI/UX & Product Design';
-  } else if (qLower.includes('product') || qLower.includes('scrum') || qLower.includes('agile') || qLower.includes('manager')) {
-    category = 'Product & Agile Leadership';
-  } else if (qLower.includes('qa') || qLower.includes('test') || qLower.includes('automation') || qLower.includes('sdet')) {
-    category = 'QA & Reliability';
-  } else if (qLower.includes('finance') || qLower.includes('fintech') || qLower.includes('trading') || qLower.includes('crypto')) {
-    category = 'FinTech & Web3';
-  } else if (qLower.includes('robot') || qLower.includes('hardware') || qLower.includes('iot') || qLower.includes('embedded')) {
-    category = 'Hardware & Robotics';
-  } else if (qLower.includes('sales') || qLower.includes('enterprise') || qLower.includes('sap') || qLower.includes('bio')) {
-    category = 'Enterprise & Applied Tech';
-  }
-
-  const cleanTitle = query.length > 0 ? query : 'Software Specialist';
-
-  return {
-    id: `custom_${normalized}`,
-    slug: normalized,
-    title: cleanTitle,
-    category,
-    shortDesc: `Customized professional career roadmap path for ${cleanTitle}.`,
-    effortHours: 125,
-    skills: ['Core Foundations', 'Domain Architecture', 'Advanced Systems', 'Production Portfolio'],
-    stages: [
-      {
-        title: `Phase 1: ${cleanTitle} Fundamentals & Core Tooling`,
-        skills: ['Core Principles', 'Tooling Setup', 'Standard Libraries'],
-        effortHours: 28,
-      },
-      {
-        title: `Phase 2: Architecture Patterns & Hands-on Projects`,
-        skills: ['Design Patterns', 'Project Milestones', 'Data Modeling'],
-        effortHours: 35,
-      },
-      {
-        title: `Phase 3: Advanced Systems, Scalability & Security`,
-        skills: ['Scalability', 'Performance', 'Automated Verification'],
-        effortHours: 35,
-      },
-      {
-        title: `Phase 4: Capstone Delivery & Interview Readiness`,
-        skills: ['Portfolio Delivery', 'Interview Preparation', 'CI/CD Deployment'],
-        effortHours: 27,
-      },
-    ],
-  };
+  return createCustomCareerBlueprint(query, customCategory ?? inferCareerCategory(query));
 }
