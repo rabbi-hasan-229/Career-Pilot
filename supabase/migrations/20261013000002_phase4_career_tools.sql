@@ -104,6 +104,21 @@ insert into public.skills (id, name, category) values
 ('aaaa0005-0000-0000-0000-000000000005', 'System Design & Scalability', 'Architecture')
 on conflict (name) do nothing;
 
+-- Migrations run before supabase/seed.sql during db reset. Create the role
+-- referenced below here so the interview-question foreign key is valid on a
+-- clean local database without relying on post-migration seed ordering.
+insert into public.roles (id, slug, title, description, category, icon_name, source)
+values (
+  '22222222-2222-2222-2222-222222222222',
+  'frontend-developer',
+  'Junior Frontend Developer',
+  'Master semantic HTML, CSS layout mastery, JavaScript engine fundamentals, and React.',
+  'Engineering',
+  'code',
+  'curated'
+)
+on conflict (slug) do nothing;
+
 insert into public.interview_questions (id, role_id, round, difficulty, question, expected_keywords, rubric, model_answer) values
 (
   'bbbb0001-0000-0000-0000-000000000001',
