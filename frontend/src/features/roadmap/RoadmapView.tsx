@@ -12,6 +12,7 @@ interface Props {
   onOpenGoalSettings: () => void;
   onOpenCoach?: () => void;
   onOpenNotifications: () => void;
+  onUpdateReminderFrequency: (frequency: '2x' | '3x' | '4x') => Promise<void>;
 }
 
 export const RoadmapView: React.FC<Props> = ({
@@ -21,6 +22,7 @@ export const RoadmapView: React.FC<Props> = ({
   onToggleTaskComplete,
   onOpenGoalSettings,
   onOpenNotifications,
+  onUpdateReminderFrequency,
 }) => {
   return (
     <div style={{ width: '100%', position: 'relative' }}>
@@ -31,6 +33,7 @@ export const RoadmapView: React.FC<Props> = ({
         onToggleTaskComplete={onToggleTaskComplete}
         onOpenGoalSettings={onOpenGoalSettings}
         onOpenNotifications={onOpenNotifications}
+        onUpdateReminderFrequency={onUpdateReminderFrequency}
       />
     </div>
   );
