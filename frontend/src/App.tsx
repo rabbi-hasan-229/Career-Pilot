@@ -925,134 +925,134 @@ export function App() {
           />
 
           <Suspense fallback={<WorkspaceSkeleton variant={activeTab} />}>
-          {/* VIEW: Home / Winding Highway Roadmap View */}
-          {activeTab === 'home' && (
-            <RoadmapView
-              tasks={tasks}
-              milestones={milestones}
-              profile={profile}
-              onSelectTaskForQuiz={(t) => setActiveQuizTask(t)}
-              onToggleTaskComplete={handleToggleTaskComplete}
-              onApplyPlannerAction={handleApplyPlannerAction}
-              onOpenGoalSettings={() => setIsRoleModalOpen(true)}
-              onOpenCoach={() => navigateToTab('coach')}
-              onOpenNotifications={() => setIsNotificationsOpen(true)}
-              onUpdateReminderFrequency={async (frequency) => {
-                const saved = await authService.updateProfile(profile, { weekly_reminder_frequency: frequency });
-                setProfile(saved);
-              }}
-            />
-          )}
+            {/* VIEW: Home / Winding Highway Roadmap View */}
+            {activeTab === 'home' && (
+              <RoadmapView
+                tasks={tasks}
+                milestones={milestones}
+                profile={profile}
+                onSelectTaskForQuiz={(t) => setActiveQuizTask(t)}
+                onToggleTaskComplete={handleToggleTaskComplete}
+                onApplyPlannerAction={handleApplyPlannerAction}
+                onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+                onOpenCoach={() => navigateToTab('coach')}
+                onOpenNotifications={() => setIsNotificationsOpen(true)}
+                onUpdateReminderFrequency={async (frequency) => {
+                  const saved = await authService.updateProfile(profile, { weekly_reminder_frequency: frequency });
+                  setProfile(saved);
+                }}
+              />
+            )}
 
-          {/* VIEW: Plan / Weekly Stages Schedule */}
-          {activeTab === 'plan' && (
-            <WeeklyScheduleView
-              milestones={milestones}
-              tasks={tasks}
-              profile={profile}
-              onToggleTaskComplete={handleToggleTaskComplete}
-              onApplyPlannerAction={handleApplyPlannerAction}
-              onOpenGoalSettings={() => setIsRoleModalOpen(true)}
-              onOpenCoach={() => navigateToTab('coach')}
-            />
-          )}
-
-          {/* VIEW: Overview / Analytics */}
-          {activeTab === 'overview' && (
-            <>
-              <CheckpointHistoryPanel userId={profile.id} isDemo={Boolean(profile.is_demo)} />
-              <OverviewAnalyticsView
+            {/* VIEW: Plan / Weekly Stages Schedule */}
+            {activeTab === 'plan' && (
+              <WeeklyScheduleView
                 milestones={milestones}
                 tasks={tasks}
                 profile={profile}
-                onBack={() => navigateToTab('home')}
-                onNavigateToTab={navigateToTab}
+                onToggleTaskComplete={handleToggleTaskComplete}
                 onApplyPlannerAction={handleApplyPlannerAction}
                 onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+                onOpenCoach={() => navigateToTab('coach')}
               />
-            </>
-          )}
+            )}
 
-          {/* VIEW: AI Career Coach */}
-          {activeTab === 'coach' && (
-            <AICoachView
-              messages={coachMessages}
-              onSendMessage={handleSendCoachMessage}
-              isSending={isCoachSending}
-              onApplyProposal={(action) => handleApplyPlannerAction(action === 'early' || action === 'pause' ? action : 'behind')}
-              onBack={() => navigateToTab('home')}
-            />
-          )}
+            {/* VIEW: Overview / Analytics */}
+            {activeTab === 'overview' && (
+              <>
+                <CheckpointHistoryPanel userId={profile.id} isDemo={Boolean(profile.is_demo)} />
+                <OverviewAnalyticsView
+                  milestones={milestones}
+                  tasks={tasks}
+                  profile={profile}
+                  onBack={() => navigateToTab('home')}
+                  onNavigateToTab={navigateToTab}
+                  onApplyPlannerAction={handleApplyPlannerAction}
+                  onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+                />
+              </>
+            )}
 
-          {/* VIEW: Mock Interview Arena */}
-          {activeTab === 'interview' && (
-            <InterviewSimulatorView
-              userId={profile.id}
-              targetRole={profile.target_role}
-              targetRoleCategory={profile.target_role_category}
-              experienceLevel={profile.experience_level}
-              userName={profile.full_name}
-              onAIUsageChanged={() => refreshAIQuota(profile)}
-            />
-          )}
+            {/* VIEW: AI Career Coach */}
+            {activeTab === 'coach' && (
+              <AICoachView
+                messages={coachMessages}
+                onSendMessage={handleSendCoachMessage}
+                isSending={isCoachSending}
+                onApplyProposal={(action) => handleApplyPlannerAction(action === 'early' || action === 'pause' ? action : 'behind')}
+                onBack={() => navigateToTab('home')}
+              />
+            )}
 
-          {/* VIEW: CV & Resume Builder */}
-          {activeTab === 'cv' && (
-            <CVBuilderView
-              profile={profile}
-              onAIUsageChanged={() => refreshAIQuota(profile)}
-              onToast={showToast}
-            />
-          )}
+            {/* VIEW: Mock Interview Arena */}
+            {activeTab === 'interview' && (
+              <InterviewSimulatorView
+                userId={profile.id}
+                targetRole={profile.target_role}
+                targetRoleCategory={profile.target_role_category}
+                experienceLevel={profile.experience_level}
+                userName={profile.full_name}
+                onAIUsageChanged={() => refreshAIQuota(profile)}
+              />
+            )}
 
-          {/* VIEW: Skill-Gap & Vacancies Match */}
-          {activeTab === 'skills' && (
-            <SkillGapView
-              userId={profile.id}
-              targetRole={profile.target_role}
-              targetRoleCategory={profile.target_role_category}
-              onToast={showToast}
-              onAddSkillToRoadmap={async (skill) => {
-                await addSkillTask(profile.id, skill);
-                await syncWorkspace(profile);
-              }}
-              onAddResourceToRoadmap={async (resource) => {
-                const added = await addResourceTask(profile.id, resource);
-                if (added) await syncWorkspace(profile);
-                return added;
-              }}
-            />
-          )}
+            {/* VIEW: CV & Resume Builder */}
+            {activeTab === 'cv' && (
+              <CVBuilderView
+                profile={profile}
+                onAIUsageChanged={() => refreshAIQuota(profile)}
+                onToast={showToast}
+              />
+            )}
 
-          {/* VIEW: Separate Dedicated Account & Professional Profile */}
-          {activeTab === 'profile' && (
-            <ProfileAccountView
-              profile={profile}
-              milestones={milestones}
-              tasks={tasks}
-              earnedAchievements={earnedAchievements}
-              aiQuota={aiQuota}
-              theme={theme}
-              onUpdateProfile={async (updated) => {
-                const saved = await authService.updateProfile(profile, updated);
-                setProfile(saved);
-              }}
-              onToggleTheme={toggleTheme}
-              onOpenRoleModal={() => setIsRoleModalOpen(true)}
-              onSignOut={handleRequestSignOut}
-              onDeleteAccount={async () => {
-                if (profile.is_demo) throw new Error('Development demo accounts cannot be deleted.');
-                activeUserIdRef.current = null;
-                await authService.deleteAccount();
-                setProfile(null);
-                setEarnedAchievements({});
-                navigateToTab('home');
-                showToast('Your account and associated data were deleted.');
-              }}
-              onNavigateToTab={navigateToTab}
-              onToast={showToast}
-            />
-          )}
+            {/* VIEW: Skill-Gap & Vacancies Match */}
+            {activeTab === 'skills' && (
+              <SkillGapView
+                userId={profile.id}
+                targetRole={profile.target_role}
+                targetRoleCategory={profile.target_role_category}
+                onToast={showToast}
+                onAddSkillToRoadmap={async (skill) => {
+                  await addSkillTask(profile.id, skill);
+                  await syncWorkspace(profile);
+                }}
+                onAddResourceToRoadmap={async (resource) => {
+                  const added = await addResourceTask(profile.id, resource);
+                  if (added) await syncWorkspace(profile);
+                  return added;
+                }}
+              />
+            )}
+
+            {/* VIEW: Separate Dedicated Account & Professional Profile */}
+            {activeTab === 'profile' && (
+              <ProfileAccountView
+                profile={profile}
+                milestones={milestones}
+                tasks={tasks}
+                earnedAchievements={earnedAchievements}
+                aiQuota={aiQuota}
+                theme={theme}
+                onUpdateProfile={async (updated) => {
+                  const saved = await authService.updateProfile(profile, updated);
+                  setProfile(saved);
+                }}
+                onToggleTheme={toggleTheme}
+                onOpenRoleModal={() => setIsRoleModalOpen(true)}
+                onSignOut={handleRequestSignOut}
+                onDeleteAccount={async () => {
+                  if (profile.is_demo) throw new Error('Development demo accounts cannot be deleted.');
+                  activeUserIdRef.current = null;
+                  await authService.deleteAccount();
+                  setProfile(null);
+                  setEarnedAchievements({});
+                  navigateToTab('home');
+                  showToast('Your account and associated data were deleted.');
+                }}
+                onNavigateToTab={navigateToTab}
+                onToast={showToast}
+              />
+            )}
           </Suspense>
         </main>
       </div>
@@ -1065,124 +1065,124 @@ export function App() {
       />
 
       <Suspense fallback={null}>
-      {/* Quick Action Sheet Modal */}
-      <QuickActionSheetModal
-        isOpen={isQuickActionSheetOpen}
-        onClose={() => setIsQuickActionSheetOpen(false)}
-        onSelectTab={navigateToTab}
-        onOpenRoleModal={() => setIsRoleModalOpen(true)}
-        onQuickReplan={handleApplyPlannerAction}
-      />
-
-      {/* Checkpoint Question Challenge Modal */}
-      {activeQuizTask && (
-        <CheckpointQuizModal
-          task={activeQuizTask}
-          isDemo={Boolean(profile.is_demo)}
-          onClose={() => setActiveQuizTask(null)}
-          onPassTask={handlePassCheckpoint}
+        {/* Quick Action Sheet Modal */}
+        <QuickActionSheetModal
+          isOpen={isQuickActionSheetOpen}
+          onClose={() => setIsQuickActionSheetOpen(false)}
+          onSelectTab={navigateToTab}
+          onOpenRoleModal={() => setIsRoleModalOpen(true)}
+          onQuickReplan={handleApplyPlannerAction}
         />
-      )}
 
-      {/* Role / Career Quest Selection Modal */}
-      {isRoleModalOpen && (
-        <RoleQuestSelectorModal
-          currentRoleSlug={profile.target_role.toLowerCase().replace(/[^a-z0-9]/g, '-')}
-          experienceLevel={profile.experience_level || 'beginner'}
-          isDemo={Boolean(profile.is_demo)}
-          aiQuota={aiQuota}
-          onAIUsageChanged={() => refreshAIQuota(profile)}
-          onClose={() => setIsRoleModalOpen(false)}
-          onSelectNewPlan={async (roleTitle, roleCategory, targetDate, dailyMins, newMilestones, roleOutline) => {
-            setIsWorkspaceLoading(true);
-            setWorkspaceError(null);
-            try {
-              const { generateTasksForMilestones } = await import('./features/roadmap/plannerEngine');
-              const daysDiff = Math.max(14, daysBetweenDateOnly(getLocalDateOnly(), targetDate));
-              const months = Math.min(60, Math.max(1, Math.round(daysDiff / 30)));
-              const updated: Profile = {
-                ...profile,
-                target_role: roleTitle,
-                target_role_category: roleCategory,
-                target_timeline_months: months,
-                target_completion_date: targetDate,
-                daily_minutes: dailyMins,
-                experience_level: profile.experience_level || 'beginner',
-                has_completed_onboarding: true,
-              };
-              let newTasks = generateTasksForMilestones(
-                newMilestones,
-                roleTitle,
-                profile.experience_level || 'beginner',
-                roleCategory,
-                roleOutline
-              );
-              if (import.meta.env.DEV && profile.is_demo) {
-                const { attachDemoCheckpointQuizzes } = await import('./features/roadmap/demoCheckpointQuizzes');
-                newTasks = attachDemoCheckpointQuizzes(newTasks);
-              }
-              let saved: { milestones: Milestone[]; tasks: Task[] };
-              if (profile.is_demo) {
-                saved = { milestones: newMilestones, tasks: newTasks };
-              } else {
-                await saveCareerPlan(updated, newMilestones, newTasks);
-                setProfile(updated);
+        {/* Checkpoint Question Challenge Modal */}
+        {activeQuizTask && (
+          <CheckpointQuizModal
+            task={activeQuizTask}
+            isDemo={Boolean(profile.is_demo)}
+            onClose={() => setActiveQuizTask(null)}
+            onPassTask={handlePassCheckpoint}
+          />
+        )}
+
+        {/* Role / Career Quest Selection Modal */}
+        {isRoleModalOpen && (
+          <RoleQuestSelectorModal
+            currentRoleSlug={profile.target_role.toLowerCase().replace(/[^a-z0-9]/g, '-')}
+            experienceLevel={profile.experience_level || 'beginner'}
+            isDemo={Boolean(profile.is_demo)}
+            aiQuota={aiQuota}
+            onAIUsageChanged={() => refreshAIQuota(profile)}
+            onClose={() => setIsRoleModalOpen(false)}
+            onSelectNewPlan={async (roleTitle, roleCategory, targetDate, dailyMins, newMilestones, roleOutline) => {
+              setIsWorkspaceLoading(true);
+              setWorkspaceError(null);
+              try {
+                const { generateTasksForMilestones } = await import('./features/roadmap/plannerEngine');
+                const daysDiff = Math.max(14, daysBetweenDateOnly(getLocalDateOnly(), targetDate));
+                const months = Math.min(60, Math.max(1, Math.round(daysDiff / 30)));
+                const updated: Profile = {
+                  ...profile,
+                  target_role: roleTitle,
+                  target_role_category: roleCategory,
+                  target_timeline_months: months,
+                  target_completion_date: targetDate,
+                  daily_minutes: dailyMins,
+                  experience_level: profile.experience_level || 'beginner',
+                  has_completed_onboarding: true,
+                };
+                let newTasks = generateTasksForMilestones(
+                  newMilestones,
+                  roleTitle,
+                  profile.experience_level || 'beginner',
+                  roleCategory,
+                  roleOutline
+                );
+                if (import.meta.env.DEV && profile.is_demo) {
+                  const { attachDemoCheckpointQuizzes } = await import('./features/roadmap/demoCheckpointQuizzes');
+                  newTasks = attachDemoCheckpointQuizzes(newTasks);
+                }
+                let saved: { milestones: Milestone[]; tasks: Task[] };
+                if (profile.is_demo) {
+                  saved = { milestones: newMilestones, tasks: newTasks };
+                } else {
+                  await saveCareerPlan(updated, newMilestones, newTasks);
+                  setProfile(updated);
+                  setIsRoleModalOpen(false);
+                  const persisted = await loadActiveRoadmap(updated.id);
+                  if (!persisted) throw new Error('The career plan was saved but could not be reloaded.');
+                  saved = persisted;
+                }
                 setIsRoleModalOpen(false);
-                const persisted = await loadActiveRoadmap(updated.id);
-                if (!persisted) throw new Error('The career plan was saved but could not be reloaded.');
-                saved = persisted;
+                setProfile(updated);
+                setMilestones(saved.milestones);
+                setTasks(saved.tasks);
+                showToast(`🚀 Roadmap Updated for ${roleTitle} (${dailyMins}m/day)!`);
+              } catch {
+                setWorkspaceError('Could not save the new career goal and roadmap. Check your connection and try again.');
+              } finally {
+                setIsWorkspaceLoading(false);
               }
-              setIsRoleModalOpen(false);
-              setProfile(updated);
-              setMilestones(saved.milestones);
-              setTasks(saved.tasks);
-              showToast(`🚀 Roadmap Updated for ${roleTitle} (${dailyMins}m/day)!`);
-            } catch {
-              setWorkspaceError('Could not save the new career goal and roadmap. Check your connection and try again.');
-            } finally {
-              setIsWorkspaceLoading(false);
-            }
-          }}
-        />
-      )}
+            }}
+          />
+        )}
 
-      {/* Profile & Preferences Settings Modal */}
-      {isSettingsOpen && (
-        <ProfileSettingsModal
-          isOpen
-          onClose={() => setIsSettingsOpen(false)}
-          profile={profile}
-          onUpdateProfile={async (updated) => {
-            const saved = await authService.updateProfile(profile, updated);
-            setProfile(saved);
-          }}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          onOpenAuth={() => {}}
-          onSignOut={handleRequestSignOut}
-          onToast={showToast}
-        />
-      )}
+        {/* Profile & Preferences Settings Modal */}
+        {isSettingsOpen && (
+          <ProfileSettingsModal
+            isOpen
+            onClose={() => setIsSettingsOpen(false)}
+            profile={profile}
+            onUpdateProfile={async (updated) => {
+              const saved = await authService.updateProfile(profile, updated);
+              setProfile(saved);
+            }}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onOpenAuth={() => { }}
+            onSignOut={handleRequestSignOut}
+            onToast={showToast}
+          />
+        )}
 
-      {/* Notification Center Modal */}
-      {isNotificationsOpen && profile && (
-        <NotificationCenterModal
-          isOpen={isNotificationsOpen}
-          onClose={() => setIsNotificationsOpen(false)}
-          tasks={tasks}
-          profile={profile}
-          onToast={showToast}
-        />
-      )}
+        {/* Notification Center Modal */}
+        {isNotificationsOpen && profile && (
+          <NotificationCenterModal
+            isOpen={isNotificationsOpen}
+            onClose={() => setIsNotificationsOpen(false)}
+            tasks={tasks}
+            profile={profile}
+            onToast={showToast}
+          />
+        )}
 
-      {/* Sign Out Confirmation Modal */}
-      {isSignOutModalOpen && (
-        <SignOutModal
-          isOpen
-          onClose={() => setIsSignOutModalOpen(false)}
-          onConfirmSignOut={handleConfirmSignOut}
-        />
-      )}
+        {/* Sign Out Confirmation Modal */}
+        {isSignOutModalOpen && (
+          <SignOutModal
+            isOpen
+            onClose={() => setIsSignOutModalOpen(false)}
+            onConfirmSignOut={handleConfirmSignOut}
+          />
+        )}
       </Suspense>
     </div>
   );
