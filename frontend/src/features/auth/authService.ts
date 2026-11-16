@@ -602,13 +602,17 @@ export const authService = {
 
   mapProfile(user: { id: string; email?: string; created_at?: string; user_metadata?: Record<string, unknown> }, row: Record<string, unknown>): Profile {
     const ext = readProfileExtensionCache(user.id);
-    const fullName = String(row.full_name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Career Pilot');
+    const metaName = user.user_metadata?.full_name || user.user_metadata?.name;
+    const rawRowName = typeof row.full_name === 'string' ? row.full_name.trim() : '';
+    const preferredRowName = rawRowName && rawRowName !== 'Adventurer' ? rawRowName : undefined;
+    const fullName = String(preferredRowName || metaName || rawRowName || user.email?.split('@')[0] || 'Career Pilot');
+    const metaAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture;
     const targetRole = String(row.target_role || '');
     return {
       id: user.id,
       full_name: fullName,
       email: user.email,
-      avatar_url: String(row.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.email || user.id)}`),
+      avatar_url: String(row.avatar_url || metaAvatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user.email || user.id)}`),
       target_role: targetRole,
       target_role_category: row.target_role_category ? String(row.target_role_category) as Profile['target_role_category'] : ext.target_role_category,
       target_timeline_months: row.target_timeline_months ? Number(row.target_timeline_months) : ext.target_timeline_months,

@@ -1224,24 +1224,56 @@ body {
 }
 
 .skeleton-shell {
+  min-height: 100vh;
   min-height: 100dvh;
-  background: var(--md-background, #f8fafc);
+  background: var(--md-bg, #f8fafd);
   color: var(--md-text-primary, #0f172a);
 }
 
 .skeleton-desktop-frame {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
+  min-height: 100vh;
   min-height: 100dvh;
 }
 
 .skeleton-sidebar {
   background: var(--md-surface, #ffffff);
   border-right: 1px solid var(--md-outline, #e2e8f0);
-  padding: 20px 16px;
+  padding: 20px 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.skeleton-workspace-frame {
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.skeleton-topbar {
+  background: var(--md-surface, #ffffff);
+  border-bottom: 1px solid var(--md-outline, #e2e8f0);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skeleton-workspace-main {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.skeleton-workspace-pad {
+  padding: 20px 16px;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
 }
 
 .skeleton-card {
@@ -1249,15 +1281,162 @@ body {
   border: 1px solid var(--md-outline, #e2e8f0);
   border-radius: 14px;
   padding: 18px;
+  min-width: 0;
 }
 
-@media (max-width: 900px) {
+.skeleton-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+}
+
+.skeleton-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.skeleton-stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.skeleton-auth-window {
+  max-width: 940px;
+  width: 100%;
+  background: var(--md-surface, #ffffff);
+  border-radius: 26px;
+  border: 1px solid var(--md-outline, #e2e8f0);
+  overflow: hidden;
+  display: flex;
+  flex-direction: row;
+  min-height: 560px;
+}
+
+.skeleton-auth-brand {
+  width: 40%;
+  padding: 28px;
+  background: var(--md-surface-variant, #f1f5f9);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.skeleton-auth-mobile-hero {
+  display: none;
+  width: 100%;
+  height: 156px;
+  padding: 18px 20px;
+  background: var(--md-surface-variant, #f1f5f9);
+  border-bottom: 1px solid var(--md-outline, #e2e8f0);
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.skeleton-auth-form {
+  flex: 1;
+  min-width: 0;
+  padding: 36px 40px;
+  display: grid;
+  gap: 16px;
+  align-content: center;
+}
+
+.skeleton-mobile-bottomnav {
+  display: none;
+}
+
+@media (max-width: 1023px) {
   .skeleton-desktop-frame {
     grid-template-columns: 1fr;
+    max-width: 500px;
+    margin: 0 auto;
+    background: var(--md-surface, #ffffff);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.05);
   }
 
   .skeleton-sidebar {
     display: none;
+  }
+
+  .skeleton-workspace-frame {
+    grid-template-rows: 56px minmax(0, 1fr);
+  }
+
+  .skeleton-topbar {
+    padding: 0 16px;
+  }
+
+  .skeleton-workspace-main {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom, 12px));
+  }
+
+  .skeleton-mobile-bottomnav {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 500px;
+    height: calc(64px + env(safe-area-inset-bottom, 0px));
+    padding: 0 12px env(safe-area-inset-bottom, 0px) 12px;
+    background: var(--md-surface, #ffffff);
+    border-top: 1px solid var(--md-outline, #e2e8f0);
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    z-index: 90;
+  }
+}
+
+@media (max-width: 860px) {
+  .skeleton-auth-window {
+    flex-direction: column;
+    width: min(460px, 100%);
+    max-width: 460px;
+    min-height: auto;
+    border-radius: 22px;
+    margin: auto 0;
+  }
+
+  .skeleton-auth-brand {
+    display: none;
+  }
+
+  .skeleton-auth-mobile-hero {
+    display: flex;
+  }
+
+  .skeleton-auth-form {
+    padding: 24px 20px 28px 20px;
+    gap: 14px;
+  }
+}
+
+@media (max-width: 768px) {
+  .skeleton-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .skeleton-workspace-pad {
+    padding: 14px 12px;
+    gap: 12px;
+  }
+
+  .skeleton-card {
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .skeleton-stat-row {
+    gap: 8px;
   }
 }
 

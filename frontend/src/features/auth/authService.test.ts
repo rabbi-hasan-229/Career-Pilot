@@ -726,4 +726,21 @@ describe('authService.signInWithSocial & schema fallbacks', () => {
     await expect(authService.acceptCurrentLegalPolicies('user-1')).resolves.toBeUndefined();
     await expect(authService.hasCurrentLegalAcceptance('user-1')).resolves.toBe(true);
   });
+
+  it('uses Google OAuth name and picture metadata when row falls back to defaults', () => {
+    const profile = authService.mapProfile(
+      {
+        id: 'oauth-1',
+        email: 'rabbi@gmail.com',
+        user_metadata: {
+          name: 'Rabbi Hasan',
+          picture: 'https://lh3.googleusercontent.com/a/photo.jpg',
+        },
+      },
+      createProfileRow({ full_name: 'Adventurer', avatar_url: null })
+    );
+
+    expect(profile.full_name).toBe('Rabbi Hasan');
+    expect(profile.avatar_url).toBe('https://lh3.googleusercontent.com/a/photo.jpg');
+  });
 });
