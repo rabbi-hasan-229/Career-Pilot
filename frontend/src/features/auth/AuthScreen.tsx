@@ -20,14 +20,13 @@ import type { Profile } from '../../types';
 
 interface Props {
   onAuthenticated: (profile: Profile) => void;
-  onMFARequired: () => void;
   onToast: (msg: string) => void;
 }
 
 const ACCENT_LINK = '#123C69';
 const ACCENT_BORDER = '#1E4D8B';
 
-export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, onToast }) => {
+export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
   const supabaseConfigured = isSupabaseConfigured();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [verificationStep, setVerificationStep] = useState<'form' | 'otp'>('form');
@@ -177,11 +176,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
         rememberMe,
       });
 
-      if (res.mfaRequired) {
-        onMFARequired();
-        return;
-      }
-
       if (res.needsEmailVerification) {
         setVerificationSource('signin');
         setOtpDigits(['', '', '', '', '', '']);
@@ -229,11 +223,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
         recordConsent: verificationSource === 'signup',
       });
 
-      if (verifyRes.mfaRequired) {
-        onMFARequired();
-        return;
-      }
-
       if (!verifyRes.success || !verifyRes.profile) {
         setError(verifyRes.error || 'Incorrect verification code. Check your email or request a new one.');
         return;
@@ -280,11 +269,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
         legalConsentAccepted: verificationSource === 'signup' ? agreeTerms : true,
         recordConsent: verificationSource === 'signup',
       });
-
-      if (res.mfaRequired) {
-        onMFARequired();
-        return;
-      }
 
       if (!res.success || !res.profile) {
         if (!silent) {

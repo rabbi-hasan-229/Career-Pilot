@@ -36,7 +36,6 @@ const {
   mockSignInWithOAuth,
   mockGetUser,
   mockSignOut,
-  mockGetAuthenticatorAssuranceLevel,
   mockFrom,
   mockSetRememberMePreference,
   mockGetRememberMePreference,
@@ -50,7 +49,6 @@ const {
   mockSignInWithOAuth: vi.fn(),
   mockGetUser: vi.fn(),
   mockSignOut: vi.fn(),
-  mockGetAuthenticatorAssuranceLevel: vi.fn(),
   mockFrom: vi.fn(),
   mockSetRememberMePreference: vi.fn(),
   mockGetRememberMePreference: vi.fn(() => true),
@@ -78,9 +76,6 @@ vi.mock('../../lib/supabase', async (importOriginal) => {
         signInWithOAuth: mockSignInWithOAuth,
         getUser: mockGetUser,
         signOut: mockSignOut,
-        mfa: {
-          getAuthenticatorAssuranceLevel: mockGetAuthenticatorAssuranceLevel,
-        },
       },
       from: mockFrom,
     },
@@ -214,10 +209,6 @@ beforeEach(() => {
   mockSessionStorage.clear();
   vi.clearAllMocks();
   setupSupabaseTableMocks();
-  mockGetAuthenticatorAssuranceLevel.mockResolvedValue({
-    data: { currentLevel: 'aal1', nextLevel: 'aal1' },
-    error: null,
-  });
   mockGetUser.mockResolvedValue({
     data: {
       user: {
@@ -250,29 +241,6 @@ describe('rememberMe storage routing', () => {
 });
 
 describe('authService.signIn', () => {
-  it('returns mfaRequired without querying profiles when user needs aal2 verification', async () => {
-    mockSignInWithPassword.mockResolvedValue({
-      data: {
-        user: { id: 'user-mfa', email: 'mfa@example.com' },
-        session: { access_token: 'tok' },
-      },
-      error: null,
-    });
-    mockGetAuthenticatorAssuranceLevel.mockResolvedValue({
-      data: { currentLevel: 'aal1', nextLevel: 'aal2' },
-      error: null,
-    });
-
-    const result = await authService.signIn({
-      email: 'mfa@example.com',
-      password: 'Password123!',
-      rememberMe: true,
-    });
-
-    expect(result).toEqual({ success: true, mfaRequired: true });
-    expect(mockFrom).not.toHaveBeenCalledWith('profiles');
-  });
-
   it('flags unconfirmed email errors with needsEmailVerification', async () => {
     mockSignInWithPassword.mockResolvedValue({
       data: { user: null, session: null },

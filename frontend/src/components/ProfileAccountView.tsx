@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   User,
   Shield,
@@ -35,7 +35,6 @@ import type { Profile, ActiveNavTab, Milestone, Task } from '../types';
 import type { ThemeMode } from '../lib/theme';
 import { downloadAccountExport, exportAccountData } from '../features/account/accountRepository';
 import type { AIQuotaSummary } from '../features/ai/aiGateway';
-import { supabase } from '../lib/supabase';
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
 
 const GithubIcon: React.FC<{ size?: number; className?: string }> = ({ size = 15, className = '' }) => (
@@ -87,14 +86,6 @@ export const ProfileAccountView: React.FC<Props> = ({
   onToast,
 }) => {
   const [activeTab, setActiveTab] = useState<ProfileTab>('identity');
-  const [mfaFactors, setMfaFactors] = useState<Array<{ id: string; friendly_name?: string; factor_type: string; status: string }>>([]);
-  const [mfaSetup, setMfaSetup] = useState<{ id: string; qrCode: string; secret: string } | null>(null);
-  const [mfaFriendlyName, setMfaFriendlyName] = useState('Primary authenticator');
-  const [mfaCode, setMfaCode] = useState('');
-  const [mfaError, setMfaError] = useState('');
-  const [mfaBusy, setMfaBusy] = useState(false);
-  const [confirmDisableFactorId, setConfirmDisableFactorId] = useState<string | null>(null);
-  const [mfaSupported, setMfaSupported] = useState(true);
 
   // Form state
   const [fullName, setFullName] = useState(profile.full_name || '');
@@ -127,147 +118,10 @@ export const ProfileAccountView: React.FC<Props> = ({
     ? Math.round((totalAIQuota.remaining / totalAIQuota.limit) * 100)
     : 0;
 
-  // Notifications & Security
+  // Notifications
   const [dailyReminder, setDailyReminder] = useState(profile.notification_daily_reminder ?? true);
   const [milestoneAlerts, setMilestoneAlerts] = useState(profile.notification_milestone_alerts ?? true);
   const [weeklyDigest, setWeeklyDigest] = useState(profile.notification_weekly_digest ?? true);
-  const verifiedMfaFactors = mfaFactors.filter((factor) => factor.factor_type === 'totp' && factor.status === 'verified');
-  const pendingMfaFactors = mfaFactors.filter((factor) => factor.factor_type === 'totp' && factor.status === 'unverified');
-  const twoFactor = verifiedMfaFactors.length > 0;
-
-  const refreshMfaFactors = async () => {
-    const { data, error } = await supabase.auth.mfa.listFactors();
-    if (error) {
-      setMfaSupported(false);
-      setMfaError('Authenticator verification is unavailable for this account right now.');
-      return;
-    }
-    setMfaSupported(true);
-    setMfaFactors(data.all);
-    setMfaFriendlyName(data.totp.length ? `Backup authenticator ${data.totp.length + 1}` : 'Primary authenticator');
-    setMfaError('');
-  };
-
-  useEffect(() => {
-    if (activeTab !== 'security' || profile.is_demo) return;
-    let active = true;
-    void supabase.auth.mfa.listFactors().then(({ data, error }) => {
-      if (!active) return;
-      if (error) {
-        setMfaSupported(false);
-        setMfaError('Authenticator verification is unavailable for this account right now.');
-        return;
-      }
-      setMfaSupported(true);
-      setMfaFactors(data.all);
-      setMfaFriendlyName(data.totp.length ? `Backup authenticator ${data.totp.length + 1}` : 'Primary authenticator');
-      setMfaError('');
-    });
-    return () => { active = false; };
-  }, [activeTab, profile.is_demo]);
-
-  const beginMfaEnrollment = async () => {
-    if (profile.is_demo) return;
-    setMfaBusy(true);
-    setMfaError('');
-    const friendlyName = mfaFriendlyName.trim();
-    if (!friendlyName || friendlyName.length > 40) {
-      setMfaError('Give this authenticator a name between 1 and 40 characters.');
-      setMfaBusy(false);
-      return;
-    }
-    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
-    if (error || !data?.totp) {
-      setMfaError(error?.message ?? 'Could not start authenticator setup.');
-    } else {
-      const qrCode = data.totp.qr_code.startsWith('data:')
-        ? data.totp.qr_code
-        : `data:image/svg+xml;utf8,${encodeURIComponent(data.totp.qr_code)}`;
-      setMfaSetup({ id: data.id, qrCode, secret: data.totp.secret });
-      setMfaCode('');
-    }
-    setMfaBusy(false);
-  };
-
-  const verifyMfaEnrollment = async () => {
-    if (!mfaSetup || !/^\d{6}$/.test(mfaCode)) {
-      setMfaError('Enter the six-digit code from your authenticator app.');
-      return;
-    }
-    setMfaBusy(true);
-    setMfaError('');
-    const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: mfaSetup.id });
-    if (challengeError) {
-      setMfaError('Could not verify the authenticator code. Please try again.');
-      setMfaBusy(false);
-      return;
-    }
-    const { error } = await supabase.auth.mfa.verify({ factorId: mfaSetup.id, challengeId: challenge.id, code: mfaCode });
-    if (error) {
-      setMfaError('That code was not accepted. Check the time on your device and try again.');
-      setMfaBusy(false);
-      return;
-    }
-    setMfaSetup(null);
-    setMfaCode('');
-    await refreshMfaFactors();
-    onToast('Authenticator verification is now enabled.');
-    setMfaBusy(false);
-  };
-
-  const disableMfaFactor = async (factorId: string) => {
-    setMfaBusy(true);
-    setMfaError('');
-    const { error } = await supabase.auth.mfa.unenroll({ factorId });
-    if (error) {
-      setMfaError('Could not remove this authenticator. Please try again.');
-    } else {
-      await supabase.auth.refreshSession();
-      setConfirmDisableFactorId(null);
-      const { data: factors, error: factorError } = await supabase.auth.mfa.listFactors();
-      if (factorError) {
-        setMfaError('The authenticator was removed, but the remaining security state could not be checked. Sign out and back in to refresh it.');
-      } else {
-        setMfaFactors(factors.all);
-        const hasAnotherVerifiedFactor = [...factors.totp, ...factors.phone, ...factors.webauthn].some((factor) => factor.status === 'verified');
-        if (hasAnotherVerifiedFactor) {
-          await supabase.auth.signOut();
-          onToast('Authenticator removed. Sign in again and verify with your remaining authenticator.');
-        } else {
-          onToast('Authenticator verification is now disabled.');
-        }
-      }
-    }
-    setMfaBusy(false);
-  };
-
-  const cancelMfaEnrollment = async () => {
-    if (!mfaSetup) return;
-    setMfaBusy(true);
-    const { error } = await supabase.auth.mfa.unenroll({ factorId: mfaSetup.id });
-    if (error) {
-      setMfaError('Could not cancel authenticator setup. Please try again.');
-    } else {
-      setMfaSetup(null);
-      setMfaCode('');
-      setMfaError('');
-      await refreshMfaFactors();
-    }
-    setMfaBusy(false);
-  };
-
-  const removePendingMfaFactor = async (factorId: string) => {
-    setMfaBusy(true);
-    setMfaError('');
-    const { error } = await supabase.auth.mfa.unenroll({ factorId });
-    if (error) {
-      setMfaError('Could not remove the incomplete authenticator setup. Please try again.');
-    } else {
-      await refreshMfaFactors();
-      onToast('Incomplete authenticator setup removed.');
-    }
-    setMfaBusy(false);
-  };
 
   // UI State
   const [isSaving, setIsSaving] = useState(false);
@@ -1113,84 +967,13 @@ export const ProfileAccountView: React.FC<Props> = ({
             <div className="pa-panel-card">
               <h2 className="pa-panel-title">
                 <Shield size={18} style={{ color: 'var(--md-primary)' }} />
-                <span>Security & Authentication</span>
+                <span>Security &amp; Sessions</span>
               </h2>
               <p className="pa-panel-desc">
-                Manage authenticator verification and active sessions.
+                Review your current signed-in session.
               </p>
 
               <div className="pa-toggle-list">
-                <div className="pa-toggle-item">
-                  <div className="pa-toggle-info">
-                    <span className="pa-toggle-title">Two-Factor Authentication (2FA)</span>
-                    <span className="pa-toggle-desc">Use a time-based code from an authenticator app when you sign in.</span>
-                  </div>
-                  <span className="pa-session-active-tag">{twoFactor ? 'Enabled' : 'Not enabled'}</span>
-                </div>
-
-                {profile.is_demo ? (
-                  <p className="pa-panel-desc">Authenticator setup is available for signed-in accounts, not demo mode.</p>
-                ) : twoFactor ? (
-                  <div style={{ padding: '12px 0' }}>
-                    {verifiedMfaFactors.map((factor) => (
-                      <div key={factor.id} className="pa-toggle-item">
-                        <div className="pa-toggle-info">
-                          <span className="pa-toggle-title">{factor.friendly_name || 'Authenticator app'}</span>
-                          <span className="pa-toggle-desc">Verified authenticator</span>
-                        </div>
-                        {confirmDisableFactorId === factor.id ? (
-                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => setConfirmDisableFactorId(null)}>Keep</button>
-                            <button type="button" className="btn-m3-primary" disabled={mfaBusy} onClick={() => void disableMfaFactor(factor.id)}>{mfaBusy ? 'Removing…' : 'Remove'}</button>
-                          </div>
-                        ) : (
-                          <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => setConfirmDisableFactorId(factor.id)}>Remove</button>
-                        )}
-                      </div>
-                    ))}
-                    <p className="pa-panel-desc">For sign-in recovery, add another authenticator on a separate device and give it a distinct name.</p>
-                    <label htmlFor="mfa-new-name" className="pa-toggle-title">New authenticator name</label>
-                    <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-                      <input id="mfa-new-name" value={mfaFriendlyName} maxLength={40} onChange={(event) => setMfaFriendlyName(event.target.value)} style={{ flex: '1 1 220px', minWidth: 0, padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
-                      <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void beginMfaEnrollment()}>Add authenticator</button>
-                    </div>
-                  </div>
-                ) : pendingMfaFactors.length > 0 ? (
-                  <div style={{ padding: '12px 0' }}>
-                    <p className="pa-panel-desc">An unfinished authenticator setup was found. Remove it before starting a fresh setup.</p>
-                    {pendingMfaFactors.map((factor) => (
-                      <div key={factor.id} className="pa-toggle-item">
-                        <span className="pa-toggle-title">{factor.friendly_name || 'Incomplete authenticator'}</span>
-                        <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void removePendingMfaFactor(factor.id)}>{mfaBusy ? 'Removing…' : 'Remove setup'}</button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ padding: '12px 0' }}>
-                    <label htmlFor="mfa-first-name" className="pa-toggle-title">Authenticator name</label>
-                    <input id="mfa-first-name" value={mfaFriendlyName} maxLength={40} onChange={(event) => setMfaFriendlyName(event.target.value)} style={{ display: 'block', width: '100%', maxWidth: 340, boxSizing: 'border-box', margin: '8px 0 12px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
-                    <button type="button" className="btn-m3-primary" disabled={!mfaSupported || mfaBusy} onClick={() => void beginMfaEnrollment()}>
-                      {mfaBusy ? 'Starting setup…' : 'Set up authenticator'}
-                    </button>
-                  </div>
-                )}
-
-                {mfaSetup && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 200px) 1fr', gap: 20, alignItems: 'center', padding: '20px 0' }}>
-                    <img src={mfaSetup.qrCode} alt="Scan this QR code with your authenticator app" style={{ width: '100%', maxWidth: 200, background: 'white', borderRadius: 12, padding: 8, boxSizing: 'border-box' }} />
-                    <div>
-                      <p className="pa-panel-desc">Scan the QR code, then enter the six-digit code generated by your app.</p>
-                      <label htmlFor="mfa-enrollment-secret" className="pa-toggle-title">Setup key</label>
-                      <input id="mfa-enrollment-secret" readOnly value={mfaSetup.secret} style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '6px 0 14px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
-                      <label htmlFor="mfa-enrollment-code" className="pa-toggle-title">Authenticator code</label>
-                      <input id="mfa-enrollment-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={mfaCode} onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))} style={{ display: 'block', width: '100%', boxSizing: 'border-box', margin: '6px 0 12px', padding: 10, borderRadius: 8, border: '1px solid var(--md-outline-variant)', background: 'var(--md-surface)', color: 'var(--md-text-primary)' }} />
-                      <button type="button" className="btn-m3-primary" disabled={mfaBusy || mfaCode.length !== 6} onClick={() => void verifyMfaEnrollment()}>{mfaBusy ? 'Verifying…' : 'Verify and enable'}</button>
-                      <button type="button" className="btn-m3-secondary" disabled={mfaBusy} onClick={() => void cancelMfaEnrollment()}>Cancel</button>
-                    </div>
-                  </div>
-                )}
-                {mfaError && <p role="alert" style={{ color: 'var(--md-error, #b3261e)' }}>{mfaError}</p>}
-
                 <div className="pa-toggle-item">
                   <div className="pa-toggle-info">
                     <span className="pa-toggle-title">Active Browser Session</span>

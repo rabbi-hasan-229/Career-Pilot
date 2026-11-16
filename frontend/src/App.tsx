@@ -30,7 +30,6 @@ const OnboardingGoalModal = lazy(() => import('./features/onboarding/OnboardingG
 const NotificationCenterModal = lazy(() => import('./features/notifications/NotificationCenterModal').then((module) => ({ default: module.NotificationCenterModal })));
 const AuthScreen = lazy(() => import('./features/auth/AuthScreen').then((module) => ({ default: module.AuthScreen })));
 const PasswordRecoveryScreen = lazy(() => import('./features/auth/PasswordRecoveryScreen').then((module) => ({ default: module.PasswordRecoveryScreen })));
-const MFAChallengeScreen = lazy(() => import('./features/auth/MFAChallengeScreen').then((module) => ({ default: module.MFAChallengeScreen })));
 const QuickActionSheetModal = lazy(() => import('./components/QuickActionSheetModal').then((module) => ({ default: module.QuickActionSheetModal })));
 const ProfileSettingsModal = lazy(() => import('./components/ProfileSettingsModal').then((module) => ({ default: module.ProfileSettingsModal })));
 const SignOutModal = lazy(() => import('./components/SignOutModal').then((module) => ({ default: module.SignOutModal })));
@@ -45,7 +44,6 @@ function getTabFromUrl(): ActiveNavTab {
 export function App() {
   const [activeTab, setActiveTab] = useState<ActiveNavTab>(getTabFromUrl);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [isMFARequired, setIsMFARequired] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -273,14 +271,6 @@ export function App() {
       isSyncingAuth.current = true;
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-          if (assuranceError) throw assuranceError;
-          if (assurance.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
-            if (active) setIsMFARequired(true);
-            return;
-          }
-        }
         if (recoveryRequested) {
           if (active) setIsPasswordRecovery(true);
           return;
@@ -329,7 +319,6 @@ export function App() {
         activeUserIdRef.current = null;
         workspaceRequestId.current += 1;
         setProfile(null);
-        setIsMFARequired(false);
         setEarnedAchievements({});
         setMilestones([]);
         setTasks([]);
@@ -466,51 +455,7 @@ export function App() {
   };
 
   const handleAuthenticated = async (newProfile: Profile) => {
-    if (!newProfile.is_demo) {
-      const { data: assurance, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (error) {
-        showToast('Could not verify your account security. Please sign in again.');
-        await authService.signOut();
-        return;
-      }
-      if (assurance.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
-        setIsMFARequired(true);
-        return;
-      }
-    }
     await activateProfile(newProfile);
-  };
-
-  const handleMFAVerified = async () => {
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error || !user) {
-      await authService.signOut();
-      setIsMFARequired(false);
-      showToast('Your session could not be restored. Please sign in again.');
-      return;
-    }
-    let verifiedProfile: Profile | null;
-    try {
-      verifiedProfile = await authService.loadProfile(user);
-    } catch (loadError) {
-      console.error('Could not load the verified account profile:', loadError);
-      verifiedProfile = null;
-    }
-    if (!verifiedProfile) {
-      await authService.signOut();
-      setIsMFARequired(false);
-      showToast('Your account profile could not be loaded. Please sign in again.');
-      return;
-    }
-    setIsMFARequired(false);
-    await activateProfile(verifiedProfile);
-  };
-
-  const handleCancelMFA = async () => {
-    activeUserIdRef.current = null;
-    await authService.signOut();
-    setIsMFARequired(false);
-    setProfile(null);
   };
 
   const handleOnboardingComplete = async (updatedProfile: Profile, roleOutline?: RolePlanOutline) => {
@@ -799,14 +744,6 @@ export function App() {
     return <AppScreenSkeleton variant={skeletonVariant} label="Loading your Career Pilot account…" />;
   }
 
-  if (isMFARequired) {
-    return (
-      <Suspense fallback={<AppScreenSkeleton variant="auth" label="Loading verification…" />}>
-        <MFAChallengeScreen onVerified={handleMFAVerified} onCancel={handleCancelMFA} />
-      </Suspense>
-    );
-  }
-
   const leavePasswordRecovery = async () => {
     activeUserIdRef.current = null;
     await authService.signOut();
@@ -865,7 +802,6 @@ export function App() {
         <Suspense fallback={<AppScreenSkeleton variant="auth" label="Loading sign-in…" />}>
           <AuthScreen
             onAuthenticated={handleAuthenticated}
-            onMFARequired={() => setIsMFARequired(true)}
             onToast={showToast}
           />
         </Suspense>

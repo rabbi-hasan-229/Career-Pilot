@@ -2,7 +2,6 @@
 // Personal free-form inputs are never cached; only validated generic role
 // milestones may be reused through the isolated server-only template store.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasMfaAssurance } from '../_shared/mfa.ts';
 import { serveObservedEdgeFunction } from '../_shared/observability.ts';
 
 const LIMITS: Record<string, Record<string, number>> = {
@@ -197,15 +196,6 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     });
     const { data: { user }, error: authError } = await admin.auth.getUser(accessToken);
     if (authError || !user) return response({ error: 'Invalid or expired session.' }, 401);
-    let mfaAllowed: boolean;
-    try {
-      mfaAllowed = await hasMfaAssurance(admin, user.id, accessToken);
-    } catch {
-      return response({ error: 'Could not verify your account security state.' }, 503);
-    }
-    if (!mfaAllowed) {
-      return response({ error: 'Complete multi-factor verification before using this feature.', requires_mfa: true }, 403);
-    }
 
     const contentLength = Number(req.headers.get('Content-Length') || 0);
     if (contentLength > 16000) return response({ error: 'Request is too large.' }, 413);

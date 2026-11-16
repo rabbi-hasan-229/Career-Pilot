@@ -84,7 +84,6 @@ export interface AuthCredentials {
 export interface AuthResult {
   success: boolean;
   profile?: Profile;
-  mfaRequired?: boolean;
   needsEmailVerification?: boolean;
   error?: string;
 }
@@ -164,13 +163,6 @@ export const authService = {
         needsEmailVerification,
         error: mapAuthErrorMessage(error?.message),
       };
-    }
-
-    // Enrolled MFA accounts receive an AAL1 session first, which RLS intentionally
-    // restricts from reading profiles until the second factor is verified.
-    const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (!assuranceError && assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
-      return { success: true, mfaRequired: true };
     }
 
     const profile = await this.loadProfile(data.user);
@@ -292,10 +284,6 @@ export const authService = {
     }
 
     if (!recordConsent) {
-      const { data: assurance, error: assuranceError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (!assuranceError && assurance?.nextLevel === 'aal2' && assurance.currentLevel !== 'aal2') {
-        return { success: true, mfaRequired: true };
-      }
       const profile = await this.loadProfile(data.user);
       if (!profile) {
         return { success: false, error: 'Email verified, but your profile could not be loaded. Try signing in.' };
@@ -356,11 +344,6 @@ export const authService = {
 
     const { data: userData } = await supabase.auth.getUser();
     if (userData.user) {
-      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aalData?.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
-        return { success: true, mfaRequired: true };
-      }
-
       if (params?.recordConsent === false) {
         const profile = await this.loadProfile(userData.user);
         if (!profile) {

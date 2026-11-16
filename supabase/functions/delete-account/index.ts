@@ -1,7 +1,6 @@
 // Deletes the authenticated user's Auth identity; profile ownership cascades
 // remove user-owned application data through database foreign keys.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasMfaAssurance } from '../_shared/mfa.ts';
 import { serveObservedEdgeFunction } from '../_shared/observability.ts';
 
 serveObservedEdgeFunction('delete-account', async (req: Request) => {
@@ -32,15 +31,6 @@ serveObservedEdgeFunction('delete-account', async (req: Request) => {
     });
     const { data: { user }, error: userError } = await admin.auth.getUser(accessToken);
     if (userError || !user) return new Response(JSON.stringify({ error: 'Invalid or expired session' }), { status: 401, headers });
-    let mfaAllowed: boolean;
-    try {
-      mfaAllowed = await hasMfaAssurance(admin, user.id, accessToken);
-    } catch {
-      return new Response(JSON.stringify({ error: 'Could not verify your account security state.' }), { status: 503, headers });
-    }
-    if (!mfaAllowed) {
-      return new Response(JSON.stringify({ error: 'Complete multi-factor verification before deleting your account.', requires_mfa: true }), { status: 403, headers });
-    }
 
     const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
     if (deleteError) throw deleteError;

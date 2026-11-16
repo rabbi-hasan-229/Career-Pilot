@@ -1,7 +1,6 @@
 // Authenticated, read-only search proxy for Remote OK's public remote-job feed.
 // Results are returned transiently; they are not copied into Career Pilot tables.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { hasMfaAssurance } from '../_shared/mfa.ts';
 import { serveObservedEdgeFunction, type EdgeRequestContext } from '../_shared/observability.ts';
 
 const corsHeaders = {
@@ -206,13 +205,6 @@ serveObservedEdgeFunction('search-remote-jobs', async (req: Request, observabili
     });
     const { data: { user }, error: authError } = await admin.auth.getUser(accessToken);
     if (authError || !user) return json({ error: 'Invalid or expired session.' }, 401);
-    try {
-      if (!(await hasMfaAssurance(admin, user.id, accessToken))) {
-        return json({ error: 'Complete multi-factor verification before using this feature.', requires_mfa: true }, 403);
-      }
-    } catch {
-      return json({ error: 'Could not verify your account security state.' }, 503);
-    }
 
     const contentLength = Number(req.headers.get('Content-Length') || 0);
     if (contentLength > 6000) return json({ error: 'Request is too large.' }, 413);
