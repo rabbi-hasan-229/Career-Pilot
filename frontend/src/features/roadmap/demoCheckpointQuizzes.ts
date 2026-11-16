@@ -1,5 +1,6 @@
 import type { Task, TaskQuiz } from '../../types';
-import type { CheckpointQuizTemplateId } from './checkpointQuizCatalog';
+import { findCuratedCareerBlueprint, type CareerCategory } from './careerCatalog';
+import { getCheckpointQuizTemplateId, type CheckpointQuizTemplateId } from './checkpointQuizCatalog';
 import { domainQuizTemplates } from './domainCheckpointQuizTemplates';
 
 // Development-only mirror of private.checkpoint_quiz_templates. Keep IDs and
@@ -360,10 +361,15 @@ const demoQuizTemplates = {
   ...domainQuizTemplates,
 } as const;
 
-function createDemoQuiz(templateId: CheckpointQuizTemplateId, taskId: string, title: string): TaskQuiz {
+function createQuizFromTemplate(
+  templateId: CheckpointQuizTemplateId,
+  taskId: string,
+  title: string,
+  prefix: 'demo_quiz_' | 'local_quiz_'
+): TaskQuiz {
   const template = demoQuizTemplates[templateId];
   return {
-    id: `demo_quiz_${taskId}`,
+    id: `${prefix}${taskId}`,
     task_id: taskId,
     question: template.question.replace('{checkpoint}', title),
     options: template.options.map((option) => ({ ...option, is_correct: option.id === template.correct })),
@@ -374,6 +380,38 @@ function createDemoQuiz(templateId: CheckpointQuizTemplateId, taskId: string, ti
 export function attachDemoCheckpointQuizzes(tasks: Task[]): Task[] {
   return tasks.map((task) => {
     if (task.type !== 'Checkpoint' || !task.quiz_template_id) return task;
-    return { ...task, quiz: createDemoQuiz(task.quiz_template_id as CheckpointQuizTemplateId, task.id, task.title) };
+    return {
+      ...task,
+      quiz: createQuizFromTemplate(task.quiz_template_id as CheckpointQuizTemplateId, task.id, task.title, 'demo_quiz_'),
+    };
   });
+}
+
+/**
+ * Resolve a fallback checkpoint quiz when no server-side quiz row exists yet.
+ */
+export function createFallbackCheckpointQuiz(
+  taskId: string,
+  title: string,
+  roleTitle: string,
+  milestoneIndex: number,
+  totalMilestones: number,
+  category?: CareerCategory,
+  explicitTemplateId?: string
+): TaskQuiz {
+  const curated = findCuratedCareerBlueprint(roleTitle);
+  const resolvedSlug = curated?.slug || roleTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const resolvedCategory = category || curated?.category || 'Software & Web';
+  const defaultTemplateId = getCheckpointQuizTemplateId(
+    resolvedSlug,
+    Math.max(0, milestoneIndex),
+    Math.max(1, totalMilestones),
+    resolvedCategory
+  );
+  const templateId =
+    explicitTemplateId && Object.prototype.hasOwnProperty.call(demoQuizTemplates, explicitTemplateId)
+      ? (explicitTemplateId as CheckpointQuizTemplateId)
+      : defaultTemplateId;
+
+  return createQuizFromTemplate(templateId, taskId, title, 'local_quiz_');
 }

@@ -145,6 +145,23 @@ function buildFallbackRoleVacancies(roleTitle: string, skillsList: Skill[]): Vac
     });
 }
 
+function recomputeVacancyMatches(list: Vacancy[], updatedSkills: Skill[]): Vacancy[] {
+  const acquiredNames = new Set(
+    updatedSkills.filter((skill) => skill.is_acquired).map((skill) => skill.name.toLowerCase())
+  );
+  return list.map((vacancy) => {
+    if (vacancy.required_skills.length === 0) return vacancy;
+    const missing = vacancy.required_skills.filter((req) => !acquiredNames.has(req.toLowerCase()));
+    return {
+      ...vacancy,
+      missing_skills: missing,
+      match_pct: Math.round(
+        ((vacancy.required_skills.length - missing.length) / vacancy.required_skills.length) * 100
+      ),
+    };
+  });
+}
+
 async function findRemoteJobs(
   query: string,
   category: CareerCategory,
@@ -342,23 +359,66 @@ export const SkillGapView: React.FC<Props> = ({
       ? allVacancies.filter((v) => v.match_pct !== null && v.match_pct >= 75)
       : allVacancies, [allVacancies, filterMode]);
 
-  const searchRemoteListings = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (liveLoading || !liveQuery.trim()) return;
+  const executeLiveSearch = async (
+    mode: LiveSearchMode,
+    queryText: string,
+    locationText: string,
+    skillsSnapshot: Skill[]
+  ) => {
+    const cleanQuery = queryText.trim();
+    const cleanLocation = locationText.trim();
+    if (cleanQuery.length < 2) {
+      setLiveError('Enter at least 2 characters for the role title.');
+      return;
+    }
+    if (mode !== 'remote' && cleanLocation.length < 2) {
+      setLiveError('Enter a city, region, or country (at least 2 characters) to search.');
+      return;
+    }
+
     const requestId = ++liveSearchRequest.current;
     setLiveLoading(true);
     setLiveError('');
     try {
-      const remote = await findRemoteJobs(liveQuery.trim(), resolvedRoleCategory || 'Software & Web', skills, liveSearchMode, liveLocation.trim());
+      const remote = await findRemoteJobs(
+        cleanQuery,
+        resolvedRoleCategory || 'Software & Web',
+        skillsSnapshot,
+        mode,
+        cleanLocation
+      );
       if (requestId !== liveSearchRequest.current) return;
       setLiveVacancies(remote.vacancies);
       setLiveFetchedAt(remote.response.fetched_at);
     } catch (remoteError) {
       if (requestId !== liveSearchRequest.current) return;
       setLiveVacancies([]);
-      setLiveError(remoteError instanceof Error ? remoteError.message : 'Remote search is temporarily unavailable.');
+      setLiveError(
+        remoteError instanceof Error ? remoteError.message : 'Live job search is temporarily unavailable.'
+      );
     } finally {
       if (requestId === liveSearchRequest.current) setLiveLoading(false);
+    }
+  };
+
+  const searchRemoteListings = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (liveLoading) return;
+    await executeLiveSearch(liveSearchMode, liveQuery, liveLocation, skills);
+  };
+
+  const handleSearchModeChange = (nextMode: LiveSearchMode) => {
+    liveSearchRequest.current += 1;
+    setLiveSearchMode(nextMode);
+    setLiveVacancies([]);
+    setLiveFetchedAt('');
+    setLiveError('');
+    setLiveLoading(false);
+
+    if (nextMode === 'remote' && liveQuery.trim().length >= 2) {
+      void executeLiveSearch('remote', liveQuery, '', skills);
+    } else if (nextMode !== 'remote' && liveQuery.trim().length >= 2 && liveLocation.trim().length >= 2) {
+      void executeLiveSearch(nextMode, liveQuery, liveLocation, skills);
     }
   };
 
@@ -410,19 +470,9 @@ export const SkillGapView: React.FC<Props> = ({
 
       const nextSkills = skills.map((item) => (item.id === skill.id ? { ...item, is_acquired: nextAcquired } : item));
       setSkills(nextSkills);
-      // Keep local/benchmark vacancy match % synced live when user marks skills
-      setVacancies((prev) =>
-        prev.map((vac) => {
-          if (vac.source_type !== 'sample' || vac.required_skills.length === 0) return vac;
-          const acquiredNames = new Set(nextSkills.filter((s) => s.is_acquired).map((s) => s.name.toLowerCase()));
-          const missing = vac.required_skills.filter((req) => !acquiredNames.has(req.toLowerCase()));
-          return {
-            ...vac,
-            missing_skills: missing,
-            match_pct: Math.round(((vac.required_skills.length - missing.length) / vac.required_skills.length) * 100),
-          };
-        })
-      );
+      // Keep benchmark and live job vacancy match percentages synced live when skills change
+      setVacancies((prev) => recomputeVacancyMatches(prev, nextSkills));
+      setLiveVacancies((prev) => recomputeVacancyMatches(prev, nextSkills));
     } catch (skillError) {
       setError(skillError instanceof Error ? skillError.message : 'Could not update your saved skill.');
     } finally {
@@ -759,56 +809,89 @@ export const SkillGapView: React.FC<Props> = ({
               </button>
             </div>
           </div>
-          <form onSubmit={(event) => void searchRemoteListings(event)} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
-            <label style={{ minWidth: '140px' }}>
+          <form
+            onSubmit={(event) => void searchRemoteListings(event)}
+            noValidate
+            className={`job-search-form${liveSearchMode !== 'remote' ? ' has-location' : ''}`}
+          >
+            <label className="job-search-field job-search-type-field">
               <span className="sr-only">Search type</span>
               <select
                 aria-label="Search type"
                 value={liveSearchMode}
-                onChange={(event) => {
-                  liveSearchRequest.current += 1;
-                  setLiveSearchMode(event.target.value as LiveSearchMode);
-                  setLiveVacancies([]);
-                  setLiveFetchedAt('');
-                  setLiveError('');
-                  setLiveLoading(false);
+                onChange={(event) => handleSearchModeChange(event.target.value as LiveSearchMode)}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  minHeight: '40px',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '8px',
+                  background: 'var(--md-surface)',
+                  color: 'var(--md-text-primary)',
+                  padding: '0 10px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
                 }}
-                style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px', border: '1px solid var(--md-outline)', borderRadius: '8px', background: 'var(--md-surface)', color: 'var(--md-text-primary)', padding: '0 10px', fontSize: '12.5px' }}
               >
                 <option value="remote">Remote</option>
                 <option value="regional">Regional</option>
                 <option value="hybrid">Hybrid</option>
               </select>
             </label>
-            <label style={{ position: 'relative', flex: 1 }}>
-              <Search size={15} aria-hidden="true" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--md-text-muted)' }} />
+            <label className="job-search-field job-search-role-field" style={{ position: 'relative' }}>
+              <Search size={15} aria-hidden="true" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--md-text-muted)', pointerEvents: 'none' }} />
               <input
                 aria-label="Search live jobs by role"
                 value={liveQuery}
-                onChange={(event) => setLiveQuery(event.target.value)}
+                onChange={(event) => {
+                  setLiveQuery(event.target.value);
+                  if (liveError) setLiveError('');
+                }}
                 maxLength={120}
                 placeholder="Search role..."
-                style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px', border: '1px solid var(--md-outline)', borderRadius: '8px', background: 'var(--md-surface)', color: 'var(--md-text-primary)', padding: '0 12px 0 34px', fontSize: '13px' }}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  minHeight: '40px',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '8px',
+                  background: 'var(--md-surface)',
+                  color: 'var(--md-text-primary)',
+                  padding: '0 12px 0 34px',
+                  fontSize: '13px',
+                }}
               />
             </label>
             {liveSearchMode !== 'remote' && (
-              <label style={{ minWidth: '160px', flex: '1 1 160px' }}>
+              <label className="job-search-field job-search-location-field">
                 <span className="sr-only">City, region, or country</span>
                 <input
                   aria-label="City, region, or country"
                   value={liveLocation}
-                  onChange={(event) => setLiveLocation(event.target.value)}
+                  onChange={(event) => {
+                    setLiveLocation(event.target.value);
+                    if (liveError) setLiveError('');
+                  }}
                   maxLength={100}
-                  required
-                  placeholder="City or country"
-                  style={{ width: '100%', boxSizing: 'border-box', minHeight: '40px', border: '1px solid var(--md-outline)', borderRadius: '8px', background: 'var(--md-surface)', color: 'var(--md-text-primary)', padding: '0 12px', fontSize: '13px' }}
+                  placeholder="City, region, or country"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    minHeight: '40px',
+                    border: '1px solid var(--md-outline)',
+                    borderRadius: '8px',
+                    background: 'var(--md-surface)',
+                    color: 'var(--md-text-primary)',
+                    padding: '0 12px',
+                    fontSize: '13px',
+                  }}
                 />
               </label>
             )}
             <button
               type="submit"
-              disabled={liveLoading || liveQuery.trim().length < 2 || (liveSearchMode !== 'remote' && liveLocation.trim().length < 2)}
-              style={{ minWidth: '92px', minHeight: '40px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', border: 0, borderRadius: '8px', padding: '0 14px', background: 'var(--md-primary)', color: '#ffffff', fontWeight: 700, fontSize: '12.5px', cursor: liveLoading ? 'wait' : 'pointer' }}
+              disabled={liveLoading}
+              className="job-search-submit-btn"
             >
               {liveLoading ? <LoaderCircle size={14} className="spin-animation" aria-hidden="true" /> : <Search size={14} aria-hidden="true" />}
               {liveLoading ? 'Searching' : 'Search'}
@@ -817,7 +900,9 @@ export const SkillGapView: React.FC<Props> = ({
           <p style={{ fontSize: '11px', color: 'var(--md-text-muted)', margin: '0 0 14px' }}>
             {liveSearchMode === 'remote'
               ? <>Live listings via <a href="https://remoteok.com" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Remote OK</a>.</>
-              : <>Regional listings via <a href="https://jooble.org/api/about" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Jooble</a>.</>}
+              : liveLocation.trim().length < 2 && liveVacancies.length === 0 && !liveLoading && !liveError
+                ? <>Enter a city, region, or country and select <strong>Search</strong> for regional listings via <a href="https://jooble.org/api/about" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Jooble</a>.</>
+                : <>Regional listings via <a href="https://jooble.org/api/about" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Jooble</a>.</>}
             {liveFetchedAt && <span> Updated {new Date(liveFetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</span>}
           </p>
 

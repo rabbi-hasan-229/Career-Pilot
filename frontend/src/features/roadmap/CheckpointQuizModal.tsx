@@ -30,6 +30,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
   const [correctOptionId, setCorrectOptionId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState('');
   const [currentStreak, setCurrentStreak] = useState<number | undefined>();
+  const [persistedByServer, setPersistedByServer] = useState(false);
 
   if (!quiz) {
     return (
@@ -110,7 +111,9 @@ export const CheckpointQuizModal: React.FC<Props> = ({
     let resultFeedback = quiz.explanation;
     let streak: number | undefined;
 
-    if (isDemo) {
+    let serverPersisted = false;
+
+    if (isDemo || quiz.id.startsWith('demo_quiz_') || quiz.id.startsWith('local_quiz_')) {
       correct = Boolean(chosen?.is_correct);
       correctId = quiz.options.find((option) => option.is_correct)?.id ?? null;
     } else {
@@ -119,25 +122,38 @@ export const CheckpointQuizModal: React.FC<Props> = ({
         p_selected_option: selectedOptionId,
       });
       if (error) {
-        setSubmitError(error.message || 'Could not verify your answer. Please try again.');
-        setIsSubmitting(false);
-        return;
+        const isMissingRpc =
+          error.code === 'PGRST202' ||
+          error.code === '42883' ||
+          /could not find the function|does not exist/i.test(error.message || '');
+        const hasLocalCorrectFlag = quiz.options.some((option) => typeof option.is_correct === 'boolean');
+        if (isMissingRpc && hasLocalCorrectFlag) {
+          correct = Boolean(chosen?.is_correct);
+          correctId = quiz.options.find((option) => option.is_correct)?.id ?? null;
+        } else {
+          setSubmitError(error.message || 'Could not verify your answer. Please try again.');
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        const result = data as {
+          is_correct: boolean;
+          correct_option_id: string;
+          explanation: string;
+          current_streak: number;
+        };
+        correct = result.is_correct;
+        correctId = result.correct_option_id;
+        resultFeedback = result.explanation || quiz.explanation;
+        streak = result.current_streak;
+        serverPersisted = true;
       }
-      const result = data as {
-        is_correct: boolean;
-        correct_option_id: string;
-        explanation: string;
-        current_streak: number;
-      };
-      correct = result.is_correct;
-      correctId = result.correct_option_id;
-      resultFeedback = result.explanation || quiz.explanation;
-      streak = result.current_streak;
     }
 
     setCorrectOptionId(correctId);
     setFeedback(resultFeedback);
     setCurrentStreak(streak);
+    setPersistedByServer(serverPersisted);
     setIsCorrect(correct);
     setIsSubmitted(true);
     setIsSubmitting(false);
@@ -155,7 +171,7 @@ export const CheckpointQuizModal: React.FC<Props> = ({
   };
 
   const handleFinish = () => {
-    if (isCorrect) onPassTask(task.id, { persisted: !isDemo, currentStreak });
+    if (isCorrect) onPassTask(task.id, { persisted: persistedByServer, currentStreak });
     onClose();
   };
 

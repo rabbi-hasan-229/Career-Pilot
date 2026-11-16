@@ -326,6 +326,7 @@ export const Road3DGameView: React.FC<Props> = ({
   onUpdateReminderFrequency,
 }) => {
   const [announcement, setAnnouncement] = useState('');
+  const [expandedMilestones, setExpandedMilestones] = useState<Record<string, boolean>>({});
 
   const showAnnouncement = useCallback((msg: string) => {
     setAnnouncement(msg);
@@ -359,8 +360,9 @@ export const Road3DGameView: React.FC<Props> = ({
 
   const handleTaskClick = useCallback((task: Task, e: React.MouseEvent) => {
     const wasDone = task.done_at != null;
+    const requiresQuiz = task.type === 'Checkpoint' || Boolean(task.quiz);
     onToggleTaskComplete(task.id);
-    if (!wasDone) {
+    if (!wasDone && !requiresQuiz) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       confetti({
         particleCount: 38,
@@ -827,32 +829,57 @@ export const Road3DGameView: React.FC<Props> = ({
                   )}
 
                   {/* Interactive Checklist tasks */}
-                  {milestoneTasks.length > 0 && (
-                    <ul className="rp-task-list">
-                      {milestoneTasks.slice(0, 4).map((task) => {
-                        const done = task.done_at != null;
-                        return (
-                          <li key={task.id}>
+                  {milestoneTasks.length > 0 && (() => {
+                    const isExpanded = Boolean(expandedMilestones[milestone.id]);
+                    const visibleTasks = isExpanded ? milestoneTasks : milestoneTasks.slice(0, 4);
+                    return (
+                      <ul className="rp-task-list">
+                        {visibleTasks.map((task) => {
+                          const done = task.done_at != null;
+                          return (
+                            <li key={task.id}>
+                              <button
+                                type="button"
+                                className={`rp-task-item${done ? ' done' : ''}`}
+                                onClick={(e) => handleTaskClick(task, e)}
+                                aria-pressed={done}
+                                aria-label={done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
+                              >
+                                <span className={`rp-checkbox${done ? ' checked' : ''}`} aria-hidden="true">
+                                  {done ? '✓' : ''}
+                                </span>
+                                <span className="rp-task-title">{task.title}</span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                        {milestoneTasks.length > 4 && (
+                          <li className="rp-task-more">
                             <button
-                            type="button"
-                            className={`rp-task-item${done ? ' done' : ''}`}
-                            onClick={(e) => handleTaskClick(task, e)}
-                            aria-pressed={done}
-                            aria-label={done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
-                          >
-                            <span className={`rp-checkbox${done ? ' checked' : ''}`} aria-hidden="true">
-                              {done ? '✓' : ''}
-                            </span>
-                            <span className="rp-task-title">{task.title}</span>
+                              type="button"
+                              onClick={() =>
+                                setExpandedMilestones((prev) => ({
+                                  ...prev,
+                                  [milestone.id]: !prev[milestone.id],
+                                }))
+                              }
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 0,
+                                color: 'inherit',
+                                font: 'inherit',
+                                cursor: 'pointer',
+                                textDecoration: 'underline',
+                              }}
+                            >
+                              {isExpanded ? 'Show fewer tasks' : `+${milestoneTasks.length - 4} more tasks`}
                             </button>
                           </li>
-                        );
-                      })}
-                      {milestoneTasks.length > 4 && (
-                        <li className="rp-task-more">+{milestoneTasks.length - 4} more tasks</li>
-                      )}
-                    </ul>
-                  )}
+                        )}
+                      </ul>
+                    );
+                  })()}
 
                   {/* Skills tags */}
                   {milestone.skills_covered && milestone.skills_covered.length > 0 && (

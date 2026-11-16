@@ -42,7 +42,10 @@ type DatabaseQuiz = {
 
 interface RoadmapMetaCache {
   milestones: Record<number, { effort_hours?: number; skills_covered?: string[] }>;
-  tasks: Record<string, { subject?: string; type?: Task['type']; deliverable?: string; quiz?: TaskQuiz }>;
+  tasks: Record<
+    string,
+    { subject?: string; type?: Task['type']; deliverable?: string; quiz_template_id?: string; quiz?: TaskQuiz }
+  >;
 }
 
 const ROADMAP_META_PREFIX = 'career_pilot_roadmap_meta_';
@@ -106,6 +109,7 @@ function saveRoadmapMetaCache(userId: string, milestones: Milestone[], tasks: Ta
         subject: t.subject,
         type: t.type,
         deliverable: t.deliverable,
+        quiz_template_id: t.quiz_template_id,
         quiz: t.quiz,
       };
       cache.tasks[`${pos}::${t.title}`] = meta;
@@ -136,6 +140,13 @@ function toMilestone(row: DatabaseMilestone, metaCache: RoadmapMetaCache): Miles
   };
 }
 
+function inferTaskTypeFromTitle(title: string): Task['type'] {
+  if (/checkpoint/i.test(title)) return 'Checkpoint';
+  if (/^build\b/i.test(title)) return 'Build';
+  if (/^practice\b/i.test(title)) return 'Practice';
+  return 'Learn';
+}
+
 function toTask(
   row: DatabaseTask,
   milestonePosition: number,
@@ -149,12 +160,13 @@ function toTask(
     user_id: row.user_id,
     title: row.title,
     subject: row.subject || cached?.subject || 'Career skills',
-    type: row.task_type || cached?.type || 'Learn',
+    type: row.task_type || cached?.type || inferTaskTypeFromTitle(row.title),
     due_date: row.due_date,
     est_minutes: row.est_minutes ?? 30,
     progress_pct: row.progress_pct ?? (row.done_at ? 100 : 0),
     done_at: row.done_at,
     deliverable: row.deliverable || cached?.deliverable || undefined,
+    quiz_template_id: cached?.quiz_template_id,
     resource: row.resources || undefined,
     quiz: quiz || cached?.quiz,
   };

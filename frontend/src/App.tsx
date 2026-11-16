@@ -621,12 +621,23 @@ export function App() {
       showToast('Completed tasks stay recorded in your progress history.');
       return;
     }
-    if (task.type === 'Checkpoint' && !task.quiz && !profile.is_demo) {
-      showToast('This checkpoint assessment is unavailable. Refresh your roadmap and try again.');
-      return;
-    }
     if (task.quiz && !task.done_at) {
       setActiveQuizTask(task);
+      return;
+    }
+    if (task.type === 'Checkpoint' || /checkpoint/i.test(task.title)) {
+      const milestoneIndex = Math.max(0, milestones.findIndex((milestone) => milestone.id === task.milestone_id));
+      const { createFallbackCheckpointQuiz } = await import('./features/roadmap/demoCheckpointQuizzes');
+      const fallbackQuiz = createFallbackCheckpointQuiz(
+        task.id,
+        task.title,
+        profile.target_role,
+        milestoneIndex,
+        milestones.length,
+        profile.target_role_category,
+        task.quiz_template_id
+      );
+      setActiveQuizTask({ ...task, quiz: fallbackQuiz });
       return;
     }
     const doneAt = new Date().toISOString();
@@ -674,27 +685,42 @@ export function App() {
   const handleSendCoachMessage = async (text: string) => {
     if (!profile || profile.is_demo || isCoachSending) return;
     setIsCoachSending(true);
-    let userMessageData;
+    let userMessage: AICoachMessage = {
+      id: `local-user-${crypto.randomUUID()}`,
+      sender: 'user',
+      text,
+      timestamp: new Date().toISOString(),
+      proposal: undefined,
+    };
+    let canPersistCoachHistory = true;
     try {
       const savedUserMessage = await supabase
         .from('ai_coach_messages')
         .insert({ user_id: profile.id, sender: 'user', message: text })
         .select('id,sender,message,proposal,created_at')
         .single();
-      if (savedUserMessage.error) throw savedUserMessage.error;
-      userMessageData = savedUserMessage.data;
+      if (savedUserMessage.error) {
+        const errCode = savedUserMessage.error.code || '';
+        const errMsg = savedUserMessage.error.message || '';
+        if (errCode === 'PGRST205' || errCode === '42P01' || /does not exist|schema cache|could not find the table/i.test(errMsg)) {
+          canPersistCoachHistory = false;
+        } else {
+          throw savedUserMessage.error;
+        }
+      } else if (savedUserMessage.data) {
+        userMessage = {
+          id: savedUserMessage.data.id,
+          sender: savedUserMessage.data.sender,
+          text: savedUserMessage.data.message,
+          timestamp: savedUserMessage.data.created_at,
+          proposal: undefined,
+        };
+      }
     } catch {
       setIsCoachSending(false);
       showToast('Could not save your message. Please try again.');
       return;
     }
-    const userMessage: AICoachMessage = {
-      id: userMessageData.id,
-      sender: 'user',
-      text: userMessageData.message,
-      timestamp: userMessageData.created_at,
-      proposal: undefined,
-    };
     setCoachMessages((previous) => [...previous, userMessage]);
 
     try {
@@ -727,27 +753,36 @@ export function App() {
         timestamp: new Date().toISOString(),
         proposal: result.response.proposal ?? undefined,
       }]);
-      const { data: savedAIMessage, error: saveAIError } = await supabase
-        .from('ai_coach_messages')
-        .insert({ user_id: profile.id, sender: 'ai', message: aiText, proposal: result.response.proposal ?? null })
-        .select('id,sender,message,proposal,created_at')
-        .single();
-      if (saveAIError) {
-        showToast('Coach reply generated, but it could not be saved to your history.');
-        return;
+      if (canPersistCoachHistory) {
+        const { data: savedAIMessage, error: saveAIError } = await supabase
+          .from('ai_coach_messages')
+          .insert({ user_id: profile.id, sender: 'ai', message: aiText, proposal: result.response.proposal ?? null })
+          .select('id,sender,message,proposal,created_at')
+          .single();
+        if (saveAIError) {
+          showToast('Coach reply generated, but it could not be saved to your history.');
+          return;
+        }
+        setCoachMessages((previous) => previous.map((message) => message.id === localReplyId ? {
+          id: savedAIMessage.id,
+          sender: 'ai',
+          text: savedAIMessage.message,
+          timestamp: savedAIMessage.created_at,
+          proposal: savedAIMessage.proposal ?? undefined,
+        } : message));
       }
-      setCoachMessages((previous) => previous.map((message) => message.id === localReplyId ? {
-        id: savedAIMessage.id,
-        sender: 'ai',
-        text: savedAIMessage.message,
-        timestamp: savedAIMessage.created_at,
-        proposal: savedAIMessage.proposal ?? undefined,
-      } : message));
     } catch (error) {
-      showToast(`Message saved, but the coach could not respond: ${error instanceof Error ? error.message : 'AI service unavailable.'}`);
+      const detail = error instanceof Error ? error.message : 'AI service unavailable.';
+      setCoachMessages((previous) => [...previous, {
+        id: `local-err-${crypto.randomUUID()}`,
+        sender: 'ai',
+        text: `AI Coach could not reach the AI gateway (${detail}). Make sure your Supabase database migrations and ai-gateway Edge Function with an AI provider key are configured.`,
+        timestamp: new Date().toISOString(),
+      }]);
+      showToast(`Coach unavailable: ${detail}`);
     } finally {
       setIsCoachSending(false);
-      await refreshAIQuota(profile);
+      void refreshAIQuota(profile);
     }
   };
 
