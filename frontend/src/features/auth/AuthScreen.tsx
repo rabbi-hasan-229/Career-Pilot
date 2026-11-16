@@ -55,15 +55,6 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
   const [resetEmailSent, setResetEmailSent] = useState(false);
 
   useEffect(() => {
-    if (verificationStep === 'otp') {
-      const timer = setTimeout(() => {
-        otpInputRefs.current[0]?.focus();
-      }, 150);
-      return () => clearTimeout(timer);
-    }
-  }, [verificationStep]);
-
-  useEffect(() => {
     if (resendCountdown <= 0) return;
     const timer = setInterval(() => {
       setResendCountdown((prev) => Math.max(0, prev - 1));
@@ -148,7 +139,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
           setResendCountdown(60);
           setOtpDigits(['', '', '', '', '', '']);
           setVerificationStep('otp');
-          onToast(`6-digit verification code sent to ${email.trim()}.`);
+          onToast(`Confirmation link sent to ${email.trim()}. Check your inbox to activate your account.`);
           return;
         }
 
@@ -248,19 +239,90 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
         return;
       }
 
-      if (verificationSource === 'signup') {
-        celebrateSignup();
-        onToast(`Email verified. Welcome, ${verifyRes.profile.full_name}.`);
-      } else {
-        onToast(`Email verified. Welcome back, ${verifyRes.profile.full_name}.`);
-      }
-      onAuthenticated(verifyRes.profile);
+      completeVerifiedLogin(verifyRes.profile);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Verification failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  const completeVerifiedLogin = (profile: NonNullable<Awaited<ReturnType<typeof authService.verifySignUpOtp>>['profile']>) => {
+    if (verificationSource === 'signup') {
+      celebrateSignup();
+      onToast(`Email verified. Welcome, ${profile.full_name}.`);
+    } else {
+      onToast(`Email verified. Welcome back, ${profile.full_name}.`);
+    }
+    onAuthenticated(profile);
+  };
+
+  const handleCheckEmailConfirmed = async (silent = false) => {
+    if (!isSupabaseConfigured()) {
+      if (!silent) {
+        setError('Connect this app to a Supabase project before verifying your email.');
+      }
+      return;
+    }
+    if (isLoading) return;
+
+    if (!silent) {
+      setError(null);
+      setIsLoading(true);
+    }
+    try {
+      const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
+      const res = await authService.checkEmailVerificationStatus({
+        email: email.trim(),
+        password,
+        fullName: fullName || undefined,
+        rememberMe,
+        legalConsentAccepted: verificationSource === 'signup' ? agreeTerms : true,
+        recordConsent: verificationSource === 'signup',
+      });
+
+      if (res.mfaRequired) {
+        onMFARequired();
+        return;
+      }
+
+      if (!res.success || !res.profile) {
+        if (!silent) {
+          setError(
+            res.error ||
+              'Email not confirmed yet. Click the confirmation link in your inbox, then try again.'
+          );
+        }
+        return;
+      }
+
+      completeVerifiedLogin(res.profile);
+    } catch (err) {
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'Verification check failed. Please try again.');
+      }
+    } finally {
+      if (!silent) {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (verificationStep !== 'otp') return;
+
+    const checkOnReturn = () => {
+      if (document.visibilityState === 'hidden') return;
+      void handleCheckEmailConfirmed(true);
+    };
+
+    window.addEventListener('focus', checkOnReturn);
+    document.addEventListener('visibilitychange', checkOnReturn);
+    return () => {
+      window.removeEventListener('focus', checkOnReturn);
+      document.removeEventListener('visibilitychange', checkOnReturn);
+    };
+  });
 
   const handleOtpDigitChange = (index: number, val: string) => {
     if (val.length > 1) {
@@ -320,8 +382,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
       }
       setResendCountdown(60);
       setOtpDigits(['', '', '', '', '', '']);
-      onToast(`6-digit verification code resent to ${email.trim()}.`);
-      otpInputRefs.current[0]?.focus();
+      onToast(`Confirmation email resent to ${email.trim()}. Check your inbox or spam folder.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error resending verification email.');
     } finally {
@@ -599,7 +660,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
               }}
             >
               {verificationStep === 'otp'
-                ? `Enter the 6-digit verification code sent to ${email.trim()}.`
+                ? `We sent a confirmation link to ${email.trim()}. Open your inbox and click the link to activate your account.`
                 : mode === 'signup'
                   ? 'Start your personalized career roadmap.'
                   : 'Sign in to continue your roadmap.'}
@@ -665,6 +726,97 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
 
             {verificationStep === 'otp' ? (
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div
+                  style={{
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: '11px',
+                    padding: '12px 14px',
+                    fontSize: '12.5px',
+                    color: '#334155',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Open the email from Career Pilot and click the confirmation link (check spam if you don&apos;t see it). Once confirmed, continue below.
+                </div>
+
+                <button
+                  type="button"
+                  className="auth-primary-btn"
+                  onClick={() => void handleCheckEmailConfirmed(false)}
+                  disabled={isLoading}
+                  style={{
+                    width: '100%',
+                    padding: '13px 20px',
+                    fontSize: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                  }}
+                >
+                  {isLoading ? (
+                    <>
+                      <RefreshCw size={16} className="spin-animation" />
+                      <span>Checking...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={16} />
+                      <span>I&apos;ve confirmed the link — Continue</span>
+                    </>
+                  )}
+                </button>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '12px',
+                    color: '#64748B',
+                  }}
+                >
+                  <span>Didn&apos;t receive the email?</span>
+                  {resendCountdown > 0 ? (
+                    <span style={{ fontWeight: 600, color: '#94A3B8' }}>
+                      Resend in {resendCountdown}s
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="auth-link-btn"
+                      onClick={() => void handleResendVerification()}
+                      disabled={isLoading}
+                      style={{
+                        cursor: isLoading ? 'wait' : 'pointer',
+                        fontSize: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <RefreshCw size={12} className={isLoading ? 'spin-animation' : ''} />
+                      Resend link
+                    </button>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    marginTop: '4px',
+                  }}
+                >
+                  <div style={{ flex: 1, height: '1px', background: '#E2E8F0' }} />
+                  <span style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 500 }}>
+                    Or enter 6-digit code if shown
+                  </span>
+                  <div style={{ flex: 1, height: '1px', background: '#E2E8F0' }} />
+                </div>
+
                 <div className="auth-otp-grid">
                   {otpDigits.map((digit, idx) => (
                     <input
@@ -699,67 +851,30 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onMFARequired, on
                   ))}
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    fontSize: '12px',
-                    color: '#64748B',
-                  }}
-                >
-                  <span>Didn&apos;t receive the code?</span>
-                  {resendCountdown > 0 ? (
-                    <span style={{ fontWeight: 600, color: '#94A3B8' }}>
-                      Resend in {resendCountdown}s
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="auth-link-btn"
-                      onClick={() => void handleResendVerification()}
-                      disabled={isLoading}
-                      style={{
-                        cursor: isLoading ? 'wait' : 'pointer',
-                        fontSize: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                    >
-                      <RefreshCw size={12} className={isLoading ? 'spin-animation' : ''} />
-                      Resend code
-                    </button>
-                  )}
-                </div>
-
-                <button
-                  type="submit"
-                  className="auth-primary-btn"
-                  disabled={isLoading || otpDigits.join('').length < 6}
-                  style={{
-                    width: '100%',
-                    marginTop: '4px',
-                    padding: '13px 20px',
-                    fontSize: '14px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '8px',
-                  }}
-                >
-                  {isLoading ? (
-                    <>
-                      <RefreshCw size={16} className="spin-animation" />
-                      <span>Verifying...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={16} />
-                      <span>Verify &amp; Continue</span>
-                    </>
-                  )}
-                </button>
+                {otpDigits.join('').length > 0 && (
+                  <button
+                    type="submit"
+                    disabled={isLoading || otpDigits.join('').length < 6}
+                    style={{
+                      width: '100%',
+                      padding: '11px 18px',
+                      borderRadius: '11px',
+                      border: '1px solid #CBD5E1',
+                      background: otpDigits.join('').length === 6 ? '#F1F5F9' : '#F8FAFC',
+                      color: otpDigits.join('').length === 6 ? '#0F172A' : '#94A3B8',
+                      fontSize: '13.5px',
+                      fontWeight: 600,
+                      cursor: isLoading || otpDigits.join('').length < 6 ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                    }}
+                  >
+                    <CheckCircle2 size={15} />
+                    <span>Verify 6-digit code</span>
+                  </button>
+                )}
               </form>
             ) : (
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>

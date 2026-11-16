@@ -14,6 +14,13 @@ const LEGAL_FALLBACK_PREFIX = 'career_pilot_legal_accepted_';
 const LEGAL_VERSION_TOKEN = `${TERMS_VERSION}:${PRIVACY_NOTICE_VERSION}`;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function getAuthEmailRedirectUrl(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const origin = window.location?.origin?.trim();
+  if (!origin || !/^https?:\/\//i.test(origin)) return undefined;
+  return origin;
+}
+
 function readProfileExtensionCache(userId: string): Partial<Profile> {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return {};
@@ -210,10 +217,12 @@ export const authService = {
     setRememberMePreference(rememberMe);
     localStorage.removeItem(SESSION_STORAGE_KEY);
 
+    const emailRedirectTo = getAuthEmailRedirectUrl();
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
       password,
       options: {
+        ...(emailRedirectTo ? { emailRedirectTo } : {}),
         data: {
           full_name: cleanName,
           ...(phone?.trim() ? { phone: phone.trim() } : {}),
@@ -309,15 +318,85 @@ export const authService = {
       return { success: false, error: 'Please enter a valid email address.' };
     }
 
+    const emailRedirectTo = getAuthEmailRedirectUrl();
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email: normalizedEmail,
+      ...(emailRedirectTo ? { options: { emailRedirectTo } } : {}),
     });
 
     if (error) {
       return { success: false, error: mapAuthErrorMessage(error.message) };
     }
     return { success: true };
+  },
+
+  /**
+   * Check whether a pending signup/login has been confirmed via email link.
+   */
+  async checkEmailVerificationStatus(params?: {
+    email?: string;
+    password?: string;
+    fullName?: string;
+    phone?: string;
+    rememberMe?: boolean;
+    legalConsentAccepted?: boolean;
+    recordConsent?: boolean;
+  }): Promise<AuthResult> {
+    if (params?.legalConsentAccepted === false) {
+      return {
+        success: false,
+        error: 'You must accept the Privacy Policy and Terms of Service to create an account.',
+      };
+    }
+
+    if (typeof params?.rememberMe === 'boolean') {
+      setRememberMePreference(params.rememberMe);
+    }
+
+    const { data: userData } = await supabase.auth.getUser();
+    if (userData.user) {
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.nextLevel === 'aal2' && aalData.currentLevel !== 'aal2') {
+        return { success: true, mfaRequired: true };
+      }
+
+      if (params?.recordConsent === false) {
+        const profile = await this.loadProfile(userData.user);
+        if (!profile) {
+          return { success: false, error: 'Email verified, but your profile could not be loaded. Please sign in.' };
+        }
+        return { success: true, needsEmailVerification: false, profile };
+      }
+
+      return this.finalizeNewAccount(userData.user, {
+        fullName: params?.fullName,
+        phone: params?.phone,
+      });
+    }
+
+    if (params?.email && params.password) {
+      const signInRes = await this.signIn({
+        email: params.email,
+        password: params.password,
+        rememberMe: params.rememberMe,
+      });
+
+      if (signInRes.success && signInRes.profile && params.recordConsent !== false) {
+        try {
+          await this.acceptCurrentLegalPolicies(signInRes.profile.id);
+        } catch (legalError) {
+          console.warn('Could not record policy acceptance after link verification:', legalError);
+        }
+      }
+      return signInRes;
+    }
+
+    return {
+      success: false,
+      needsEmailVerification: true,
+      error: 'Email not confirmed yet. Click the confirmation link in your inbox, then try again.',
+    };
   },
 
   /**

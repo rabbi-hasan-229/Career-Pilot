@@ -382,7 +382,42 @@ describe('authService.signUp', () => {
       })
     );
     const signUpCall = mockSignUp.mock.calls[0]?.[0] as { options?: Record<string, unknown> };
-    expect(signUpCall.options).not.toHaveProperty('emailRedirectTo');
+    expect(signUpCall.options?.emailRedirectTo).toBe('http://localhost:5173');
+  });
+
+  it('uses deployed origin such as https://project-career-pilot.vercel.app for emailRedirectTo', async () => {
+    const previousLocation = window.location;
+    Object.defineProperty(window, 'location', {
+      value: { origin: 'https://project-career-pilot.vercel.app' },
+      configurable: true,
+      writable: true,
+    });
+    mockSignUp.mockResolvedValue({
+      data: {
+        user: { id: 'user-vercel', email: 'vercel@example.com', identities: [{ id: 'id-vercel' }] },
+        session: null,
+      },
+      error: null,
+    });
+
+    try {
+      const result = await authService.signUp({
+        email: 'vercel@example.com',
+        password: 'Password123!',
+        fullName: 'Vercel User',
+        legalConsentAccepted: true,
+      });
+
+      expect(result).toEqual({ success: true, needsEmailVerification: true });
+      const signUpCall = mockSignUp.mock.calls[0]?.[0] as { options?: Record<string, unknown> };
+      expect(signUpCall.options?.emailRedirectTo).toBe('https://project-career-pilot.vercel.app');
+    } finally {
+      Object.defineProperty(window, 'location', {
+        value: previousLocation,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 
   it('records consent and syncs profile without forcing a fake target_role when session is immediate', async () => {
@@ -516,7 +551,7 @@ describe('authService.verifySignUpOtp & resendVerificationEmail', () => {
     expect(result.success).toBe(true);
   });
 
-  it('calls supabase.auth.resend with type signup and no emailRedirectTo', async () => {
+  it('calls supabase.auth.resend with type signup and emailRedirectTo', async () => {
     mockResend.mockResolvedValue({ data: {}, error: null });
 
     const result = await authService.resendVerificationEmail('pending@example.com');
@@ -524,8 +559,60 @@ describe('authService.verifySignUpOtp & resendVerificationEmail', () => {
     expect(mockResend).toHaveBeenCalledWith({
       type: 'signup',
       email: 'pending@example.com',
+      options: { emailRedirectTo: 'http://localhost:5173' },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('authService.checkEmailVerificationStatus', () => {
+  it('finalizes account when confirmed user session already exists in storage', async () => {
+    const result = await authService.checkEmailVerificationStatus({
+      email: 'user@example.com',
+      fullName: 'Ada Lovelace',
+      rememberMe: true,
+      legalConsentAccepted: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.profile?.email).toBe('user@example.com');
+  });
+
+  it('falls back to password sign-in when confirmed on another device and reports unconfirmed cleanly', async () => {
+    mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+    mockSignInWithPassword.mockResolvedValueOnce({
+      data: { user: null, session: null },
+      error: { message: 'Email not confirmed' },
+    });
+
+    const pendingResult = await authService.checkEmailVerificationStatus({
+      email: 'pending@example.com',
+      password: 'Password123!',
+      rememberMe: true,
+      legalConsentAccepted: true,
+    });
+
+    expect(pendingResult.success).toBe(false);
+    expect(pendingResult.needsEmailVerification).toBe(true);
+
+    mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: null });
+    mockSignInWithPassword.mockResolvedValueOnce({
+      data: {
+        user: { id: 'user-1', email: 'user@example.com', user_metadata: { full_name: 'Ada Lovelace' } },
+        session: { access_token: 'tok' },
+      },
+      error: null,
+    });
+
+    const confirmedResult = await authService.checkEmailVerificationStatus({
+      email: 'user@example.com',
+      password: 'Password123!',
+      rememberMe: true,
+      legalConsentAccepted: true,
+    });
+
+    expect(confirmedResult.success).toBe(true);
+    expect(confirmedResult.profile?.email).toBe('user@example.com');
   });
 });
 
