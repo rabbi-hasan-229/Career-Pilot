@@ -12,31 +12,15 @@ import {
   Pause,
   Send,
   Sparkles,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import type { AICoachMessage } from '../../types';
-
-interface SpeechResultLike { 0?: { transcript?: string }; }
-interface SpeechEventLike extends Event { results: ArrayLike<SpeechResultLike>; }
-interface SpeechRecognitionLike {
-  lang: string;
-  interimResults: boolean;
-  maxAlternatives: number;
-  onresult: ((event: SpeechEventLike) => void) | null;
-  onerror: ((event: Event & { error?: string }) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-}
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | undefined {
-  if (typeof window === 'undefined') return undefined;
-  const speechWindow = window as Window & {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  };
-  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
-}
+import {
+  createHybridSpeechController,
+  isVoiceCaptureSupported,
+  type HybridSpeechController,
+} from '../interview/speechCapture';
 
 interface Props {
   messages: AICoachMessage[];
@@ -72,63 +56,91 @@ export const AICoachView: React.FC<Props> = ({
 }) => {
   const [inputText, setInputText] = useState('');
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [voiceMessage, setVoiceMessage] = useState('');
+  const [speakReplies, setSpeakReplies] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const speechControllerRef = useRef<HybridSpeechController | null>(null);
+  const lastSpokenMessageIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const speechRecognitionConstructor = getSpeechRecognitionConstructor();
+  const voiceSupported = isVoiceCaptureSupported();
+  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
 
   useEffect(() => () => {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-  }, []);
+    speechControllerRef.current?.abort();
+    speechControllerRef.current = null;
+    if (ttsSupported) {
+      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    }
+  }, [ttsSupported]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [messages.length, isSending]);
+    const latest = messages[messages.length - 1];
+    if (speakReplies && ttsSupported && latest?.sender === 'ai' && latest.id !== lastSpokenMessageIdRef.current) {
+      lastSpokenMessageIdRef.current = latest.id;
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(latest.text.replace(/\n+/g, ' '));
+        utterance.rate = 0.99;
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        // Ignore speech synthesis errors
+      }
+    }
+  }, [messages, isSending, speakReplies, ttsSupported]);
 
-  const toggleVoiceInput = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
+  useEffect(() => {
+    if (!speakReplies && ttsSupported) {
+      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    }
+  }, [speakReplies, ttsSupported]);
+
+  const toggleVoiceInput = async () => {
+    if (isTranscribing) return;
+    if (isListening && speechControllerRef.current) {
+      setIsListening(false);
+      setIsTranscribing(true);
+      setVoiceMessage('Transcribing speech with Gemini…');
+      try {
+        const result = await speechControllerRef.current.stop();
+        speechControllerRef.current = null;
+        const transcript = result.transcript.trim();
+        if (!transcript) {
+          setVoiceMessage('No clear speech detected. Please try again.');
+          return;
+        }
+        setVoiceMessage(result.source === 'gemini' ? 'Voice transcribed via Gemini & sent.' : 'Voice transcribed & sent.');
+        if (!speakReplies && ttsSupported) setSpeakReplies(true);
+        setInputText('');
+        await onSendMessage(transcript);
+      } catch {
+        setVoiceMessage('Could not finish transcription. Type your message instead.');
+      } finally {
+        setIsTranscribing(false);
+      }
       return;
     }
-    if (!speechRecognitionConstructor) return;
 
-    const recognition = new speechRecognitionConstructor();
-    recognition.lang = navigator.language || 'en-US';
-    recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript?.trim() || '')
-        .filter(Boolean)
-        .join(' ');
-      if (transcript) {
-        setInputText((current) => `${current.trim()}${current.trim() ? ' ' : ''}${transcript}`);
-        setVoiceMessage('Voice note added. Review and send.');
-      }
-    };
-    recognition.onerror = (event) => {
-      setVoiceMessage(
-        event.error === 'not-allowed'
-          ? 'Microphone access denied. Type your message instead.'
-          : 'Voice input is unavailable right now.'
-      );
-    };
-    recognition.onend = () => {
-      setIsListening(false);
-      if (recognitionRef.current === recognition) recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    setVoiceMessage('Listening… speak naturally.');
+    const baseDraft = inputText.trim();
+    const controller = createHybridSpeechController({
+      preferGeminiTranscription: true,
+      transcribeHint: 'Career mentor and roadmap schedule coaching question',
+      onStatusText: (msg) => setVoiceMessage(msg),
+      onInterimTranscript: (interim) => {
+        setInputText(baseDraft ? `${baseDraft} ${interim}` : interim);
+      },
+    });
+    speechControllerRef.current = controller;
+    setVoiceMessage('Listening… tap mic again to send.');
     try {
-      recognition.start();
+      await controller.start();
       setIsListening(true);
-    } catch {
-      recognitionRef.current = null;
+    } catch (err) {
+      speechControllerRef.current = null;
       setIsListening(false);
-      setVoiceMessage('Could not start voice input.');
+      setVoiceMessage(err instanceof Error ? err.message : 'Microphone access denied. Type your message instead.');
     }
   };
 
@@ -235,46 +247,73 @@ export const AICoachView: React.FC<Props> = ({
         </div>
 
         {/* Grouped Schedule Actions in Header */}
-        <div
-          role="group"
-          aria-label="Quick schedule adjustments"
-          style={{
-            height: '34px',
-            display: 'inline-flex',
-            alignItems: 'center',
-            background: 'var(--md-surface)',
-            border: '1px solid var(--md-outline-variant)',
-            borderRadius: '9px',
-            overflow: 'hidden',
-          }}
-        >
-          <button
-            type="button"
-            disabled={isSending}
-            onClick={() => handlePlanShift('behind', '+3d Buffer')}
-            className="ac-shift-btn"
-            title="Add 3-day buffer to upcoming deadlines"
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {ttsSupported && (
+            <button
+              type="button"
+              onClick={() => setSpeakReplies((prev) => !prev)}
+              aria-pressed={speakReplies}
+              title={speakReplies ? 'Mute coach voice replies' : 'Read coach replies aloud'}
+              style={{
+                height: '34px',
+                padding: '0 10px',
+                borderRadius: '9px',
+                background: speakReplies ? 'var(--md-primary-container)' : 'var(--md-surface)',
+                border: speakReplies ? '1px solid var(--md-primary)' : '1px solid var(--md-outline-variant)',
+                color: speakReplies ? 'var(--md-primary)' : 'var(--md-text-secondary)',
+                fontSize: '12px',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                cursor: 'pointer',
+              }}
+            >
+              {speakReplies ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              <span>{speakReplies ? 'Voice On' : 'Voice'}</span>
+            </button>
+          )}
+          <div
+            role="group"
+            aria-label="Quick schedule adjustments"
+            style={{
+              height: '34px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              background: 'var(--md-surface)',
+              border: '1px solid var(--md-outline-variant)',
+              borderRadius: '9px',
+              overflow: 'hidden',
+            }}
           >
-            <Clock size={12} /> +3d
-          </button>
-          <button
-            type="button"
-            disabled={isSending}
-            onClick={() => handlePlanShift('early', 'Move Earlier')}
-            className="ac-shift-btn"
-            title="Advance schedule early"
-          >
-            <FastForward size={12} /> Advance
-          </button>
-          <button
-            type="button"
-            disabled={isSending}
-            onClick={() => handlePlanShift('pause', 'Pause 7d')}
-            className="ac-shift-btn last"
-            title="Pause schedule for 7 days"
-          >
-            <Pause size={12} /> Pause
-          </button>
+            <button
+              type="button"
+              disabled={isSending}
+              onClick={() => handlePlanShift('behind', '+3d Buffer')}
+              className="ac-shift-btn"
+              title="Add 3-day buffer to upcoming deadlines"
+            >
+              <Clock size={12} /> +3d
+            </button>
+            <button
+              type="button"
+              disabled={isSending}
+              onClick={() => handlePlanShift('early', 'Move Earlier')}
+              className="ac-shift-btn"
+              title="Advance schedule early"
+            >
+              <FastForward size={12} /> Advance
+            </button>
+            <button
+              type="button"
+              disabled={isSending}
+              onClick={() => handlePlanShift('pause', 'Pause 7d')}
+              className="ac-shift-btn last"
+              title="Pause schedule for 7 days"
+            >
+              <Pause size={12} /> Pause
+            </button>
+          </div>
         </div>
       </header>
 
@@ -446,25 +485,25 @@ export const AICoachView: React.FC<Props> = ({
                 className="ac-composer-input"
               />
 
-              {speechRecognitionConstructor && (
+              {voiceSupported && (
                 <button
                   type="button"
-                  aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+                  aria-label={isListening ? 'Stop voice input & send' : 'Speak to coach'}
                   aria-pressed={isListening}
-                  title="Voice input"
-                  onClick={toggleVoiceInput}
-                  disabled={isSending}
+                  title={isListening ? 'Tap to transcribe & send' : 'Speak to coach'}
+                  onClick={() => void toggleVoiceInput()}
+                  disabled={isSending || isTranscribing}
                   style={{
                     width: '34px',
                     height: '34px',
                     borderRadius: '9px',
                     background: isListening ? 'var(--md-error-bg)' : 'var(--md-surface-subtle)',
-                    border: '1px solid var(--md-outline-variant)',
+                    border: isListening ? '1px solid var(--md-error)' : '1px solid var(--md-outline-variant)',
                     color: isListening ? 'var(--md-error)' : 'var(--md-text-secondary)',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    cursor: 'pointer',
+                    cursor: isTranscribing ? 'wait' : 'pointer',
                     flexShrink: 0,
                   }}
                 >

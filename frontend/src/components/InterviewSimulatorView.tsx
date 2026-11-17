@@ -12,6 +12,8 @@ import {
   Mic,
   MicOff,
   Pause,
+  Phone,
+  PhoneOff,
   Play,
   RotateCcw,
   Send,
@@ -20,12 +22,28 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { requestAI } from '../features/ai/aiGateway';
+import {
+  requestAI,
+  requestInterviewTurn,
+  requestLiveInterviewToken,
+  type LiveVoiceName,
+} from '../features/ai/aiGateway';
 import {
   getQuestionCoachingHint,
   getRoleTailoredInterviewQuestions,
   type CuratedInterviewQuestion,
 } from '../features/interview/curatedInterviewCatalog';
+import {
+  GeminiLiveSessionClient,
+  type LiveSessionState,
+} from '../features/interview/geminiLiveClient';
+import {
+  createHybridSpeechController,
+  isVoiceCaptureSupported,
+  parseVoiceCommand,
+  type HybridSpeechController,
+  type VoiceCommandType,
+} from '../features/interview/speechCapture';
 import {
   buildInterviewLoopQueue,
   buildOpeningGreetingTurn,
@@ -35,6 +53,7 @@ import {
   extractFirstName,
   extractMentionedTools,
   generateInterviewerTurn,
+  getInterviewerPersona,
   type CandidateMemory,
   type ConversationTurn,
   type DifficultyPreference,
@@ -53,40 +72,6 @@ interface Props {
   experienceLevel?: 'beginner' | 'switcher' | 'junior' | 'mid';
   userName?: string;
   onAIUsageChanged?: () => Promise<void> | void;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-}
-
-interface SpeechRecognitionResult {
-  isFinal: boolean;
-  [index: number]: SpeechRecognitionAlternative;
-}
-
-interface SpeechRecognitionResultList {
-  length: number;
-  [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-}
-
-interface SpeechRecognitionInstance extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: Event) => void) | null;
-  onend: (() => void) | null;
-}
-
-interface SpeechWindow extends Window {
-  SpeechRecognition?: new () => SpeechRecognitionInstance;
-  webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
 }
 
 interface StoredAttemptSummary {
@@ -111,6 +96,14 @@ const FOCUS_OPTIONS: Array<{ value: InterviewFocusMode; label: string }> = [
 ];
 
 const DIFFICULTY_OPTIONS: DifficultyPreference[] = ['Adaptive', 'Junior', 'Mid', 'Senior'];
+
+const LIVE_VOICE_OPTIONS: Array<{ id: LiveVoiceName; label: string }> = [
+  { id: 'Kore', label: 'Kore (Warm Mentor)' },
+  { id: 'Aoede', label: 'Aoede (Expressive)' },
+  { id: 'Puck', label: 'Puck (Conversational)' },
+  { id: 'Charon', label: 'Charon (Executive)' },
+  { id: 'Fenrir', label: 'Fenrir (Direct Lead)' },
+];
 
 function historyStorageKey(userId: string): string {
   return `career_pilot_interview_history_v2_${userId}`;
@@ -188,14 +181,28 @@ export const InterviewSimulatorView: React.FC<Props> = ({
   const [history, setHistory] = useState<StoredAttemptSummary[]>(() => loadLocalHistory(userId));
   const [showHistory, setShowHistory] = useState(false);
 
-  // Voice Input & Read-Aloud (TTS) state
+  // Voice Input, Hybrid Transcription & Read-Aloud (TTS) state
   const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
+  const [autoSendVoice, setAutoSendVoice] = useState(true);
+  const [micLevel, setMicLevel] = useState(0);
+  const [voiceStatusNote, setVoiceStatusNote] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
   const [voiceReadAloud, setVoiceReadAloud] = useState(false);
   const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const speechControllerRef = useRef<HybridSpeechController | null>(null);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const thinkingTimerRef = useRef<number | null>(null);
+
+  // Gemini Live Bidirectional Human Voice Conversation state
+  const [liveState, setLiveState] = useState<LiveSessionState>('idle');
+  const [liveVoice, setLiveVoice] = useState<LiveVoiceName>('Kore');
+  const [liveActiveModel, setLiveActiveModel] = useState('');
+  const [isLiveMuted, setIsLiveMuted] = useState(false);
+  const [isLiveAiSpeaking, setIsLiveAiSpeaking] = useState(false);
+  const [liveUserCaption, setLiveUserCaption] = useState('');
+  const [liveAiCaption, setLiveAiCaption] = useState('');
+  const liveClientRef = useRef<GeminiLiveSessionClient | null>(null);
 
   // Subtle pacing timer (counts up/down gently without intrusive pressure)
   const [paceSeconds, setPaceSeconds] = useState(120);
@@ -213,12 +220,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
 
   const currentQuestion = loopQueue[currentIndex] ?? null;
 
-  const speakText = (text: string) => {
-    if (!voiceReadAloud || !ttsSupported) return;
+  const speakText = (text: string, forceSpeak = false) => {
+    if ((!voiceReadAloud && !forceSpeak) || !ttsSupported || liveState === 'connected') return;
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text.replace(/\n+/g, ' '));
-      utterance.rate = 0.98;
+      utterance.rate = 0.99;
       utterance.pitch = 1.0;
       window.speechSynthesis.speak(utterance);
     } catch {
@@ -237,39 +244,14 @@ export const InterviewSimulatorView: React.FC<Props> = ({
   }, [voiceReadAloud, ttsSupported]);
 
   useEffect(() => {
-    const win = window as unknown as SpeechWindow;
-    const SpeechRecognitionCtor = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (SpeechRecognitionCtor) {
-      setSpeechSupported(true);
-      const recognition = new SpeechRecognitionCtor();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        let finalTranscript = '';
-        for (let i = 0; i < event.results.length; i += 1) {
-          if (event.results[i].isFinal) {
-            finalTranscript += `${event.results[i][0].transcript} `;
-          }
-        }
-        if (finalTranscript.trim()) {
-          setDraftAnswer((prev) => `${prev ? `${prev.trimEnd()} ` : ''}${finalTranscript.trim()}`);
-        }
-      };
-      recognition.onerror = () => setIsRecording(false);
-      recognition.onend = () => setIsRecording(false);
-      recognitionRef.current = recognition;
-    }
+    setSpeechSupported(isVoiceCaptureSupported());
 
     return () => {
       if (thinkingTimerRef.current) window.clearTimeout(thinkingTimerRef.current);
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // Ignore
-        }
-      }
+      speechControllerRef.current?.abort();
+      speechControllerRef.current = null;
+      void liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
       if (ttsSupported) {
         try {
           window.speechSynthesis.cancel();
@@ -414,18 +396,267 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [turns.length, isInterviewerTyping, sessionDebrief]);
 
-  const toggleRecording = () => {
-    if (!recognitionRef.current) return;
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsRecording(true);
-      } catch {
-        setIsRecording(false);
+  const executeVoiceCommand = (command: VoiceCommandType): boolean => {
+    if (command === 'next') {
+      if (stage === 'warmup') {
+        handleSkipWarmup();
+        return true;
       }
+      if (stage === 'questioning' || stage === 'awaiting_continue') {
+        handleAdvanceToNextQuestion();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'hint') {
+      if (stage === 'questioning') {
+        handleAskForHint();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'repeat') {
+      const lastInterviewerTurn = [...turns].reverse().find((t) => t.speaker === 'interviewer');
+      if (lastInterviewerTurn) {
+        if (liveState === 'connected' && liveClientRef.current) {
+          liveClientRef.current.sendTextTurn('Could you please repeat that last question concisely?');
+        } else {
+          speakText(lastInterviewerTurn.text, true);
+          setVoiceStatusNote('Repeating interviewer prompt aloud.');
+        }
+        return true;
+      }
+      return false;
+    }
+    if (command === 'end') {
+      if (stage !== 'debrief') {
+        handleFinishAndDebrief();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'restart') {
+      startNewSession(focusMode, difficultyPref, remoteQuestions);
+      return true;
+    }
+    return false;
+  };
+
+  const handleToggleLiveMute = () => {
+    if (!liveClientRef.current || liveState !== 'connected') return;
+    const nextMuted = !isLiveMuted;
+    liveClientRef.current.setMuted(nextMuted);
+    setIsLiveMuted(nextMuted);
+    setVoiceStatusNote(nextMuted ? 'Live mic muted.' : 'Live mic active — speak naturally.');
+  };
+
+  const handleToggleLiveCall = async () => {
+    if (liveState === 'connected' || liveState === 'connecting') {
+      await liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+      setLiveState('idle');
+      setIsLiveMuted(false);
+      setIsLiveAiSpeaking(false);
+      setLiveUserCaption('');
+      setLiveAiCaption('');
+      setLiveActiveModel('');
+      setVoiceStatusNote('Live voice conversation ended.');
+      return;
+    }
+
+    if (userId.startsWith('demo')) {
+      setVoiceStatusNote('Sign in with your account to start a live Gemini audio call. You can still use Speak Answer & AI loop below.');
+      return;
+    }
+
+    if (isRecording && speechControllerRef.current) {
+      speechControllerRef.current.abort();
+      speechControllerRef.current = null;
+      setIsRecording(false);
+    }
+
+    if (ttsSupported) {
+      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    }
+
+    setVoiceStatusNote('Connecting live human-voice interviewer…');
+    setLiveState('connecting');
+    setIsLiveMuted(false);
+
+    try {
+      const tokenRes = await requestLiveInterviewToken({
+        target_role: targetRole,
+        voice_name: liveVoice,
+      });
+
+      const questionSummary = loopQueue
+        .map((q, idx) => `Q${idx + 1} (${q.round}, ${q.difficulty}): ${q.question}`)
+        .join('\n');
+
+      const systemInstruction = [
+        `You are Maya, a warm, articulate, perceptive human hiring manager conducting a live spoken mock interview for a ${targetRole} candidate.`,
+        firstName ? `The candidate's name is ${firstName}.` : '',
+        experienceLevel ? `Calibrate expectations cleanly to ${experienceLevel} level (${difficultyPref}).` : '',
+        `Focus mode: ${focusMode}. Speak naturally in crisp spoken sentences (typically 2-4 sentences per turn), acknowledge specifics the candidate says, listen patiently, ask insightful follow-up probes, and move cleanly through these topics one at a time:`,
+        questionSummary,
+        'Always respond verbally in a realistic conversational cadence. Never dump long bullet lists aloud.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const client = new GeminiLiveSessionClient({
+        onStateChange: (nextState) => {
+          setLiveState(nextState);
+          if (nextState === 'closed' || nextState === 'idle') {
+            setIsLiveAiSpeaking(false);
+            setLiveUserCaption('');
+            setLiveAiCaption('');
+          }
+        },
+        onModelActive: (activeModel) => {
+          setLiveActiveModel(activeModel);
+          setVoiceStatusNote(`Live voice active (${activeModel}) — speak naturally anytime.`);
+        },
+        onMicLevel: (level) => setMicLevel(level),
+        onSpeakingStateChange: (speaking) => setIsLiveAiSpeaking(speaking),
+        onUserTranscriptChunk: (partial) => setLiveUserCaption(partial),
+        onInterviewerTranscriptChunk: (partial) => setLiveAiCaption(partial),
+        onUserTurnCommitted: (finalText) => {
+          const clean = finalText.trim();
+          if (!clean) return;
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: `turn-live-user-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'candidate',
+              kind: 'answer',
+              timestamp: new Date().toISOString(),
+              questionId: currentQuestion?.id,
+              badge: 'Voice',
+              text: clean,
+            },
+          ]);
+          const cmd = parseVoiceCommand(clean);
+          if (cmd && (cmd.type === 'end' || cmd.type === 'restart')) {
+            setVoiceStatusNote(`Voice command: ${cmd.label}`);
+            void client.disconnect();
+            executeVoiceCommand(cmd.type);
+          }
+        },
+        onInterviewerTurnCommitted: (finalText) => {
+          const clean = finalText.trim();
+          if (!clean) return;
+          const persona = getInterviewerPersona(currentQuestion?.round ?? 'Warmup', targetRole);
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: `turn-live-ai-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'interviewer',
+              kind: 'question',
+              timestamp: new Date().toISOString(),
+              questionId: currentQuestion?.id,
+              badge: 'Gemini Live',
+              interviewer: persona,
+              text: clean,
+            },
+          ]);
+        },
+        onError: (msg) => {
+          setVoiceStatusNote(msg);
+        },
+      });
+
+      liveClientRef.current = client;
+      const openerContext = stage === 'warmup'
+        ? `Greet ${firstName || 'the candidate'} warmly for a ${targetRole} mock interview and invite a quick 30-second intro before Question 1.`
+        : `Acknowledge we are switching into live voice conversation on Question ${currentIndex + 1}: "${currentQuestion?.question || ''}" and invite their thoughts.`;
+
+      await client.connect({
+        ephemeralToken: tokenRes.response.token,
+        models: tokenRes.response.live_models,
+        voiceName: liveVoice,
+        systemInstruction,
+        initialPrompt: openerContext,
+      });
+
+      await onAIUsageChanged?.();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not start live voice conversation.';
+      setVoiceStatusNote(`${message} Falling back to Speak Answer / text interview.`);
+      setLiveState('idle');
+      liveClientRef.current = null;
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (isTranscribingVoice) return;
+
+    if (isRecording && speechControllerRef.current) {
+      setIsRecording(false);
+      setIsTranscribingVoice(true);
+      setVoiceStatusNote('Transcribing speech with Gemini…');
+      try {
+        const result = await speechControllerRef.current.stop();
+        speechControllerRef.current = null;
+        setMicLevel(0);
+
+        const transcript = result.transcript.trim();
+        if (!transcript) {
+          setVoiceStatusNote('No clear speech detected — speak close to your microphone and try again.');
+          return;
+        }
+
+        const matchedCommand = parseVoiceCommand(transcript);
+        if (matchedCommand) {
+          setVoiceStatusNote(`Voice command: ${matchedCommand.label}`);
+          if (executeVoiceCommand(matchedCommand.type)) return;
+        }
+
+        if (autoSendVoice) {
+          setVoiceStatusNote(
+            result.source === 'gemini'
+              ? 'Transcribed via Gemini & sent to interviewer.'
+              : 'Transcribed & sent to interviewer.'
+          );
+          if (!voiceReadAloud && ttsSupported) {
+            setVoiceReadAloud(true);
+          }
+          await submitCandidateMessage(transcript, { fromVoice: true });
+        } else {
+          setDraftAnswer((prev) => `${prev ? `${prev.trimEnd()} ` : ''}${transcript}`);
+          setVoiceStatusNote('Voice transcribed into answer box — edit or press Send.');
+        }
+      } catch {
+        setVoiceStatusNote('Could not finish voice transcription. Please type or try again.');
+      } finally {
+        setIsTranscribingVoice(false);
+      }
+      return;
+    }
+
+    if (ttsSupported) {
+      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
+    }
+
+    const baseDraft = draftAnswer.trim();
+    const controller = createHybridSpeechController({
+      preferGeminiTranscription: !userId.startsWith('demo'),
+      transcribeHint: `${targetRole}. ${currentQuestion?.question || ''}`.slice(0, 320),
+      onAudioLevel: (lvl) => setMicLevel(lvl),
+      onStatusText: (msg) => setVoiceStatusNote(msg),
+      onInterimTranscript: (interim) => {
+        setDraftAnswer(baseDraft ? `${baseDraft} ${interim}` : interim);
+      },
+    });
+    speechControllerRef.current = controller;
+
+    try {
+      await controller.start();
+      setIsRecording(true);
+    } catch (err) {
+      speechControllerRef.current = null;
+      setIsRecording(false);
+      setVoiceStatusNote(err instanceof Error ? err.message : 'Microphone access was denied or unavailable.');
     }
   };
 
@@ -549,25 +780,49 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     speakText(debrief.summaryNote);
   };
 
-  const handleSendMessage = () => {
-    const trimmed = draftAnswer.trim();
+  const submitCandidateMessage = async (
+    overrideText?: string,
+    options?: { fromVoice?: boolean }
+  ) => {
+    const trimmed = (overrideText ?? draftAnswer).trim();
     if (!trimmed || isInterviewerTyping || stage === 'debrief') return;
 
-    if (isRecording && recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (isRecording && speechControllerRef.current) {
+      speechControllerRef.current.abort();
+      speechControllerRef.current = null;
       setIsRecording(false);
     }
 
+    if (liveState === 'connected' && liveClientRef.current) {
+      setTurns((prev) => [
+        ...prev,
+        {
+          id: `turn-user-${crypto.randomUUID().slice(0, 8)}`,
+          speaker: 'candidate',
+          kind: 'answer',
+          timestamp: new Date().toISOString(),
+          questionId: currentQuestion?.id,
+          text: trimmed,
+        },
+      ]);
+      setDraftAnswer('');
+      liveClientRef.current.sendTextTurn(trimmed);
+      return;
+    }
+
+    const speakReply = Boolean(options?.fromVoice || voiceReadAloud);
     const candidateTurn: ConversationTurn = {
       id: `turn-user-${crypto.randomUUID().slice(0, 8)}`,
       speaker: 'candidate',
       kind: 'answer',
       timestamp: new Date().toISOString(),
       questionId: currentQuestion?.id,
+      badge: options?.fromVoice ? 'Voice' : undefined,
       text: trimmed,
     };
 
-    setTurns((prev) => [...prev, candidateTurn]);
+    const nextTurnsSnapshot = [...turns, candidateTurn];
+    setTurns(nextTurnsSnapshot);
     setDraftAnswer('');
 
     // Track tools mentioned across the session in candidate memory
@@ -579,12 +834,137 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     };
     setMemory(updatedMemory);
 
-    if (stage === 'warmup') {
-      if (!currentQuestion) {
-        handleFinishAndDebrief();
-        return;
+    if (stage === 'awaiting_continue') {
+      handleAdvanceToNextQuestion();
+      return;
+    }
+
+    if (stage === 'warmup' && !currentQuestion) {
+      handleFinishAndDebrief();
+      return;
+    }
+
+    const recentHistoryText = nextTurnsSnapshot
+      .slice(-6)
+      .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
+      .join('\n')
+      .slice(0, 5000);
+
+    // Try Gemini AI conversational interviewer first (with automatic multi-model fallback in gateway),
+    // and fall back cleanly to our deterministic interview engine whenever offline/demo/unavailable.
+    if (!userId.startsWith('demo')) {
+      setIsInterviewerTyping(true);
+      try {
+        const aiTurn = await requestInterviewTurn({
+          stage: stage === 'warmup' ? 'warmup' : 'questioning',
+          target_role: targetRole,
+          experience_level: experienceLevel || difficultyPref,
+          question: currentQuestion?.question || '',
+          answer: trimmed,
+          rubric: currentQuestion
+            ? JSON.stringify({
+                round: currentQuestion.round,
+                expected_keywords: currentQuestion.expected_keywords,
+              })
+            : '',
+          history: recentHistoryText,
+          follow_up_count: followUpCount,
+        });
+
+        setIsInterviewerTyping(false);
+        const resp = aiTurn.response;
+        const persona = getInterviewerPersona(
+          stage === 'warmup' ? 'Warmup' : currentQuestion?.round ?? 'Technical',
+          targetRole
+        );
+
+        if (stage === 'warmup' && currentQuestion) {
+          const qText = resp.reply.includes(currentQuestion.question.slice(0, 28))
+            ? resp.reply
+            : `${resp.reply}\n\nLet's begin Question 1 of ${loopQueue.length}: ${currentQuestion.question}`;
+          const introTurn: ConversationTurn = {
+            id: `turn-q-${crypto.randomUUID().slice(0, 8)}`,
+            speaker: 'interviewer',
+            kind: 'question',
+            timestamp: new Date().toISOString(),
+            questionId: currentQuestion.id,
+            badge: `Q1 · ${currentQuestion.round} · Gemini AI`,
+            interviewer: persona,
+            text: qText,
+          };
+          setStage('questioning');
+          setPaceSeconds(120);
+          setIsPaceRunning(true);
+          setTurns((prev) => [...prev, introTurn]);
+          speakText(introTurn.text, speakReply);
+          void onAIUsageChanged?.();
+          return;
+        }
+
+        if (currentQuestion) {
+          if (resp.action === 'clarify' || resp.action === 'ask_followup') {
+            if (resp.action === 'ask_followup') {
+              setUserTurnsForCurrentQ((prev) => [...prev, trimmed]);
+              setFollowUpCount((prev) => prev + 1);
+            }
+            const followTurn: ConversationTurn = {
+              id: `turn-ai-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'interviewer',
+              kind: resp.action === 'clarify' ? 'clarification' : 'followup',
+              timestamp: new Date().toISOString(),
+              questionId: currentQuestion.id,
+              badge: resp.action === 'clarify' ? 'Clarification · Gemini AI' : 'Follow-up · Gemini AI',
+              interviewer: persona,
+              text: resp.reply,
+            };
+            setTurns((prev) => [...prev, followTurn]);
+            speakText(followTurn.text, speakReply);
+            void onAIUsageChanged?.();
+            return;
+          }
+
+          const combinedAnswer = [...userTurnsForCurrentQ, trimmed].join('\n\n');
+          const evalSummary = evaluateQuestionExchange({
+            question: currentQuestion,
+            combinedAnswer,
+            targetRole,
+          });
+          const mergedEval: QuestionEvaluationSummary = {
+            ...evalSummary,
+            strengths: resp.strengths && resp.strengths.length > 0 ? resp.strengths : evalSummary.strengths,
+            growthTip: resp.growth_tip || evalSummary.growthTip,
+            aiCritique: resp.critique || resp.reply,
+          };
+
+          setUserTurnsForCurrentQ((prev) => [...prev, trimmed]);
+          setIsPaceRunning(false);
+          setEvaluations((prev) => [...prev, mergedEval]);
+          void persistCompletedAttempt(mergedEval);
+          setStage('awaiting_continue');
+
+          const evalTurn: ConversationTurn = {
+            id: `turn-eval-${crypto.randomUUID().slice(0, 8)}`,
+            speaker: 'coach',
+            kind: 'evaluation',
+            timestamp: new Date().toISOString(),
+            questionId: currentQuestion.id,
+            text: resp.reply,
+            evaluation: mergedEval,
+          };
+          setTurns((prev) => [...prev, evalTurn]);
+          speakText(resp.reply, speakReply);
+          void onAIUsageChanged?.();
+          return;
+        }
+      } catch {
+        setIsInterviewerTyping(false);
+        // Seamless automatic fallback to deterministic interview engine below
       }
+    }
+
+    if (stage === 'warmup') {
       scheduleInterviewerReply(() => {
+        if (!currentQuestion) return;
         const introTurn = buildQuestionIntroTurn({
           question: currentQuestion,
           questionIndex: 0,
@@ -596,14 +976,8 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         setPaceSeconds(120);
         setIsPaceRunning(true);
         setTurns((prev) => [...prev, introTurn]);
-        speakText(introTurn.text);
+        speakText(introTurn.text, speakReply);
       });
-      return;
-    }
-
-    if (stage === 'awaiting_continue') {
-      // User sent a note while between questions -> acknowledge and transition smoothly
-      handleAdvanceToNextQuestion();
       return;
     }
 
@@ -621,7 +995,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     scheduleInterviewerReply(() => {
       if (outcome.action === 'clarify') {
         setTurns((prev) => [...prev, outcome.interviewerTurn]);
-        speakText(outcome.interviewerTurn.text);
+        speakText(outcome.interviewerTurn.text, speakReply);
         return;
       }
 
@@ -629,7 +1003,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         setUserTurnsForCurrentQ(updatedTurnsForQ);
         setFollowUpCount((prev) => prev + 1);
         setTurns((prev) => [...prev, outcome.interviewerTurn]);
-        speakText(outcome.interviewerTurn.text);
+        speakText(outcome.interviewerTurn.text, speakReply);
         return;
       }
 
@@ -643,8 +1017,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       }
       setStage('awaiting_continue');
       setTurns((prev) => [...prev, outcome.interviewerTurn]);
-      speakText(outcome.interviewerTurn.text);
+      speakText(outcome.interviewerTurn.text, speakReply);
     });
+  };
+
+  const handleSendMessage = () => {
+    void submitCandidateMessage();
   };
 
   const handleAskForHint = () => {
@@ -743,7 +1121,98 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            {ttsSupported && (
+            {/* Gemini Live Voice Call Controls */}
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                maxWidth: '100%',
+                gap: '6px',
+                padding: '3px',
+                borderRadius: '18px',
+                border: liveState === 'connected' ? '1px solid #059669' : '1px solid var(--md-outline)',
+                background: liveState === 'connected' ? 'rgba(5, 150, 105, 0.1)' : 'var(--md-surface-variant)',
+              }}
+            >
+              <select
+                aria-label="Choose interviewer human voice"
+                value={liveVoice}
+                disabled={liveState === 'connected' || liveState === 'connecting'}
+                onChange={(e) => setLiveVoice(e.target.value as LiveVoiceName)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'var(--md-text-primary)',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  padding: '4px 6px 4px 10px',
+                  maxWidth: '100%',
+                  cursor: liveState === 'connected' ? 'default' : 'pointer',
+                  outline: 'none',
+                }}
+              >
+                {LIVE_VOICE_OPTIONS.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => void handleToggleLiveCall()}
+                disabled={stage === 'debrief'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  borderRadius: '9999px',
+                  border: 'none',
+                  background: liveState === 'connected' ? '#DC2626' : 'var(--md-primary)',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                {liveState === 'connected' ? <PhoneOff size={13} /> : <Phone size={13} />}
+                <span>
+                  {liveState === 'connecting'
+                    ? 'Connecting…'
+                    : liveState === 'connected'
+                      ? 'End Live Call'
+                      : 'Live Voice Call'}
+                </span>
+              </button>
+
+              {liveState === 'connected' && (
+                <button
+                  type="button"
+                  onClick={handleToggleLiveMute}
+                  aria-label={isLiveMuted ? 'Unmute live microphone' : 'Mute live microphone'}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    padding: '6px 10px',
+                    borderRadius: '9999px',
+                    border: '1px solid var(--md-outline)',
+                    background: isLiveMuted ? 'var(--md-error-bg)' : 'var(--md-surface)',
+                    color: isLiveMuted ? 'var(--md-error)' : 'var(--md-text-primary)',
+                    fontSize: '11.5px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {isLiveMuted ? <MicOff size={13} /> : <Mic size={13} />}
+                  <span>{isLiveMuted ? 'Muted' : 'Mic On'}</span>
+                </button>
+              )}
+            </div>
+
+            {ttsSupported && liveState !== 'connected' && (
               <button
                 type="button"
                 onClick={() => setVoiceReadAloud((prev) => !prev)}
@@ -988,7 +1457,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               </div>
             )}
 
-            {stage !== 'debrief' && (evaluations.length > 0 || stage === 'questioning') && (
+            {stage !== 'debrief' && (evaluations.length > 0 || stage === 'questioning' || turns.length > 1) && (
               <button
                 type="button"
                 onClick={handleFinishAndDebrief}
@@ -1411,6 +1880,51 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             );
           })}
 
+          {liveState === 'connected' && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                padding: '12px 14px',
+                borderRadius: '12px',
+                border: '1px solid rgba(5, 150, 105, 0.35)',
+                background: 'rgba(5, 150, 105, 0.06)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#059669' }}>
+                  ● Live Human Voice ({liveVoice} · {liveActiveModel || 'Gemini Live'})
+                </span>
+                <span style={{ fontSize: '11px', color: 'var(--md-text-secondary)' }}>
+                  {isLiveAiSpeaking ? 'Interviewer speaking (interrupt anytime)' : isLiveMuted ? 'Mic muted' : 'Listening… speak naturally'}
+                </span>
+              </div>
+              <div style={{ height: '4px', width: '100%', borderRadius: '999px', background: 'var(--md-outline)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    height: '100%',
+                    width: `${Math.max(4, Math.round(micLevel * 100))}%`,
+                    background: isLiveMuted ? 'var(--md-text-muted)' : '#059669',
+                    transition: 'width 80ms linear',
+                  }}
+                />
+              </div>
+              {liveUserCaption && (
+                <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-text-primary)' }}>
+                  <strong>You:</strong> {liveUserCaption}
+                </p>
+              )}
+              {liveAiCaption && (
+                <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-primary)' }}>
+                  <strong>Interviewer:</strong> {liveAiCaption}
+                </p>
+              )}
+            </div>
+          )}
+
           {isInterviewerTyping && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 4px' }}>
               <span className="skeleton-box" style={{ width: '24px', height: '24px', borderRadius: '50%' }} />
@@ -1438,30 +1952,92 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               background: 'var(--md-surface-variant)',
             }}
           >
+            {voiceStatusNote && (
+              <div
+                role="status"
+                style={{
+                  marginBottom: '8px',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  color: 'var(--md-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <span>{voiceStatusNote}</span>
+                {isRecording && (
+                  <span style={{ display: 'inline-block', width: '64px', height: '5px', borderRadius: '999px', background: 'var(--md-outline)', overflow: 'hidden', flexShrink: 0 }}>
+                    <span
+                      style={{
+                        display: 'block',
+                        height: '100%',
+                        width: `${Math.max(10, Math.round(micLevel * 100))}%`,
+                        background: 'var(--md-error)',
+                        transition: 'width 80ms linear',
+                      }}
+                    />
+                  </span>
+                )}
+              </div>
+            )}
+
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                {speechSupported && (
-                  <button
-                    type="button"
-                    onClick={toggleRecording}
-                    disabled={isInterviewerTyping}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '5px 11px',
-                      borderRadius: '9999px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      border: isRecording ? '1px solid var(--md-error)' : '1px solid var(--md-outline)',
-                      background: isRecording ? 'var(--md-error-bg)' : 'var(--md-surface)',
-                      color: isRecording ? 'var(--md-error)' : 'var(--md-text-primary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    {isRecording ? <MicOff size={13} /> : <Mic size={13} />}
-                    <span>{isRecording ? 'Listening…' : 'Speak Answer'}</span>
-                  </button>
+                {speechSupported && liveState !== 'connected' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void toggleRecording()}
+                      disabled={isInterviewerTyping || isTranscribingVoice}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        padding: '5px 12px',
+                        borderRadius: '9999px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        border: isRecording ? '1px solid var(--md-error)' : '1px solid var(--md-outline)',
+                        background: isRecording ? 'var(--md-error-bg)' : 'var(--md-surface)',
+                        color: isRecording ? 'var(--md-error)' : 'var(--md-text-primary)',
+                        cursor: isTranscribingVoice ? 'wait' : 'pointer',
+                      }}
+                    >
+                      {isRecording ? <MicOff size={13} /> : <Mic size={13} />}
+                      <span>
+                        {isTranscribingVoice
+                          ? 'Transcribing…'
+                          : isRecording
+                            ? autoSendVoice
+                              ? 'Stop & Send Voice'
+                              : 'Stop Listening'
+                            : 'Speak Answer'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setAutoSendVoice((prev) => !prev)}
+                      title="When enabled, finishing Speak Answer automatically transcribes and sends your reply to the AI interviewer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '4px 10px',
+                        borderRadius: '9999px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: autoSendVoice ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                        background: autoSendVoice ? 'var(--md-primary-container)' : 'var(--md-surface)',
+                        color: autoSendVoice ? 'var(--md-on-primary-container)' : 'var(--md-text-muted)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <span>Auto-send voice: {autoSendVoice ? 'On' : 'Off'}</span>
+                    </button>
+                  </>
                 )}
 
                 {stage === 'questioning' && (

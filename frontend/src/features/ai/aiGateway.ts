@@ -5,6 +5,23 @@ export type AIFeature = 'coach' | 'cv' | 'interview' | 'role';
 
 export type AIQuotaSummary = Record<AIFeature, { used: number; limit: number; remaining: number }>;
 
+export type LiveVoiceName = 'Kore' | 'Aoede' | 'Puck' | 'Charon' | 'Fenrir';
+
+export interface LiveInterviewTokenResponse {
+  token: string;
+  live_models: string[];
+  default_voice: LiveVoiceName;
+  expires_at: string;
+}
+
+export interface ConversationalInterviewTurnResponse {
+  action: 'start_question' | 'clarify' | 'ask_followup' | 'evaluate';
+  reply: string;
+  strengths?: string[];
+  growth_tip?: string;
+  critique?: string;
+}
+
 export function isRolePlanOutline(value: unknown, expectedRoleTitle: string): value is RolePlanOutline {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const outline = value as Partial<RolePlanOutline>;
@@ -22,8 +39,8 @@ export function isRolePlanOutline(value: unknown, expectedRoleTitle: string): va
 }
 
 const featureLimits = {
-  free: { coach: 15, cv: 5, interview: 5, role: 1 },
-  premium: { coach: 100, cv: 40, interview: 40, role: 5 },
+  free: { coach: 50, cv: 20, interview: 60, role: 5 },
+  premium: { coach: 250, cv: 80, interview: 300, role: 20 },
 } as const;
 
 export async function loadAIQuotaSummary(userId: string, plan: 'free' | 'premium'): Promise<AIQuotaSummary> {
@@ -48,8 +65,9 @@ export async function loadAIQuotaSummary(userId: string, plan: 'free' | 'premium
   };
 }
 
-interface AIGatewayResult<T> {
+export interface AIGatewayResult<T> {
   source: 'model';
+  model?: string;
   cached: boolean;
   response: T;
   usage: {
@@ -84,4 +102,54 @@ export async function requestAI<T>(feature: AIFeature, input: Record<string, unk
   if (payload.error) throw new Error(payload.message || payload.error);
   if (!payload.response || !payload.usage) throw new Error('The AI service returned an incomplete response.');
   return payload as AIGatewayResult<T>;
+}
+
+/** Mint a short-lived ephemeral token for browser WebSocket connection to Gemini Live API. */
+export async function requestLiveInterviewToken(input: {
+  target_role?: string;
+  voice_name?: LiveVoiceName;
+}): Promise<AIGatewayResult<LiveInterviewTokenResponse>> {
+  return requestAI<LiveInterviewTokenResponse>('interview', {
+    mode: 'live_token',
+    target_role: input.target_role || '',
+    voice_name: input.voice_name || 'Kore',
+  });
+}
+
+/** Transcribe recorded speech audio via Gemini transcription + Flash fallbacks. */
+export async function transcribeSpeechAudio(input: {
+  audio_base64: string;
+  mime_type: string;
+  hint?: string;
+}): Promise<AIGatewayResult<{ transcript: string }>> {
+  return requestAI<{ transcript: string }>('interview', {
+    mode: 'transcribe',
+    audio_base64: input.audio_base64,
+    mime_type: input.mime_type,
+    hint: input.hint || '',
+  });
+}
+
+/** Generate a realistic human interviewer turn (greeting-to-Q1, clarification, follow-up, or evaluation). */
+export async function requestInterviewTurn(input: {
+  stage: 'warmup' | 'questioning';
+  target_role: string;
+  experience_level?: string;
+  question: string;
+  answer: string;
+  rubric?: string;
+  history?: string;
+  follow_up_count?: number;
+}): Promise<AIGatewayResult<ConversationalInterviewTurnResponse>> {
+  return requestAI<ConversationalInterviewTurnResponse>('interview', {
+    mode: 'converse',
+    stage: input.stage,
+    target_role: input.target_role,
+    experience_level: input.experience_level || '',
+    question: input.question,
+    answer: input.answer,
+    rubric: input.rubric || '',
+    history: input.history || '',
+    follow_up_count: String(input.follow_up_count ?? 0),
+  });
 }

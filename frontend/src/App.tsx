@@ -628,7 +628,7 @@ export function App() {
 
   // Coach Send Message handler
   const handleSendCoachMessage = async (text: string) => {
-    if (!profile || profile.is_demo || isCoachSending) return;
+    if (!profile || isCoachSending) return;
     setIsCoachSending(true);
     let userMessage: AICoachMessage = {
       id: `local-user-${crypto.randomUUID()}`,
@@ -637,6 +637,23 @@ export function App() {
       timestamp: new Date().toISOString(),
       proposal: undefined,
     };
+
+    if (profile.is_demo) {
+      const nextCount = tasks.filter((t) => !t.done_at).length;
+      setCoachMessages((previous) => [
+        ...previous,
+        userMessage,
+        {
+          id: `local-demo-ai-${crypto.randomUUID()}`,
+          sender: 'ai',
+          text: `In Demo Mode (${profile.target_role}), you have ${nextCount} upcoming tasks at ${profile.daily_minutes} mins/day. Sign in with your account to unlock live Gemini coaching tailored to your full progress history.`,
+          timestamp: new Date().toISOString(),
+        },
+      ]);
+      setIsCoachSending(false);
+      return;
+    }
+
     let canPersistCoachHistory = true;
     try {
       const savedUserMessage = await supabase
@@ -645,13 +662,7 @@ export function App() {
         .select('id,sender,message,proposal,created_at')
         .single();
       if (savedUserMessage.error) {
-        const errCode = savedUserMessage.error.code || '';
-        const errMsg = savedUserMessage.error.message || '';
-        if (errCode === 'PGRST205' || errCode === '42P01' || /does not exist|schema cache|could not find the table/i.test(errMsg)) {
-          canPersistCoachHistory = false;
-        } else {
-          throw savedUserMessage.error;
-        }
+        canPersistCoachHistory = false;
       } else if (savedUserMessage.data) {
         userMessage = {
           id: savedUserMessage.data.id,
@@ -662,9 +673,7 @@ export function App() {
         };
       }
     } catch {
-      setIsCoachSending(false);
-      showToast('Could not save your message. Please try again.');
-      return;
+      canPersistCoachHistory = false;
     }
     setCoachMessages((previous) => [...previous, userMessage]);
 
