@@ -365,6 +365,8 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, aiQuota, onAIUsa
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '6px',
                   marginBottom: '10px',
                 }}
               >
@@ -696,6 +698,8 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, aiQuota, onAIUsa
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '8px',
                     background: '#FFFFFF',
                     border: '1px solid #E2E8F0',
                     borderRadius: '10px',
@@ -882,6 +886,35 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, aiQuota, onAIUsa
           </aside>
         </div>
       </main>
+
+      <div className="onboarding-mobile-bar">
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selectedRole.title}
+          </div>
+          <div style={{ fontSize: '11px', color: isOverloaded ? '#B91C1C' : '#64748B', fontWeight: 500 }}>
+            {totalWeeks.toFixed(1)} wks · {dailyMinutes}m/day
+          </div>
+        </div>
+        <button
+          type="button"
+          className="auth-primary-btn"
+          onClick={handleFinish}
+          disabled={isSaving}
+          style={{
+            height: '42px',
+            padding: '0 16px',
+            fontSize: '13px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            flexShrink: 0,
+          }}
+        >
+          <span>{isSaving ? 'Saving…' : 'Apply Roadmap'}</span>
+          {!isSaving && <ArrowRight size={14} />}
+        </button>
+      </div>
     </div>
   );
 };

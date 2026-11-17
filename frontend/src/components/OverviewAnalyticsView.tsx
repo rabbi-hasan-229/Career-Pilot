@@ -614,6 +614,7 @@ export const OverviewAnalyticsView: React.FC<Props> = ({
                     key={idx}
                     onMouseEnter={() => setHoveredPointIndex(idx)}
                     onMouseLeave={() => setHoveredPointIndex(null)}
+                    onClick={() => setHoveredPointIndex(isHovered ? null : idx)}
                     style={{ cursor: 'pointer' }}
                   >
                     <rect
@@ -1641,5 +1642,51 @@ const analyticsStyles = `
 
 .ps-mix-foot strong {
   color: var(--md-text-primary, #0F172A);
+}
+
+@media (max-width: 640px) {
+  .ps-page {
+    padding: 0 2px 24px;
+    gap: 12px;
+  }
+
+  .ps-header-controls {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .ps-horizon-tabs {
+    width: 100%;
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .ps-horizon-tabs > button {
+    flex: 1 0 auto;
+  }
+
+  .ps-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ps-kpi-cell {
+    padding: 12px;
+  }
+
+  .ps-card {
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .ps-bars-row {
+    gap: 4px;
+  }
+
+  .ps-mix-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 `;

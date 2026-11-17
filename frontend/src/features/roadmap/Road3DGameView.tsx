@@ -574,6 +574,84 @@ export const Road3DGameView: React.FC<Props> = ({
   const toPctY = (py: number) => `${(py / posterHeight) * 100}%`;
   const toPctW = (pw: number) => `${(pw / refWidth) * 100}%`;
 
+  const renderStageBody = (
+    milestone: Milestone,
+    milestoneTasks: Task[],
+    doneCount: number,
+  ) => (
+    <>
+      {milestoneTasks.length > 0 && (
+        <div className="rp-progress-hint">
+          {doneCount === milestoneTasks.length ? (
+            <span className="rp-progress-done-badge">✓ Completed</span>
+          ) : (
+            <span>{doneCount}/{milestoneTasks.length} tasks completed</span>
+          )}
+        </div>
+      )}
+
+      {milestoneTasks.length > 0 && (() => {
+        const isExpanded = Boolean(expandedMilestones[milestone.id]);
+        const visibleTasks = isExpanded ? milestoneTasks : milestoneTasks.slice(0, 4);
+        return (
+          <ul className="rp-task-list">
+            {visibleTasks.map((task) => {
+              const done = task.done_at != null;
+              return (
+                <li key={task.id}>
+                  <button
+                    type="button"
+                    className={`rp-task-item${done ? ' done' : ''}`}
+                    onClick={(e) => handleTaskClick(task, e)}
+                    aria-pressed={done}
+                    aria-label={done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
+                  >
+                    <span className={`rp-checkbox${done ? ' checked' : ''}`} aria-hidden="true">
+                      {done ? '✓' : ''}
+                    </span>
+                    <span className="rp-task-title">{task.title}</span>
+                  </button>
+                </li>
+              );
+            })}
+            {milestoneTasks.length > 4 && (
+              <li className="rp-task-more">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedMilestones((prev) => ({
+                      ...prev,
+                      [milestone.id]: !prev[milestone.id],
+                    }))
+                  }
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    color: 'inherit',
+                    font: 'inherit',
+                    cursor: 'pointer',
+                    textDecoration: 'underline',
+                  }}
+                >
+                  {isExpanded ? 'Show fewer tasks' : `+${milestoneTasks.length - 4} more tasks`}
+                </button>
+              </li>
+            )}
+          </ul>
+        );
+      })()}
+
+      {milestone.skills_covered && milestone.skills_covered.length > 0 && (
+        <div className="rp-skills">
+          {milestone.skills_covered.slice(0, 3).map((s) => (
+            <span key={s} className="rp-skill-tag">{s}</span>
+          ))}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="rp-page">
       {/* ════════════════════════════════════════════════════════════════════════
@@ -654,8 +732,82 @@ export const Road3DGameView: React.FC<Props> = ({
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════════
-          POSTER SHELL — S-curve road + goal cards + car
+          POSTER SHELL — Native Mobile Vertical Highway OR Desktop S-curve Poster
       ════════════════════════════════════════════════════════════════════════ */}
+      {isMobile ? (
+        <section
+          className="rp-mobile-highway"
+          aria-label={`${roleName} career roadmap with ${milestones.length} milestones`}
+        >
+          <div className="rp-mobile-rail" aria-hidden="true">
+            <div className="rp-mobile-rail-dashes" />
+          </div>
+
+          {milestones.map((milestone, index) => {
+            const iconName = MILESTONE_ICONS[index % MILESTONE_ICONS.length];
+            const milestoneTasks = getTasksForMilestone(milestone.id);
+            const doneCount = milestoneTasks.filter((t) => t.done_at != null).length;
+            const isCompleted = milestoneTasks.length > 0 && doneCount === milestoneTasks.length;
+            const isCurrentStoppage = index === activeStoppageIndex && !isAllComplete;
+            const isTargetStop = isAllComplete ? index === milestones.length - 1 : isCurrentStoppage;
+
+            return (
+              <div
+                key={`mobile-${index}-${milestone.id}`}
+                ref={isTargetStop ? currentStopRef : null}
+                className="rp-mobile-stage-row"
+              >
+                <div className="rp-mobile-track-col">
+                  <div
+                    className={`rp-mobile-pin ${index % 2 === 0 ? 'blue' : 'purple'} ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                    aria-label={`Stage ${String(index + 1).padStart(2, '0')}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
+                  >
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                  </div>
+                  {isTargetStop && (
+                    <button
+                      type="button"
+                      className="rp-mobile-car-btn"
+                      onClick={() => {
+                        playCarHorn();
+                        showAnnouncement(`🏎️ Pilot Roadster stationed at Stage ${index + 1}!`);
+                      }}
+                      title={`Pilot Roadster (Stage ${index + 1}) - Tap to Honk!`}
+                      aria-label={`Pilot Roadster stationed at Stage ${index + 1}`}
+                    >
+                      <PilotRoadster isFinished={carPosition.isFinished} />
+                    </button>
+                  )}
+                </div>
+
+                <article
+                  className={`rp-mobile-stage-card ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                >
+                  <div className="rp-card-header">
+                    <div className="rp-card-title-group">
+                      <div className="rp-mobile-kicker-row">
+                        <span className="rp-card-step-kicker">Stage {String(index + 1).padStart(2, '0')}</span>
+                        {isCurrentStoppage && (
+                          <span className="rp-mobile-status-pill current">CURRENT STOP</span>
+                        )}
+                        {isCompleted && (
+                          <span className="rp-mobile-status-pill completed">COMPLETED</span>
+                        )}
+                      </div>
+                      <h2>{milestone.title}</h2>
+                    </div>
+                    <div className="rp-card-icon-badge">
+                      <StepIcon name={iconName} />
+                    </div>
+                  </div>
+
+                  {renderStageBody(milestone, milestoneTasks, doneCount)}
+                </article>
+              </div>
+            );
+          })}
+        </section>
+      ) : (
       <div className="rp-poster-shell">
         <section
           className="rp-roadmap-board"
@@ -817,84 +969,14 @@ export const Road3DGameView: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Progress hint */}
-                  {milestoneTasks.length > 0 && (
-                    <div className="rp-progress-hint">
-                      {doneCount === milestoneTasks.length ? (
-                        <span className="rp-progress-done-badge">✓ Completed</span>
-                      ) : (
-                        <span>{doneCount}/{milestoneTasks.length} tasks completed</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Interactive Checklist tasks */}
-                  {milestoneTasks.length > 0 && (() => {
-                    const isExpanded = Boolean(expandedMilestones[milestone.id]);
-                    const visibleTasks = isExpanded ? milestoneTasks : milestoneTasks.slice(0, 4);
-                    return (
-                      <ul className="rp-task-list">
-                        {visibleTasks.map((task) => {
-                          const done = task.done_at != null;
-                          return (
-                            <li key={task.id}>
-                              <button
-                                type="button"
-                                className={`rp-task-item${done ? ' done' : ''}`}
-                                onClick={(e) => handleTaskClick(task, e)}
-                                aria-pressed={done}
-                                aria-label={done ? `Mark ${task.title} incomplete` : `Mark ${task.title} complete`}
-                              >
-                                <span className={`rp-checkbox${done ? ' checked' : ''}`} aria-hidden="true">
-                                  {done ? '✓' : ''}
-                                </span>
-                                <span className="rp-task-title">{task.title}</span>
-                              </button>
-                            </li>
-                          );
-                        })}
-                        {milestoneTasks.length > 4 && (
-                          <li className="rp-task-more">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedMilestones((prev) => ({
-                                  ...prev,
-                                  [milestone.id]: !prev[milestone.id],
-                                }))
-                              }
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                padding: 0,
-                                color: 'inherit',
-                                font: 'inherit',
-                                cursor: 'pointer',
-                                textDecoration: 'underline',
-                              }}
-                            >
-                              {isExpanded ? 'Show fewer tasks' : `+${milestoneTasks.length - 4} more tasks`}
-                            </button>
-                          </li>
-                        )}
-                      </ul>
-                    );
-                  })()}
-
-                  {/* Skills tags */}
-                  {milestone.skills_covered && milestone.skills_covered.length > 0 && (
-                    <div className="rp-skills">
-                      {milestone.skills_covered.slice(0, 3).map((s) => (
-                        <span key={s} className="rp-skill-tag">{s}</span>
-                      ))}
-                    </div>
-                  )}
+                  {renderStageBody(milestone, milestoneTasks, doneCount)}
                 </article>
               </div>
             );
           })}
         </section>
       </div>
+      )}
 
       {/* ════════════════════════════════════════════════════════════════════════
           GOAL EDITOR / FOOTER SECTION
@@ -2120,5 +2202,211 @@ body.dark .rp-goal-copy.completed,
   color: #10B981;
   font-size: 11px;
   font-weight: 600;
+}
+
+/* Native Mobile Vertical Highway (< 680px) */
+.rp-mobile-highway {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 6px 0 8px;
+}
+
+.rp-mobile-rail {
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  left: 11px;
+  width: 22px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #263142 0%, #17202E 50%, #0E1521 100%);
+  border: 2px solid #CBD5E1;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.2);
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+  z-index: 1;
+}
+
+.rp-mobile-rail-dashes {
+  width: 2px;
+  height: 100%;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.7) 0px,
+    rgba(255, 255, 255, 0.7) 7px,
+    transparent 7px,
+    transparent 14px
+  );
+}
+
+.rp-mobile-stage-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  z-index: 2;
+}
+
+.rp-mobile-track-col {
+  width: 44px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.rp-mobile-pin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--rp-card-bg);
+  border: 3px solid #2563EB;
+  color: #1D4ED8;
+  font-size: 11px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.22);
+}
+
+.rp-mobile-pin.purple {
+  border-color: #7C3AED;
+  color: #6D28D9;
+}
+
+.rp-mobile-pin.current-stoppage {
+  border-color: #F59E0B;
+  color: #B45309;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.24), 0 4px 12px rgba(245, 158, 11, 0.3);
+}
+
+.rp-mobile-pin.completed {
+  border-color: #10B981;
+  background: #10B981;
+  color: #FFFFFF;
+}
+
+.rp-mobile-car-btn {
+  width: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.28));
+}
+
+.rp-mobile-car-btn svg {
+  width: 32px;
+  height: auto;
+  transform: rotate(180deg);
+}
+
+.rp-mobile-stage-card {
+  flex: 1;
+  min-width: 0;
+  background: var(--rp-card-bg);
+  border: 1px solid var(--rp-card-border);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: var(--rp-card-shadow);
+}
+
+.rp-mobile-stage-card.current-stoppage {
+  border-color: rgba(245, 158, 11, 0.65);
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.14);
+}
+
+.rp-mobile-stage-card.completed {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.rp-mobile-kicker-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.rp-mobile-status-pill {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.rp-mobile-status-pill.current {
+  background: #FEF3C7;
+  color: #B45309;
+}
+
+.rp-mobile-status-pill.completed {
+  background: #DCFCE7;
+  color: #15803D;
+}
+
+@media (max-width: 680px) {
+  .rp-page {
+    padding: 0 2px 24px;
+  }
+
+  .rp-header-bar {
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .rp-header-title {
+    font-size: 20px;
+  }
+
+  .rp-toolbar-row {
+    width: 100%;
+    gap: 6px;
+  }
+
+  .rp-btn-career,
+  .rp-btn-alerts {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  .rp-remind-bar {
+    width: 100%;
+    justify-content: space-between;
+    height: 36px;
+    padding: 0 6px 0 10px;
+  }
+
+  .rp-mobile-stage-card .rp-card-header h2 {
+    font-size: 14.5px;
+    line-height: 1.3;
+  }
+
+  .rp-mobile-stage-card .rp-task-item {
+    min-height: 38px;
+    padding: 6px 8px;
+    font-size: 12.5px;
+    line-height: 1.35;
+  }
+
+  .rp-mobile-stage-card .rp-checkbox {
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+  }
+
+  .rp-mobile-stage-card .rp-task-title {
+    font-size: 12.5px;
+  }
 }
 `;

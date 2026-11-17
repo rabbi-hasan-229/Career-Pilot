@@ -219,23 +219,37 @@ body {
   .app-desktop-shell {
     display: block;
     width: 100%;
-    max-width: 500px;
+    max-width: 680px;
     margin: 0 auto;
     background: var(--md-surface);
     min-height: 100vh;
     min-height: 100dvh;
     position: relative;
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.05);
+    overflow-x: clip;
   }
 
   .desktop-main-area {
-    padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(80px + env(safe-area-inset-bottom, 16px)) 16px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 14px calc(86px + env(safe-area-inset-bottom, 16px)) 14px;
+    max-width: 100%;
+    overflow-x: clip;
   }
 
   .desktop-grid-2col {
     display: flex;
     flex-direction: column;
     gap: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-desktop-shell {
+    max-width: 100%;
+    box-shadow: none;
+  }
+
+  .desktop-main-area {
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px calc(88px + env(safe-area-inset-bottom, 16px)) 12px;
   }
 }
 
@@ -310,17 +324,26 @@ body {
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  max-width: 500px;
+  max-width: 680px;
   height: calc(66px + env(safe-area-inset-bottom, 0px));
   background: var(--md-surface);
   border-top: 1px solid var(--md-outline);
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
-  justify-content: space-around;
-  padding: 0 8px env(safe-area-inset-bottom, 0px) 8px;
+  justify-items: center;
+  padding: 2px 6px env(safe-area-inset-bottom, 0px) 6px;
   z-index: 100;
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
   transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+@media (max-width: 640px) {
+  .mobile-bottom-nav {
+    max-width: 100%;
+    left: 0;
+    transform: none;
+  }
 }
 
 .mobile-nav-btn {
@@ -330,18 +353,23 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
+  width: 100%;
+  min-height: 48px;
   color: var(--md-text-muted);
   cursor: pointer;
-  padding: 6px 10px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
   font-size: 10px;
   font-weight: 700;
-  transition: all 0.15s ease;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 
 .mobile-nav-btn.active {
   color: var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary) 10%, transparent);
 }
 
 .mobile-fab-center {
@@ -356,8 +384,14 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-top: -20px;
-  transition: transform 0.15s ease;
+  margin-top: -18px;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mobile-fab-center.is-tools-active {
+  background: var(--md-accent, #7C3AED);
+  box-shadow: 0 6px 18px rgba(124, 58, 237, 0.42);
 }
 
 .mobile-fab-center:hover {
@@ -854,9 +888,11 @@ body {
   /* Career Path Modal Mobile */
   .career-path-window {
     flex-direction: column !important;
-    max-width: 500px !important;
-    height: 94vh !important;
-    border-radius: 24px !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
   }
 
   .career-path-left-panel {
@@ -864,17 +900,21 @@ body {
   }
 
   .career-path-right-panel {
-    padding: 18px 16px !important;
+    padding: 16px 14px calc(18px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
   .career-role-cards-grid {
     grid-template-columns: 1fr !important;
-    max-height: 220px !important;
+    max-height: 240px !important;
   }
 
   .career-controls-row {
     grid-template-columns: 1fr !important;
     gap: 12px !important;
+  }
+
+  .career-timeline-presets {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 }
 
@@ -1152,11 +1192,11 @@ body {
 
 @media (max-width: 720px) {
   .onboarding-topbar {
-    padding: 12px 16px;
+    padding: 12px 14px;
   }
 
   .onboarding-main {
-    padding: 20px 16px 36px;
+    padding: 18px 14px calc(104px + env(safe-area-inset-bottom, 16px));
   }
 
   .onboarding-header-row {
@@ -1180,7 +1220,7 @@ body {
 
   .onboarding-role-grid {
     grid-template-columns: 1fr;
-    max-height: 256px;
+    max-height: 280px;
   }
 
   .onboarding-exp-grid {
@@ -1189,6 +1229,33 @@ body {
 
   .onboarding-pacing-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+.onboarding-mobile-bar {
+  display: none;
+}
+
+@media (max-width: 960px) {
+  .onboarding-main {
+    padding-bottom: calc(104px + env(safe-area-inset-bottom, 16px));
+  }
+
+  .onboarding-mobile-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid #E2E8F0;
+    box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.08);
   }
 }
 
@@ -1607,5 +1674,274 @@ body {
     display: none;
   }
 }
+
+/* ============================================================================
+   Top App Navbar & Quick Action Sheet (Desktop preserved + Native Mobile)
+   ============================================================================ */
+.app-navbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  margin-bottom: 12px;
+}
+
+.app-navbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-navbar-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid var(--md-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.app-navbar-role {
+  max-width: 240px;
+}
+
+.app-navbar-role-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-navbar-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.app-navbar-icon-btn {
+  position: relative;
+  background: var(--md-surface-variant);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--md-text-primary);
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.app-navbar-icon-btn:hover {
+  background: var(--md-surface);
+}
+
+@media (max-width: 640px) {
+  .app-navbar {
+    gap: 8px;
+    padding: 4px 0 8px;
+    margin-bottom: 8px;
+  }
+
+  .app-navbar-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  .app-navbar-title-tag {
+    display: none;
+  }
+
+  .app-navbar-role {
+    max-width: 145px;
+  }
+
+  .app-navbar-name {
+    font-size: 13.5px !important;
+  }
+
+  .app-navbar-actions {
+    gap: 6px;
+  }
+
+  .app-navbar-quota {
+    padding: 4px 8px !important;
+    font-size: 10.5px !important;
+  }
+
+  .app-navbar-quota-suffix {
+    display: none;
+  }
+
+  .app-navbar-icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+.quick-action-sheet {
+  width: 100%;
+  max-width: 480px;
+  background: var(--md-surface);
+  border-radius: 24px 24px 0 0;
+  border-top: 1px solid var(--md-outline-variant);
+  padding: 14px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.2);
+  max-height: 88dvh;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .quick-action-sheet {
+    max-width: 100%;
+    padding: 12px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+    border-radius: 22px 22px 0 0;
+  }
+}
+
+/* ============================================================================
+   CV Builder & Templates (Desktop Split Preserved + Responsive Mobile Stack)
+   ============================================================================ */
+.cv-split-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.cv-split-layout.is-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.cv-field-grid-2 {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.cv-edu-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.cv-creative-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 32%) minmax(0, 1fr);
+  min-height: 980px;
+}
+
+@media (max-width: 1023px) {
+  .cv-split-btn {
+    display: none !important;
+  }
+
+  .cv-split-layout.is-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .cv-field-grid-2,
+  .cv-edu-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cv-creative-grid {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+  }
+}
+
+/* ============================================================================
+   Schedule & Interview Mobile Refinements
+   ============================================================================ */
+@media (max-width: 640px) {
+  .ws-header-card {
+    padding: 16px 14px !important;
+    gap: 12px !important;
+  }
+
+  .ws-toolbar {
+    width: 100%;
+  }
+
+  .ws-stage-select {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .ws-tabs-strip {
+    display: flex !important;
+    width: 100%;
+    overflow-x: auto;
+    flex-wrap: nowrap !important;
+    scrollbar-width: none;
+  }
+
+  .ws-tabs-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .ws-tabs-strip > button {
+    flex: 1 0 auto;
+    white-space: nowrap;
+  }
+
+  .ws-task-title {
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .ws-mobile-inline-detail {
+    padding: 0 12px 14px 12px !important;
+  }
+
+  .ws-week-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .ws-week-grid > div {
+    min-height: auto !important;
+  }
+
+  .ws-stage-row {
+    padding: 12px !important;
+    flex-wrap: wrap;
+    gap: 10px !important;
+  }
+
+  .iv-composer-row {
+    flex-wrap: wrap;
+  }
+
+  .iv-composer-row textarea {
+    flex: 1 1 100% !important;
+    min-width: 0;
+  }
+
+  .iv-composer-row button[type="submit"],
+  .iv-composer-row .iv-send-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
 
 

@@ -356,14 +356,13 @@ const ExecutiveTemplate: React.FC<{ data: CVData }> = ({ data }) => {
 const CreativeTemplate: React.FC<{ data: CVData }> = ({ data }) => {
   return (
     <div
+      className="cv-creative-grid"
       style={{
         background: '#ffffff',
         color: '#1e293b',
         borderRadius: '16px',
         border: '1px solid #e2e8f0',
         boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-        display: 'grid',
-        gridTemplateColumns: 'minmax(200px, 32%) 1fr',
         overflow: 'hidden',
         fontFamily: 'Inter, -apple-system, sans-serif',
       }}

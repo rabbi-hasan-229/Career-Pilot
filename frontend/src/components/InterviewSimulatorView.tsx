@@ -1542,7 +1542,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               </span>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+            <div className="iv-composer-row" style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
               <textarea
                 id="interview-answer"
                 rows={3}
@@ -1582,7 +1582,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               />
               <button
                 type="button"
-                className="btn-m3-primary"
+                className="btn-m3-primary iv-send-btn"
                 onClick={handleSendMessage}
                 disabled={!draftAnswer.trim() || isInterviewerTyping}
                 style={{

@@ -424,7 +424,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
     <div style={{ maxWidth: '1080px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '18px', paddingBottom: '40px' }}>
       {/* Minimalist Top Header with Modern Command Toolbar */}
       <header
-        className="m3-surface-card"
+        className="m3-surface-card ws-header-card"
         style={{
           padding: '20px 24px',
           display: 'flex',
@@ -460,7 +460,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
           </div>
 
           {/* Modern Segmented & Icon Action Toolbar */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <div className="ws-toolbar" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <button
               type="button"
               onClick={onOpenGoalSettings}
@@ -639,6 +639,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
 
           {milestones.length > 1 && (
             <select
+              className="ws-stage-select"
               aria-label="Select roadmap stage"
               value={currentMilestone?.id || ''}
               onChange={(e) => {
@@ -690,6 +691,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
       {/* Minimalist View Switcher */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
         <div
+          className="ws-tabs-strip"
           style={{
             display: 'inline-flex',
             background: 'var(--md-surface)',
@@ -829,6 +831,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
 
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div
+                            className="ws-task-title"
                             style={{
                               fontSize: '13.5px',
                               fontWeight: isSelected ? 700 : 600,
@@ -1032,6 +1035,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
       {/* TAB 2: Minimalist 7-Day Week Grid */}
       {activeTab === 'grid' && (
         <div
+          className="ws-week-grid"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
@@ -1122,6 +1126,7 @@ export const WeeklyScheduleView: React.FC<Props> = ({
             return (
               <div
                 key={m.id}
+                className="ws-stage-row"
                 style={{
                   padding: '16px 20px',
                   borderBottom: idx < milestones.length - 1 ? '1px solid var(--md-outline-variant)' : 'none',

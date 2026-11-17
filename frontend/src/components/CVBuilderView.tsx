@@ -241,6 +241,7 @@ export const CVBuilderView: React.FC<Props> = ({
               </button>
               <button
                 type="button"
+                className="cv-split-btn"
                 onClick={() => setPreviewMode('split')}
                 style={{
                   background: previewMode === 'split' ? 'var(--md-surface)' : 'transparent',
@@ -251,7 +252,6 @@ export const CVBuilderView: React.FC<Props> = ({
                   fontWeight: 600,
                   color: previewMode === 'split' ? 'var(--md-text-primary)' : 'var(--md-text-secondary)',
                   cursor: 'pointer',
-                  display: 'flex',
                   alignItems: 'center',
                   gap: '4px',
                 }}
@@ -341,21 +341,11 @@ export const CVBuilderView: React.FC<Props> = ({
 
       {/* Main Container: Split or Full */}
       <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns:
-            previewMode === 'split'
-              ? '1fr 1fr'
-              : previewMode === 'editor'
-              ? '1fr'
-              : '1fr',
-          gap: '24px',
-          alignItems: 'start',
-        }}
+        className={previewMode === 'split' ? 'cv-split-layout is-split' : 'cv-split-layout'}
       >
         {/* LEFT / EDITOR PANEL */}
         {(previewMode === 'editor' || previewMode === 'split') && (
-          <div className="m3-surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="m3-surface-card" style={{ display: 'flex', flexDirection: 'column', gap: '20px', minWidth: 0 }}>
             {/* STEP 1: Personal Info */}
             {activeStep === 'personal' && (
               <div>
@@ -363,7 +353,7 @@ export const CVBuilderView: React.FC<Props> = ({
                   Personal & Career Summary
                 </h3>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+                <div className="cv-field-grid-2" style={{ marginBottom: '14px' }}>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)', display: 'block', marginBottom: '4px' }}>
                       Full Name
@@ -406,7 +396,7 @@ export const CVBuilderView: React.FC<Props> = ({
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+                <div className="cv-field-grid-2" style={{ marginBottom: '14px' }}>
                   <div>
                     <label style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)', display: 'block', marginBottom: '4px' }}>
                       Phone
@@ -536,7 +526,21 @@ export const CVBuilderView: React.FC<Props> = ({
                   </button>
                 </div>
 
-                {cvData.experience.map((exp, idx) => (
+                {cvData.experience.length === 0 ? (
+                  <div
+                    style={{
+                      background: 'var(--md-surface-variant)',
+                      border: '1px dashed var(--md-outline)',
+                      borderRadius: '14px',
+                      padding: '22px 16px',
+                      textAlign: 'center',
+                      color: 'var(--md-text-secondary)',
+                      fontSize: '13px',
+                    }}
+                  >
+                    No work experience added yet. Tap <strong>+ Add Role</strong> above to include jobs, internships, or projects.
+                  </div>
+                ) : cvData.experience.map((exp, idx) => (
                   <div
                     key={idx}
                     style={{
@@ -547,7 +551,36 @@ export const CVBuilderView: React.FC<Props> = ({
                       marginBottom: '16px',
                     }}
                   >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
+                        Role #{idx + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCvData((prev) => ({
+                            ...prev,
+                            experience: prev.experience.filter((_, i) => i !== idx),
+                          }));
+                        }}
+                        aria-label={`Remove role ${exp.title || idx + 1}`}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#ef4444',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                        }}
+                      >
+                        <Trash2 size={13} /> Remove
+                      </button>
+                    </div>
+                    <div className="cv-field-grid-2" style={{ marginBottom: '10px' }}>
                       <div>
                         <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Role Title</label>
                         <input
@@ -703,90 +736,208 @@ export const CVBuilderView: React.FC<Props> = ({
             {/* STEP 3: Education */}
             {activeStep === 'education' && (
               <div>
-                <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--md-text-primary)', marginBottom: '14px' }}>
-                  Education & Academic Credentials
-                </h3>
-                {cvData.education.map((edu, idx) => (
-                  <div
-                    key={idx}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--md-text-primary)', margin: 0 }}>
+                    Education &amp; Academic Credentials
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCvData((prev) => ({
+                        ...prev,
+                        education: [
+                          ...prev.education,
+                          {
+                            degree: '',
+                            institution: '',
+                            year: '',
+                          },
+                        ],
+                      }));
+                    }}
                     style={{
-                      background: 'var(--md-surface-variant)',
-                      border: '1px solid var(--md-outline)',
-                      borderRadius: '14px',
-                      padding: '16px',
-                      marginBottom: '14px',
+                      background: 'var(--md-primary-container)',
+                      color: 'var(--md-on-primary-container)',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '6px 12px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
                     }}
                   >
-                    <div style={{ marginBottom: '10px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Degree / Major</label>
-                      <input
-                        type="text"
-                        value={edu.degree}
-                        onChange={(e) => {
-                          const next = [...cvData.education];
-                          next[idx].degree = e.target.value;
-                          setCvData({ ...cvData, education: next });
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '8px 12px',
-                          borderRadius: '8px',
-                          border: '1px solid var(--md-outline)',
-                          background: 'var(--md-surface)',
-                          color: 'var(--md-text-primary)',
-                          fontSize: '13px',
-                          boxSizing: 'border-box',
-                        }}
-                      />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
-                      <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Institution</label>
-                        <input
-                          type="text"
-                          value={edu.institution}
-                          onChange={(e) => {
-                            const next = [...cvData.education];
-                            next[idx].institution = e.target.value;
-                            setCvData({ ...cvData, education: next });
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid var(--md-outline)',
-                            background: 'var(--md-surface)',
-                            color: 'var(--md-text-primary)',
-                            fontSize: '13px',
-                            boxSizing: 'border-box',
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Graduation Year</label>
-                        <input
-                          type="text"
-                          value={edu.year}
-                          onChange={(e) => {
-                            const next = [...cvData.education];
-                            next[idx].year = e.target.value;
-                            setCvData({ ...cvData, education: next });
-                          }}
-                          style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: '8px',
-                            border: '1px solid var(--md-outline)',
-                            background: 'var(--md-surface)',
-                            color: 'var(--md-text-primary)',
-                            fontSize: '13px',
-                            boxSizing: 'border-box',
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <Plus size={14} /> Add Education
+                  </button>
+                </div>
+
+                {cvData.education.length === 0 ? (
+                  <div
+                    style={{
+                      background: 'var(--md-surface-variant)',
+                      border: '1px dashed var(--md-outline)',
+                      borderRadius: '14px',
+                      padding: '22px 16px',
+                      textAlign: 'center',
+                      color: 'var(--md-text-secondary)',
+                      fontSize: '13px',
+                      display: 'grid',
+                      justifyItems: 'center',
+                      gap: '10px',
+                    }}
+                  >
+                    <p style={{ margin: 0 }}>
+                      No education or certifications added yet. Add your degree, diploma, or bootcamp credential.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCvData((prev) => ({
+                          ...prev,
+                          education: [
+                            {
+                              degree: '',
+                              institution: '',
+                              year: '',
+                            },
+                          ],
+                        }));
+                      }}
+                      style={{
+                        background: 'var(--md-primary)',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        padding: '8px 14px',
+                        fontSize: '12.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                      }}
+                    >
+                      <Plus size={14} /> Add Education
+                    </button>
                   </div>
-                ))}
+                ) : (
+                  cvData.education.map((edu, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        background: 'var(--md-surface-variant)',
+                        border: '1px solid var(--md-outline)',
+                        borderRadius: '14px',
+                        padding: '16px',
+                        marginBottom: '14px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
+                          Credential #{idx + 1}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCvData((prev) => ({
+                              ...prev,
+                              education: prev.education.filter((_, i) => i !== idx),
+                            }));
+                          }}
+                          aria-label={`Remove education entry ${edu.degree || idx + 1}`}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#ef4444',
+                            fontSize: '11.5px',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            cursor: 'pointer',
+                            padding: '2px 4px',
+                          }}
+                        >
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+
+                      <div style={{ marginBottom: '10px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Degree / Major</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. B.Sc. in Computer Science"
+                          value={edu.degree}
+                          onChange={(e) => {
+                            const next = [...cvData.education];
+                            next[idx] = { ...next[idx], degree: e.target.value };
+                            setCvData({ ...cvData, education: next });
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1px solid var(--md-outline)',
+                            background: 'var(--md-surface)',
+                            color: 'var(--md-text-primary)',
+                            fontSize: '13px',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+                      <div className="cv-edu-grid">
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Institution</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. Dhaka University"
+                            value={edu.institution}
+                            onChange={(e) => {
+                              const next = [...cvData.education];
+                              next[idx] = { ...next[idx], institution: e.target.value };
+                              setCvData({ ...cvData, education: next });
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid var(--md-outline)',
+                              background: 'var(--md-surface)',
+                              color: 'var(--md-text-primary)',
+                              fontSize: '13px',
+                              boxSizing: 'border-box',
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>Graduation Year</label>
+                          <input
+                            type="text"
+                            placeholder="e.g. 2025"
+                            value={edu.year}
+                            onChange={(e) => {
+                              const next = [...cvData.education];
+                              next[idx] = { ...next[idx], year: e.target.value };
+                              setCvData({ ...cvData, education: next });
+                            }}
+                            style={{
+                              width: '100%',
+                              padding: '8px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid var(--md-outline)',
+                              background: 'var(--md-surface)',
+                              color: 'var(--md-text-primary)',
+                              fontSize: '13px',
+                              boxSizing: 'border-box',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
@@ -803,6 +954,7 @@ export const CVBuilderView: React.FC<Props> = ({
                     placeholder="e.g. Next.js, Redis, GraphQL"
                     style={{
                       flex: 1,
+                      minWidth: 0,
                       padding: '8px 14px',
                       borderRadius: '10px',
                       border: '1px solid var(--md-outline)',

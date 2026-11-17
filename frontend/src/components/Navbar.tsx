@@ -26,29 +26,11 @@ export const Navbar: React.FC<Props> = ({
   onSignOut,
 }) => {
   return (
-    <header
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: '18px',
-        flexWrap: 'wrap',
-        gap: '12px',
-        padding: '2px 0',
-      }}
-    >
+    <header className="app-navbar">
       {/* Brand & User Greeting */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+      <div className="app-navbar-brand">
         <div
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            overflow: 'hidden',
-            border: '2px solid var(--md-primary)',
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
+          className="app-navbar-avatar"
           onClick={onOpenProfile}
           title="Account & Settings"
         >
@@ -59,12 +41,13 @@ export const Navbar: React.FC<Props> = ({
           />
         </div>
 
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-secondary)' }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+            <span className="app-navbar-title-tag" style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-secondary)', flexShrink: 0 }}>
               Career Pilot
             </span>
             <span
+              className="app-navbar-role"
               onClick={onOpenGoalSettings}
               style={{
                 fontSize: '10px',
@@ -77,13 +60,15 @@ export const Navbar: React.FC<Props> = ({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '3px',
+                minWidth: 0,
               }}
             >
-              <Compass size={10} />
-              {profile.target_role || 'Set Goal'}
+              <Compass size={10} style={{ flexShrink: 0 }} />
+              <span className="app-navbar-role-text">{profile.target_role || 'Set Goal'}</span>
             </span>
           </div>
           <h3
+            className="app-navbar-name"
             style={{
               fontSize: '15px',
               fontWeight: 700,
@@ -99,9 +84,10 @@ export const Navbar: React.FC<Props> = ({
       </div>
 
       {/* Right Action Icons & Badges */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div className="app-navbar-actions">
         {/* Live coach request quota */}
         {aiQuota && !profile.is_demo && <div
+          className="app-navbar-quota"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -117,26 +103,14 @@ export const Navbar: React.FC<Props> = ({
           title={`${aiQuota.coach.remaining} of ${aiQuota.coach.limit} coach requests left`}
         >
           <Sparkles size={12} color="var(--md-primary)" />
-          <span>{aiQuota.coach.remaining} left</span>
+          <span>{aiQuota.coach.remaining}<span className="app-navbar-quota-suffix"> left</span></span>
         </div>}
 
         {/* Dark / Light Mode Switcher */}
         <button
           type="button"
+          className="app-navbar-icon-btn"
           onClick={onToggleTheme}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            background: 'var(--md-surface)',
-            border: '1px solid var(--md-outline)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: 'var(--md-text-secondary)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
           title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
         >
@@ -146,21 +120,9 @@ export const Navbar: React.FC<Props> = ({
         {/* Notification Bell Button */}
         <button
           type="button"
+          className="app-navbar-icon-btn"
           onClick={onOpenNotifications}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            background: 'var(--md-surface)',
-            border: '1px solid var(--md-outline)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            position: 'relative',
-            color: 'var(--md-text-primary)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
+          style={{ position: 'relative', color: 'var(--md-text-primary)' }}
           title="Notifications"
           aria-label="Notifications"
         >
@@ -181,20 +143,8 @@ export const Navbar: React.FC<Props> = ({
         {/* Sign Out Button */}
         <button
           type="button"
+          className="app-navbar-icon-btn"
           onClick={onSignOut}
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            background: 'var(--md-surface)',
-            border: '1px solid var(--md-outline)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            cursor: 'pointer',
-            color: 'var(--md-text-secondary)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
           title="Sign Out"
           aria-label="Sign Out"
         >

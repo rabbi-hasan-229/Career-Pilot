@@ -46,27 +46,11 @@ export const QuickActionSheetModal: React.FC<Props> = ({
     >
       <div
         ref={dialogRef}
+        className="quick-action-sheet"
         role="dialog"
         aria-modal="true"
         aria-label="Quick actions and replanning"
         tabIndex={-1}
-        style={{
-          width: '100%',
-          maxWidth: '520px',
-          background: 'var(--md-surface)',
-          borderTop: '1px solid var(--md-outline)',
-          borderLeft: '1px solid var(--md-outline)',
-          borderRight: '1px solid var(--md-outline)',
-          borderTopLeftRadius: '28px',
-          borderTopRightRadius: '28px',
-          padding: '24px',
-          boxShadow: '0 -10px 40px rgba(0,0,0,0.3)',
-          boxSizing: 'border-box',
-          maxHeight: '85vh',
-          overflowY: 'auto',
-          color: 'var(--md-text-primary)',
-          animation: 'slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
-        }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Handle pill */}

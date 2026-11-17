@@ -775,4 +775,36 @@ const coachStyles = `
   background: var(--md-primary-container);
   color: var(--md-primary);
 }
+
+@media (max-width: 640px) {
+  .ac-header {
+    padding: 14px;
+    gap: 10px;
+  }
+
+  .ac-chat-panel {
+    min-height: 380px;
+  }
+
+  .ac-messages-scroll {
+    padding: 14px;
+  }
+
+  .ac-proposal-card {
+    margin-left: 0;
+    max-width: 100%;
+  }
+
+  .ac-composer-wrap {
+    padding: 10px 12px;
+  }
+
+  .ac-composer-box {
+    padding: 6px 6px 6px 10px;
+  }
+
+  .ac-rail {
+    padding: 14px;
+  }
+}
 `;

@@ -887,6 +887,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
 
                 {/* Preset Time Buttons (3, 6, 9, 12, 18+ Months & Custom) */}
                 <div
+                  className="career-timeline-presets"
                   style={{
                     display: 'grid',
                     gridTemplateColumns: 'repeat(6, 1fr)',
@@ -953,6 +954,8 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '8px',
                     background: '#FFFFFF',
                     border: `1.5px solid ${selectedTimelinePreset === 'custom' ? '#F59E0B' : '#E2E8F0'}`,
                     borderRadius: '10px',
