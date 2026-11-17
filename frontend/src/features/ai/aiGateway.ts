@@ -9,17 +9,24 @@ export type LiveVoiceName = 'Kore' | 'Aoede' | 'Puck' | 'Charon' | 'Fenrir';
 
 export interface LiveInterviewTokenResponse {
   token: string;
+  api_version?: 'v1alpha' | 'v1beta';
   live_models: string[];
   default_voice: LiveVoiceName;
   expires_at: string;
 }
 
 export interface ConversationalInterviewTurnResponse {
-  action: 'start_question' | 'clarify' | 'ask_followup' | 'evaluate';
+  action: 'start_question' | 'clarify' | 'ask_followup' | 'evaluate' | 'debrief';
   reply: string;
+  score?: number;
+  signal_label?: 'Strong Signal' | 'Solid Foundation' | 'Developing';
   strengths?: string[];
   growth_tip?: string;
   critique?: string;
+  overall_score?: number;
+  readiness_label?: 'Strong Hire Signal' | 'Solid Progress' | 'Promising Foundation' | 'Warm-Up Complete';
+  dimensions?: Array<{ label: string; score: number; comment: string }>;
+  priority_improvements?: string[];
 }
 
 export function isRolePlanOutline(value: unknown, expectedRoleTitle: string): value is RolePlanOutline {
@@ -130,11 +137,25 @@ export async function transcribeSpeechAudio(input: {
   });
 }
 
-/** Generate a realistic human interviewer turn (greeting-to-Q1, clarification, follow-up, or evaluation). */
+/** Generate natural Gemini speech audio for an interviewer prompt. */
+export async function synthesizeInterviewSpeech(input: {
+  text: string;
+  voice_name?: LiveVoiceName;
+}): Promise<AIGatewayResult<{ audio_base64: string; mime_type: string }>> {
+  return requestAI<{ audio_base64: string; mime_type: string }>('interview', {
+    mode: 'tts',
+    text: input.text.slice(0, 1500),
+    voice_name: input.voice_name || 'Kore',
+  });
+}
+
+/** Generate a realistic human interviewer turn (opening, warmup-to-Q1, clarification, follow-up, evaluation, or debrief). */
 export async function requestInterviewTurn(input: {
-  stage: 'warmup' | 'questioning';
+  stage: 'opening' | 'warmup' | 'questioning' | 'debrief';
   target_role: string;
   experience_level?: string;
+  focus_mode?: string;
+  candidate_name?: string;
   question: string;
   answer: string;
   rubric?: string;
@@ -146,6 +167,8 @@ export async function requestInterviewTurn(input: {
     stage: input.stage,
     target_role: input.target_role,
     experience_level: input.experience_level || '',
+    focus_mode: input.focus_mode || '',
+    candidate_name: input.candidate_name || '',
     question: input.question,
     answer: input.answer,
     rubric: input.rubric || '',

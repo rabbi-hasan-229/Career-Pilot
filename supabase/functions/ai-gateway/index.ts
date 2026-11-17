@@ -14,25 +14,35 @@ const ROLE_TEMPLATE_TTL_DAYS = 90;
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 const GEMINI_TEXT_MODELS = [
-  'gemini-3.5-flash',
+  'gemini-3.8-flash',
+  'gemini-4-hydrogen',
   'gemini-3.6-flash',
-  'gemini-3.1-flash-lite-preview',
-  'gemini-flash-lite-latest',
+  'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
   'gemini-3-flash-preview',
+  'gemini-3.1-flash-lite-preview',
   'gemini-flash-latest',
+  'gemini-flash-lite-latest',
   'gemma-4-31b-it',
 ];
 const GEMINI_TRANSCRIBE_MODELS = [
   'gemini-3.5-transcribe',
+  'gemini-3.8-flash',
   'gemini-3.5-flash',
   'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite-preview',
   'gemini-flash-lite-latest',
 ];
+const GEMINI_TTS_MODELS = [
+  'gemini-3.8-flash-lite-tts',
+  'gemini-3.8-flash-tts',
+  'gemini-2.5-flash-preview-tts',
+];
 const GEMINI_LIVE_MODELS = [
+  'gemini-3.8-live',
   'gemini-3.1-flash-live-preview',
   'gemini-2.5-flash-native-audio-latest',
-  'gemini-3.8-live',
   'gemini-2.5-flash-native-audio-preview-12-2025',
 ];
 const LIVE_VOICE_OPTIONS = new Set(['Aoede', 'Kore', 'Puck', 'Charon', 'Fenrir']);
@@ -52,7 +62,7 @@ const corsHeaders = {
 };
 
 type Feature = 'coach' | 'cv' | 'interview' | 'role';
-type InterviewMode = 'critique' | 'converse' | 'transcribe' | 'live_token';
+type InterviewMode = 'critique' | 'converse' | 'transcribe' | 'tts' | 'live_token';
 
 interface GatewayRequest { feature: Feature; input: Record<string, unknown> }
 interface OpenAIProviderResponse {
@@ -64,6 +74,7 @@ interface OpenAIProviderResponse {
 interface GeminiCandidatePart {
   text?: string;
   thought?: boolean;
+  inlineData?: { data?: string; mimeType?: string };
 }
 interface GeminiGenerateResponse {
   candidates?: Array<{
@@ -131,7 +142,7 @@ function validateInput(feature: Feature, input: Record<string, unknown>): {
   }
   if (feature === 'interview') {
     const rawMode = getString(input, 'mode', 24, false) || 'critique';
-    if (!['critique', 'converse', 'transcribe', 'live_token'].includes(rawMode)) {
+    if (!['critique', 'converse', 'transcribe', 'tts', 'live_token'].includes(rawMode)) {
       throw new Error('Unsupported interview action mode.');
     }
     const mode = rawMode as InterviewMode;
@@ -146,9 +157,20 @@ function validateInput(feature: Feature, input: Record<string, unknown>): {
         },
       };
     }
+    if (mode === 'tts') {
+      const requestedVoice = getString(input, 'voice_name', 32, false) || 'Kore';
+      return {
+        interviewMode: mode,
+        cleanInput: {
+          mode,
+          text: getString(input, 'text', 1500),
+          voice_name: LIVE_VOICE_OPTIONS.has(requestedVoice) ? requestedVoice : 'Kore',
+        },
+      };
+    }
     if (mode === 'transcribe') {
       const mimeType = getString(input, 'mime_type', 80).toLowerCase();
-      if (!/^audio\/(webm|mp4|mpeg|mp3|ogg|wav|x-wav|aac|flac)(;.*)?$/.test(mimeType)) {
+      if (!/^audio\/(webm|mp4|mpeg|mp3|ogg|opus|wav|x-wav|aac|flac|x-matroska)(;.*)?$/.test(mimeType)) {
         throw new Error('Unsupported audio format for transcription.');
       }
       const audioBase64 = getString(input, 'audio_base64', 4_200_000);
@@ -170,10 +192,12 @@ function validateInput(feature: Feature, input: Record<string, unknown>): {
           stage: getString(input, 'stage', 32),
           target_role: getString(input, 'target_role', 120, false),
           experience_level: getString(input, 'experience_level', 40, false),
+          focus_mode: getString(input, 'focus_mode', 40, false),
+          candidate_name: getString(input, 'candidate_name', 80, false),
           question: getString(input, 'question', 2000, false),
           answer: getString(input, 'answer', 6000),
           rubric: getString(input, 'rubric', 2000, false),
-          history: getString(input, 'history', 8000, false),
+          history: getString(input, 'history', 10_000, false),
           follow_up_count: getString(input, 'follow_up_count', 8, false),
         },
       };
@@ -239,17 +263,34 @@ function instructionsFor(feature: Feature, interviewMode: InterviewMode): string
     if (interviewMode === 'transcribe') {
       return 'Transcribe ONLY the clearly spoken words from this audio clip verbatim in plain text with normal punctuation. Preserve technical terms accurately. If the audio contains only silence, breathing, or unintelligible background noise with no clear speech, return literally: [SILENCE]';
     }
+    if (interviewMode === 'tts') {
+      return '';
+    }
     if (interviewMode === 'converse') {
-      return `${shared} Conduct a realistic human mock interview turn for the candidate's target role.
+      return `${shared} Conduct a realistic, intelligent human mock interview for the candidate's target_role.
 Rules:
-- Read "stage" ("warmup" or "questioning"), "question", "answer", "history", and "follow_up_count".
-- Sound like an attentive human engineering/hiring manager: briefly acknowledge something specific the candidate just said before responding.
-- If stage is "warmup": welcome what they shared warmly (referencing tools or projects they mentioned) and transition smoothly into asking the supplied Question 1. Return action="start_question".
+- Read "stage" ("opening", "warmup", "questioning", or "debrief"), "target_role", "experience_level", "focus_mode", "candidate_name", "question", "answer", "history", and "follow_up_count".
+- Speak like an attentive, sharp human hiring manager (Maya): concise, natural spoken phrasing, zero robotic boilerplate.
+- If stage is "opening": greet the candidate warmly by candidate_name (if provided), briefly frame the focus_mode interview for target_role, and invite a quick 30-second background intro of what they built or worked on recently. Return action="start_question" with reply under 65 words.
+- If stage is "warmup": warmly reference a specific project, stack, or detail from their answer, then transition naturally into Question 1 (use or adapt the supplied "question" so it feels connected to their background). Return action="start_question" with reply under 100 words.
 - If stage is "questioning":
-  - If the candidate asks a clarifying question or asks for constraints/scope, answer helpfully and return action="clarify".
-  - If follow_up_count is 0 and their answer is brief, uncertain, or skips key tradeoffs/edge cases/outcomes, ask ONE natural, supportive follow-up probe referencing what they said and return action="ask_followup".
-  - Otherwise (solid answer OR follow_up_count >= 1), wrap up the question conversationally, give constructive coaching feedback, and return action="evaluate" with strengths (1-3 items), growth_tip (1 concrete sentence), and critique (2-3 sentence holistic critique).
-Return ONLY valid JSON: {"action":"start_question"|"clarify"|"ask_followup"|"evaluate","reply":"spoken-style conversational response under 110 words","strengths":["optional string"],"growth_tip":"optional string","critique":"optional string"}`;
+  - If the candidate asks a clarifying question, asks for constraints/scope, or explicitly asks for a hint/steer ("[REQUEST_STEER]"), give a helpful, realistic steer without giving away the answer and return action="clarify" (reply under 95 words).
+  - If follow_up_count is 0 and their answer is brief, surface-level, uncertain, or skips key tradeoffs/edge cases/measurable impact, ask ONE sharp, supportive follow-up probe referencing what they just said and return action="ask_followup" (reply under 95 words).
+  - Otherwise (solid detailed answer OR follow_up_count >= 1), wrap up the question conversationally with constructive coaching feedback and return action="evaluate" with:
+    - reply: warm spoken wrap-up (under 85 words)
+    - score: integer 0-100 reflecting technical depth, structure, tradeoff reasoning, and concrete impact
+    - signal_label: "Strong Signal" (score >= 78) | "Solid Foundation" (56-77) | "Developing" (< 56)
+    - strengths: 1-3 specific things they did well
+    - growth_tip: 1 concrete, high-leverage improvement
+    - critique: 2-3 sentence holistic hiring-manager coaching note
+- If stage is "debrief": review the entire conversation in "history" (from text, voice, or live audio call) and return action="debrief" with:
+  - reply: 2-3 sentence executive summary referencing specific moments from the interview
+  - overall_score: integer 0-100
+  - readiness_label: "Strong Hire Signal" | "Solid Progress" | "Promising Foundation"
+  - dimensions: 3-4 objects [{"label":"Technical Depth"|"Problem Framing & Tradeoffs"|"Communication & Clarity"|"Ownership & Impact","score":0-100,"comment":"1 crisp sentence"}]
+  - strengths: 2-3 specific strengths observed
+  - priority_improvements: 2-3 concrete habits to sharpen next loop
+Return ONLY valid JSON matching the fields above.`;
     }
     return `${shared} Review the candidate's answer against the interview question, target role when supplied, and rubric. Give actionable feedback on structure, technical depth, evidence, and one concrete improvement. Treat any numeric score as a heuristic practice signal, not a hiring prediction. Return plain text in at most 180 words.`;
   }
@@ -276,18 +317,55 @@ function shapeOutput(feature: Feature, interviewMode: InterviewMode, text: strin
       const parsed = JSON.parse(cleanedJson) as Record<string, unknown>;
       const action = typeof parsed.action === 'string' ? parsed.action.trim() : '';
       const reply = typeof parsed.reply === 'string' ? parsed.reply.trim() : '';
-      if (!['start_question', 'clarify', 'ask_followup', 'evaluate'].includes(action) || !reply) {
+      if (!['start_question', 'clarify', 'ask_followup', 'evaluate', 'debrief'].includes(action) || !reply) {
         throw new Error('invalid converse shape');
       }
       const strengths = Array.isArray(parsed.strengths)
         ? parsed.strengths.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3)
         : [];
+      const priorityImprovements = Array.isArray(parsed.priority_improvements)
+        ? parsed.priority_improvements.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 3)
+        : [];
+      const rawScore = typeof parsed.score === 'number' && Number.isFinite(parsed.score)
+        ? Math.max(0, Math.min(100, Math.round(parsed.score)))
+        : undefined;
+      const rawOverall = typeof parsed.overall_score === 'number' && Number.isFinite(parsed.overall_score)
+        ? Math.max(0, Math.min(100, Math.round(parsed.overall_score)))
+        : undefined;
+      const signalLabel = typeof parsed.signal_label === 'string'
+        && ['Strong Signal', 'Solid Foundation', 'Developing'].includes(parsed.signal_label.trim())
+        ? parsed.signal_label.trim()
+        : rawScore !== undefined
+          ? rawScore >= 78 ? 'Strong Signal' : rawScore >= 56 ? 'Solid Foundation' : 'Developing'
+          : undefined;
+      const readinessLabel = typeof parsed.readiness_label === 'string'
+        && ['Strong Hire Signal', 'Solid Progress', 'Promising Foundation', 'Warm-Up Complete'].includes(parsed.readiness_label.trim())
+        ? parsed.readiness_label.trim()
+        : undefined;
+      const dimensions = Array.isArray(parsed.dimensions)
+        ? parsed.dimensions
+            .filter((d): d is Record<string, unknown> => Boolean(d && typeof d === 'object' && !Array.isArray(d)))
+            .map((d) => ({
+              label: typeof d.label === 'string' ? d.label.trim().slice(0, 60) : '',
+              score: typeof d.score === 'number' && Number.isFinite(d.score) ? Math.max(0, Math.min(100, Math.round(d.score))) : 70,
+              comment: typeof d.comment === 'string' ? d.comment.trim().slice(0, 220) : '',
+            }))
+            .filter((d) => d.label.length > 0)
+            .slice(0, 4)
+        : [];
+
       return {
         action,
         reply: reply.slice(0, 2000),
+        ...(rawScore !== undefined ? { score: rawScore } : {}),
+        ...(signalLabel ? { signal_label: signalLabel } : {}),
         strengths,
         growth_tip: typeof parsed.growth_tip === 'string' ? parsed.growth_tip.trim().slice(0, 600) : '',
         critique: typeof parsed.critique === 'string' ? parsed.critique.trim().slice(0, 1200) : '',
+        ...(rawOverall !== undefined ? { overall_score: rawOverall } : {}),
+        ...(readinessLabel ? { readiness_label: readinessLabel } : {}),
+        ...(dimensions.length > 0 ? { dimensions } : {}),
+        ...(priorityImprovements.length > 0 ? { priority_improvements: priorityImprovements } : {}),
       };
     }
     return { ai_feedback: text.trim() };
@@ -345,8 +423,14 @@ function shapeOutput(feature: Feature, interviewMode: InterviewMode, text: strin
 
 function buildGeminiModelChain(interviewMode: InterviewMode): string[] {
   const envPrimary = Deno.env.get('GEMINI_MODEL')?.trim();
-  const baseList = interviewMode === 'transcribe' ? GEMINI_TRANSCRIBE_MODELS : GEMINI_TEXT_MODELS;
-  const list = envPrimary && interviewMode !== 'transcribe' ? [envPrimary, ...baseList] : [...baseList];
+  const baseList = interviewMode === 'transcribe'
+    ? GEMINI_TRANSCRIBE_MODELS
+    : interviewMode === 'tts'
+      ? GEMINI_TTS_MODELS
+      : GEMINI_TEXT_MODELS;
+  const list = envPrimary && interviewMode !== 'transcribe' && interviewMode !== 'tts'
+    ? [envPrimary, ...baseList]
+    : [...baseList];
   return [...new Set(list.filter(Boolean))];
 }
 
@@ -354,6 +438,29 @@ function buildLiveModelChain(): string[] {
   const envLive = Deno.env.get('GEMINI_LIVE_MODEL')?.trim();
   const list = envLive ? [envLive, ...GEMINI_LIVE_MODELS] : [...GEMINI_LIVE_MODELS];
   return [...new Set(list.filter(Boolean))];
+}
+
+function thinkingConfigForModel(model: string): Record<string, unknown> | undefined {
+  if (/^gemini-(?:3|4)/.test(model) && !model.includes('-tts') && !model.includes('transcribe')) {
+    return { thinkingLevel: 'minimal' };
+  }
+  if (/^gemini-2\.5/.test(model) && !model.includes('-tts')) {
+    return { thinkingBudget: 0 };
+  }
+  return undefined;
+}
+
+function extractGeminiAudio(data: GeminiGenerateResponse): { data: string; mimeType: string } | null {
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      return {
+        data: part.inlineData.data,
+        mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000',
+      };
+    }
+  }
+  return null;
 }
 
 function extractGeminiText(data: GeminiGenerateResponse): string {
@@ -414,34 +521,64 @@ async function generateWithGeminiFallbacks(params: {
             ? `Transcribe the audio accurately. Context terms if relevant: ${cleanInput.hint}`
             : 'Transcribe the audio accurately.',
       });
+    } else if (interviewMode === 'tts') {
+      parts.push({ text: cleanInput.text });
     } else {
       parts.push({
         text: isGemma ? `${instructions}\n\nUser input JSON:\n${serializedInput}` : serializedInput,
       });
     }
 
+    const generationConfig: Record<string, unknown> = interviewMode === 'tts'
+      ? {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: cleanInput.voice_name || 'Kore',
+              },
+            },
+          },
+        }
+      : {
+          maxOutputTokens,
+          temperature: interviewMode === 'transcribe' ? 0.1 : feature === 'coach' || interviewMode === 'converse' ? 0.55 : 0.35,
+          ...(wantJson && !isGemma ? { responseMimeType: 'application/json' } : {}),
+        };
+
+    const thinkingCfg = interviewMode === 'transcribe' || interviewMode === 'tts' ? undefined : thinkingConfigForModel(model);
+    if (thinkingCfg) {
+      generationConfig.thinkingConfig = thinkingCfg;
+    }
+
     const requestBody: Record<string, unknown> = {
       contents: [{ role: 'user', parts }],
-      generationConfig: {
-        maxOutputTokens,
-        temperature: interviewMode === 'transcribe' ? 0.1 : feature === 'coach' || interviewMode === 'converse' ? 0.55 : 0.35,
-        ...(wantJson && !isGemma ? { responseMimeType: 'application/json' } : {}),
-      },
+      generationConfig,
     };
-    if (!isGemma) {
+    if (!isGemma && instructions) {
       requestBody.systemInstruction = { parts: [{ text: instructions }] };
     }
 
-    try {
-      const res = await fetch(`${GEMINI_API_BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    const sendGenerateRequest = async (bodyPayload: Record<string, unknown>) =>
+      fetch(`${GEMINI_API_BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-goog-api-key': geminiKey,
         },
         signal: AbortSignal.timeout(timeoutMs),
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify(bodyPayload),
       });
+
+    try {
+      let res = await sendGenerateRequest(requestBody);
+
+      // If a preview/alias model rejects thinkingConfig with HTTP 400, retry once without thinkingConfig
+      if (!res.ok && res.status === 400 && thinkingCfg) {
+        const retryConfig = { ...generationConfig };
+        delete retryConfig.thinkingConfig;
+        res = await sendGenerateRequest({ ...requestBody, generationConfig: retryConfig });
+      }
 
       if (!res.ok) {
         observability.log('warn', 'gemini.fallback_http_error', { model, status_code: res.status });
@@ -449,6 +586,23 @@ async function generateWithGeminiFallbacks(params: {
       }
 
       const data = await res.json() as GeminiGenerateResponse;
+
+      if (interviewMode === 'tts') {
+        const audio = extractGeminiAudio(data);
+        if (!audio) {
+          observability.log('warn', 'gemini.fallback_empty_audio', { model });
+          continue;
+        }
+        const tokensIn = Math.max(1, Math.round(Number(data.usageMetadata?.promptTokenCount ?? Math.ceil(cleanInput.text.length / 4))));
+        const tokensOut = Math.max(1, Math.round(Number(data.usageMetadata?.candidatesTokenCount ?? 25)));
+        return {
+          modelResult: { audio_base64: audio.data, mime_type: audio.mimeType },
+          modelUsed: model,
+          tokensIn,
+          tokensOut,
+        };
+      }
+
       const rawText = extractGeminiText(data);
 
       // gemini-3.5-transcribe legitimately returns STOP with zero parts for pure silence
@@ -576,24 +730,40 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       try {
         const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
         const newSessionExpireTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-        const tokenRes = await fetch(`${GEMINI_API_BASE}/v1alpha/auth_tokens`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': geminiKey,
-          },
-          signal: AbortSignal.timeout(10_000),
-          body: JSON.stringify({
-            uses: 6,
-            expireTime,
-            newSessionExpireTime,
-          }),
-        });
-        if (!tokenRes.ok) {
-          throw new Error(`Token endpoint returned HTTP ${tokenRes.status}`);
+        let mintedToken: string | null = null;
+        let mintedVersion: 'v1alpha' | 'v1beta' = 'v1alpha';
+        let lastTokenStatus = 0;
+
+        for (const apiVersion of ['v1alpha', 'v1beta'] as const) {
+          const tokenRes = await fetch(`${GEMINI_API_BASE}/${apiVersion}/auth_tokens`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': geminiKey,
+            },
+            signal: AbortSignal.timeout(10_000),
+            body: JSON.stringify({
+              uses: 6,
+              expireTime,
+              newSessionExpireTime,
+            }),
+          });
+          lastTokenStatus = tokenRes.status;
+          if (!tokenRes.ok) {
+            observability.log('warn', 'gemini.live_token_http_error', { api_version: apiVersion, status_code: tokenRes.status });
+            continue;
+          }
+          const tokenJson = await tokenRes.json() as { name?: string };
+          if (tokenJson?.name) {
+            mintedToken = tokenJson.name;
+            mintedVersion = apiVersion;
+            break;
+          }
         }
-        const tokenJson = await tokenRes.json() as { name?: string };
-        if (!tokenJson?.name) throw new Error('No ephemeral token returned by Gemini.');
+
+        if (!mintedToken) {
+          throw new Error(`Token endpoint returned HTTP ${lastTokenStatus || 502}`);
+        }
 
         await admin.rpc('finish_ai_usage', {
           p_reservation_id: reservationId,
@@ -606,7 +776,8 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
           source: 'model',
           cached: false,
           response: {
-            token: tokenJson.name,
+            token: mintedToken,
+            api_version: mintedVersion,
             live_models: buildLiveModelChain(),
             default_voice: cleanInput.voice_name || 'Kore',
             expires_at: expireTime,
@@ -618,14 +789,15 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
             remaining_quota: Math.max(0, featureLimit - Number(reservation.used || 0)),
           },
         });
-      } catch {
+      } catch (tokenErr) {
         await admin.rpc('finish_ai_usage', {
           p_reservation_id: reservationId,
           p_success: false,
           p_tokens_in: null,
           p_tokens_out: null,
         });
-        return response({ error: 'Could not initialize Gemini Live voice session right now.' }, 502);
+        const detail = tokenErr instanceof Error ? tokenErr.message : 'Unknown error';
+        return response({ error: `Could not initialize Gemini Live voice session (${detail}).` }, 502);
       }
     }
 
@@ -633,13 +805,13 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     const maxOutputTokens = feature === 'role'
       ? 1400
       : feature === 'coach'
-        ? 600
+        ? 650
         : interviewMode === 'transcribe'
-          ? 800
+          ? 1000
           : interviewMode === 'converse'
-            ? 700
+            ? 1100
             : feature === 'interview'
-              ? 600
+              ? 900
               : 450;
 
     let roleCacheKey: string | null = null;
@@ -739,7 +911,7 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       }
 
       // Secondary OpenAI fallback for text features if Gemini fails across all fallback models
-      if (!resultBundle && openAiKey && openAiModel && interviewMode !== 'transcribe') {
+      if (!resultBundle && openAiKey && openAiModel && interviewMode !== 'transcribe' && interviewMode !== 'tts') {
         const providerResponse = await fetch(`${openAiEndpoint}/responses`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${openAiKey}`, 'Content-Type': 'application/json' },

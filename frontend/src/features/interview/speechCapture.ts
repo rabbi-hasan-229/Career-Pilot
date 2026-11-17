@@ -316,7 +316,7 @@ export function createHybridSpeechController(options: {
 
     const durationMs = Date.now() - startedAt;
     const browserText = (browserFinalTranscript || browserLatestTranscript).trim();
-    const hasSpokenSignal = peakRms > 0.012 || browserText.length > 0 || (audioBlob ? audioBlob.size > 4000 : false);
+    const hasSpokenSignal = peakRms > 0.004 || browserText.length > 0 || (audioBlob ? audioBlob.size > 1500 : false);
 
     cleanupStreams();
 

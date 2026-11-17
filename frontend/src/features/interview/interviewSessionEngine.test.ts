@@ -19,8 +19,10 @@ describe('interviewSessionEngine', () => {
     mentionedTools: [],
   };
 
-  it('extracts clean first names and skips email addresses', () => {
+  it('extracts clean first names and skips email addresses and honorific prefixes', () => {
     expect(extractFirstName('alex mercer')).toBe('Alex');
+    expect(extractFirstName('Md. Rabbi Hasan')).toBe('Rabbi');
+    expect(extractFirstName('Dr. Elena Brooks')).toBe('Elena');
     expect(extractFirstName('alex@example.com')).toBeUndefined();
     expect(extractFirstName('')).toBeUndefined();
   });

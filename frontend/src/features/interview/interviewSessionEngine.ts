@@ -171,10 +171,34 @@ export function getInterviewerPersona(
   };
 }
 
+const HONORIFIC_PREFIXES = new Set([
+  'md',
+  'mr',
+  'mrs',
+  'ms',
+  'miss',
+  'dr',
+  'prof',
+  'engr',
+  'sir',
+  'shri',
+]);
+
 export function extractFirstName(fullName?: string): string | undefined {
   if (!fullName) return undefined;
-  const cleaned = fullName.trim().split(/\s+/)[0];
-  if (!cleaned || cleaned.length < 2 || /@/.test(cleaned)) return undefined;
+  const tokens = fullName.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return undefined;
+  if (tokens.some((token) => /@/.test(token))) return undefined;
+
+  let chosen = tokens[0];
+  if (tokens.length > 1) {
+    const firstNormalized = chosen.replace(/\.+$/, '').toLowerCase();
+    if (HONORIFIC_PREFIXES.has(firstNormalized)) {
+      chosen = tokens[1];
+    }
+  }
+  const cleaned = chosen.replace(/\.+$/, '');
+  if (!cleaned || cleaned.length < 2) return undefined;
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 

@@ -86,10 +86,75 @@ function base64ToFloat32Pcm(base64: string): Float32Array {
   return float32;
 }
 
-function parseSampleRateFromMime(mimeType?: string): number {
+export function parseSampleRateFromMime(mimeType?: string): number {
   if (!mimeType) return PCM_OUTPUT_SAMPLE_RATE;
   const match = mimeType.match(/rate=(\d+)/i);
   return match ? Math.max(8000, Number(match[1]) || PCM_OUTPUT_SAMPLE_RATE) : PCM_OUTPUT_SAMPLE_RATE;
+}
+
+/** Play base64 PCM (or encoded audio) returned by Gemini TTS models, returning a stop handle. */
+export async function playGeminiAudioBase64(
+  base64: string,
+  mimeType?: string,
+  onEnd?: () => void
+): Promise<() => void> {
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) throw new Error('Web Audio API is unavailable.');
+
+  const sampleRate = parseSampleRateFromMime(mimeType);
+  let ctx: AudioContext;
+  try {
+    ctx = new AudioCtx({ sampleRate });
+  } catch {
+    ctx = new AudioCtx();
+  }
+  if (ctx.state === 'suspended') {
+    await ctx.resume();
+  }
+
+  let stopped = false;
+  let sourceNode: AudioBufferSourceNode | null = null;
+  const cleanup = () => {
+    if (stopped) return;
+    stopped = true;
+    if (sourceNode) {
+      try { sourceNode.stop(); } catch { /* ignore */ }
+      sourceNode = null;
+    }
+    void ctx.close().catch(() => {});
+    onEnd?.();
+  };
+
+  const lowerMime = (mimeType || '').toLowerCase();
+  if (!lowerMime || lowerMime.includes('pcm') || lowerMime.includes('l16')) {
+    const samples = base64ToFloat32Pcm(base64);
+    if (samples.length === 0) {
+      cleanup();
+      return cleanup;
+    }
+    const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+    buffer.getChannelData(0).set(samples);
+    sourceNode = ctx.createBufferSource();
+    sourceNode.buffer = buffer;
+    sourceNode.connect(ctx.destination);
+    sourceNode.onended = cleanup;
+    sourceNode.start();
+    return cleanup;
+  }
+
+  // Encoded formats like audio/wav or audio/mp3
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const decoded = await ctx.decodeAudioData(bytes.buffer.slice(0));
+  sourceNode = ctx.createBufferSource();
+  sourceNode.buffer = decoded;
+  sourceNode.connect(ctx.destination);
+  sourceNode.onended = cleanup;
+  sourceNode.start();
+  return cleanup;
 }
 
 function appendTranscriptionSegment(current: string, incoming: string): string {
@@ -107,6 +172,7 @@ export class GeminiLiveSessionClient {
   private outputCtx: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private scriptNode: ScriptProcessorNode | null = null;
+  private silentGainNode: GainNode | null = null;
   private sourceNode: MediaStreamAudioSourceNode | null = null;
   private scheduledSources: Set<AudioBufferSourceNode> = new Set();
   private nextPlaybackTime = 0;
@@ -122,6 +188,7 @@ export class GeminiLiveSessionClient {
 
   async connect(params: {
     ephemeralToken: string;
+    apiVersion?: 'v1alpha' | 'v1beta';
     models: string[];
     voiceName: LiveVoiceName;
     systemInstruction: string;
@@ -140,6 +207,7 @@ export class GeminiLiveSessionClient {
       try {
         await this.connectSingleModel({
           ephemeralToken: params.ephemeralToken,
+          apiVersion: params.apiVersion || 'v1alpha',
           model,
           voiceName: params.voiceName,
           systemInstruction: params.systemInstruction,
@@ -183,12 +251,19 @@ export class GeminiLiveSessionClient {
       await this.inputCtx.resume();
     }
 
-    this.outputCtx = new AudioCtx({ sampleRate: PCM_OUTPUT_SAMPLE_RATE });
+    try {
+      this.outputCtx = new AudioCtx({ sampleRate: PCM_OUTPUT_SAMPLE_RATE });
+    } catch {
+      this.outputCtx = new AudioCtx();
+    }
     if (this.outputCtx.state === 'suspended') {
       await this.outputCtx.resume();
     }
 
     this.sourceNode = this.inputCtx.createMediaStreamSource(this.micStream);
+    this.silentGainNode = this.inputCtx.createGain();
+    this.silentGainNode.gain.value = 0;
+    this.silentGainNode.connect(this.inputCtx.destination);
     const inputSampleRate = this.inputCtx.sampleRate || 48000;
 
     const handlePcmFrame = (floatFrame: Float32Array) => {
@@ -234,7 +309,7 @@ export class GeminiLiveSessionClient {
           if (ev.data) handlePcmFrame(ev.data);
         };
         this.sourceNode.connect(this.workletNode);
-        this.workletNode.connect(this.inputCtx.destination);
+        this.workletNode.connect(this.silentGainNode);
         return;
       } catch {
         // Fall through cleanly to ScriptProcessorNode fallback
@@ -247,17 +322,18 @@ export class GeminiLiveSessionClient {
       if (channel) handlePcmFrame(channel);
     };
     this.sourceNode.connect(this.scriptNode);
-    this.scriptNode.connect(this.inputCtx.destination);
+    this.scriptNode.connect(this.silentGainNode);
   }
 
   private connectSingleModel(params: {
     ephemeralToken: string;
+    apiVersion: 'v1alpha' | 'v1beta';
     model: string;
     voiceName: LiveVoiceName;
     systemInstruction: string;
   }): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(params.ephemeralToken)}`;
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.${params.apiVersion}.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(params.ephemeralToken)}`;
       const ws = new WebSocket(wsUrl);
       let settled = false;
 
@@ -394,6 +470,9 @@ export class GeminiLiveSessionClient {
           reject(new Error(ev.reason || `Live socket closed (${ev.code}) on ${params.model}.`));
         } else if (!this.isClosedByUser) {
           this.flushAllBuffers();
+          if (ev.code !== 1000 && ev.code !== 1005) {
+            this.callbacks.onError?.(ev.reason || `Live voice session closed unexpectedly (${ev.code}).`);
+          }
           this.callbacks.onStateChange('closed');
         }
       };
@@ -475,7 +554,15 @@ export class GeminiLiveSessionClient {
     const trimmed = text.trim();
     if (!trimmed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(JSON.stringify({
-      realtimeInput: { text: trimmed },
+      clientContent: {
+        turns: [
+          {
+            role: 'user',
+            parts: [{ text: trimmed }],
+          },
+        ],
+        turnComplete: true,
+      },
     }));
   }
 
@@ -500,6 +587,10 @@ export class GeminiLiveSessionClient {
     if (this.scriptNode) {
       try { this.scriptNode.disconnect(); } catch { /* ignore */ }
       this.scriptNode = null;
+    }
+    if (this.silentGainNode) {
+      try { this.silentGainNode.disconnect(); } catch { /* ignore */ }
+      this.silentGainNode = null;
     }
     if (this.sourceNode) {
       try { this.sourceNode.disconnect(); } catch { /* ignore */ }

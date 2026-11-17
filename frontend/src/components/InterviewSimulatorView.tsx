@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   ArrowRight,
-  BookOpen,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Clock,
   Flag,
   HelpCircle,
-  MessageSquare,
   Mic,
   MicOff,
   Pause,
@@ -18,23 +16,22 @@ import {
   RotateCcw,
   Send,
   SkipForward,
-  Sparkles,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import {
-  requestAI,
   requestInterviewTurn,
   requestLiveInterviewToken,
+  synthesizeInterviewSpeech,
   type LiveVoiceName,
 } from '../features/ai/aiGateway';
 import {
   getQuestionCoachingHint,
-  getRoleTailoredInterviewQuestions,
   type CuratedInterviewQuestion,
 } from '../features/interview/curatedInterviewCatalog';
 import {
   GeminiLiveSessionClient,
+  playGeminiAudioBase64,
   type LiveSessionState,
 } from '../features/interview/geminiLiveClient';
 import {
@@ -74,18 +71,6 @@ interface Props {
   onAIUsageChanged?: () => Promise<void> | void;
 }
 
-interface StoredAttemptSummary {
-  id: string;
-  question_id: string;
-  question_text: string;
-  round: string;
-  score: number;
-  signal_label: string;
-  user_answer: string;
-  matched_keywords: string[];
-  created_at: string;
-}
-
 type SessionStage = 'warmup' | 'questioning' | 'awaiting_continue' | 'debrief';
 
 const FOCUS_OPTIONS: Array<{ value: InterviewFocusMode; label: string }> = [
@@ -98,41 +83,44 @@ const FOCUS_OPTIONS: Array<{ value: InterviewFocusMode; label: string }> = [
 const DIFFICULTY_OPTIONS: DifficultyPreference[] = ['Adaptive', 'Junior', 'Mid', 'Senior'];
 
 const LIVE_VOICE_OPTIONS: Array<{ id: LiveVoiceName; label: string }> = [
-  { id: 'Kore', label: 'Kore (Warm Mentor)' },
-  { id: 'Aoede', label: 'Aoede (Expressive)' },
-  { id: 'Puck', label: 'Puck (Conversational)' },
-  { id: 'Charon', label: 'Charon (Executive)' },
-  { id: 'Fenrir', label: 'Fenrir (Direct Lead)' },
+  { id: 'Kore', label: 'Kore' },
+  { id: 'Aoede', label: 'Aoede' },
+  { id: 'Puck', label: 'Puck' },
+  { id: 'Charon', label: 'Charon' },
+  { id: 'Fenrir', label: 'Fenrir' },
 ];
-
-function historyStorageKey(userId: string): string {
-  return `career_pilot_interview_history_v2_${userId}`;
-}
-
-function loadLocalHistory(userId: string): StoredAttemptSummary[] {
-  try {
-    const raw = localStorage.getItem(historyStorageKey(userId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as StoredAttemptSummary[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalHistory(userId: string, items: StoredAttemptSummary[]): void {
-  try {
-    localStorage.setItem(historyStorageKey(userId), JSON.stringify(items.slice(0, 20)));
-  } catch {
-    // Ignore storage quota issues cleanly
-  }
-}
 
 function formatClock(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
+
+const selectPillStyle: React.CSSProperties = {
+  border: '1px solid var(--md-outline)',
+  borderRadius: '9999px',
+  background: 'var(--md-surface-variant)',
+  color: 'var(--md-text-primary)',
+  fontSize: '12px',
+  fontWeight: 600,
+  padding: '6px 12px',
+  cursor: 'pointer',
+  outline: 'none',
+};
+
+const subtlePillBtnStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '5px',
+  padding: '5px 11px',
+  borderRadius: '9999px',
+  border: '1px solid var(--md-outline)',
+  background: 'var(--md-surface)',
+  color: 'var(--md-text-secondary)',
+  fontSize: '12px',
+  fontWeight: 600,
+  cursor: 'pointer',
+};
 
 export const InterviewSimulatorView: React.FC<Props> = ({
   userId,
@@ -142,21 +130,19 @@ export const InterviewSimulatorView: React.FC<Props> = ({
   userName,
   onAIUsageChanged,
 }) => {
+  const isDemoUser = userId.startsWith('demo');
   const resolvedCategory = useMemo(
     () => targetRoleCategory ?? getOrCreateCareerBlueprint(targetRole).category,
     [targetRole, targetRoleCategory]
   );
-
   const firstName = useMemo(() => extractFirstName(userName), [userName]);
 
-  // Pool & setup state
+  // Setup & session state
   const [loading, setLoading] = useState(true);
   const [remoteQuestions, setRemoteQuestions] = useState<CuratedInterviewQuestion[]>([]);
   const [focusMode, setFocusMode] = useState<InterviewFocusMode>('Mixed');
   const [difficultyPref, setDifficultyPref] = useState<DifficultyPreference>('Adaptive');
-  const [showQuestionBank, setShowQuestionBank] = useState(false);
 
-  // Conversational interview session state
   const [loopQueue, setLoopQueue] = useState<CuratedInterviewQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [stage, setStage] = useState<SessionStage>('warmup');
@@ -172,95 +158,141 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     mentionedTools: [],
   });
 
-  // UI & Composer state
+  // Composer & feedback state
   const [draftAnswer, setDraftAnswer] = useState('');
   const [isInterviewerTyping, setIsInterviewerTyping] = useState(false);
   const [expandedSampleIds, setExpandedSampleIds] = useState<Record<string, boolean>>({});
-  const [loadingAIQuestionId, setLoadingAIQuestionId] = useState<string | null>(null);
-  const [aiStatusNote, setAiStatusNote] = useState<string>('');
-  const [history, setHistory] = useState<StoredAttemptSummary[]>(() => loadLocalHistory(userId));
-  const [showHistory, setShowHistory] = useState(false);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
+  const [lastFailedTurnText, setLastFailedTurnText] = useState<string | null>(null);
 
-  // Voice Input, Hybrid Transcription & Read-Aloud (TTS) state
+  // Voice input + Gemini TTS voice output state
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
-  const [autoSendVoice, setAutoSendVoice] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
   const [voiceStatusNote, setVoiceStatusNote] = useState('');
   const [speechSupported, setSpeechSupported] = useState(false);
   const [voiceReadAloud, setVoiceReadAloud] = useState(false);
-  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
-  const speechControllerRef = useRef<HybridSpeechController | null>(null);
-  const threadEndRef = useRef<HTMLDivElement | null>(null);
-  const thinkingTimerRef = useRef<number | null>(null);
+  const [isSpeakingAudio, setIsSpeakingAudio] = useState(false);
 
-  // Gemini Live Bidirectional Human Voice Conversation state
+  // Gemini Live real-time audio call state
   const [liveState, setLiveState] = useState<LiveSessionState>('idle');
   const [liveVoice, setLiveVoice] = useState<LiveVoiceName>('Kore');
-  const [liveActiveModel, setLiveActiveModel] = useState('');
   const [isLiveMuted, setIsLiveMuted] = useState(false);
   const [isLiveAiSpeaking, setIsLiveAiSpeaking] = useState(false);
   const [liveUserCaption, setLiveUserCaption] = useState('');
   const [liveAiCaption, setLiveAiCaption] = useState('');
-  const liveClientRef = useRef<GeminiLiveSessionClient | null>(null);
 
-  // Subtle pacing timer (counts up/down gently without intrusive pressure)
+  // Subtle pacing timer (active only during questioning)
   const [paceSeconds, setPaceSeconds] = useState(120);
   const [isPaceRunning, setIsPaceRunning] = useState(false);
 
-  const tailoredPool = useMemo(
-    () =>
-      getRoleTailoredInterviewQuestions(
-        resolvedCategory,
-        targetRole,
-        focusMode === 'Mixed' ? undefined : focusMode
-      ),
-    [resolvedCategory, targetRole, focusMode]
-  );
+  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
+  const speechControllerRef = useRef<HybridSpeechController | null>(null);
+  const liveClientRef = useRef<GeminiLiveSessionClient | null>(null);
+  const stopTtsAudioRef = useRef<(() => void) | null>(null);
+  const ttsNonceRef = useRef(0);
+  const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const thinkingTimerRef = useRef<number | null>(null);
+
+  // Latest state refs so Live Voice callbacks never read stale closures
+  const turnsRef = useRef<ConversationTurn[]>(turns);
+  const currentQuestionRef = useRef<CuratedInterviewQuestion | null>(null);
+  const liveUsedRef = useRef(false);
 
   const currentQuestion = loopQueue[currentIndex] ?? null;
+  turnsRef.current = turns;
+  currentQuestionRef.current = currentQuestion;
 
-  const speakText = (text: string, forceSpeak = false) => {
-    if ((!voiceReadAloud && !forceSpeak) || !ttsSupported || liveState === 'connected') return;
-    try {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text.replace(/\n+/g, ' '));
-      utterance.rate = 0.99;
-      utterance.pitch = 1.0;
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      // Ignore browser speech synthesis failures
+  const stopAllSpeechOutput = () => {
+    ttsNonceRef.current += 1;
+    if (stopTtsAudioRef.current) {
+      stopTtsAudioRef.current();
+      stopTtsAudioRef.current = null;
     }
-  };
-
-  useEffect(() => {
-    if (!voiceReadAloud && ttsSupported) {
+    setIsSpeakingAudio(false);
+    if (ttsSupported) {
       try {
         window.speechSynthesis.cancel();
       } catch {
         // Ignore
       }
     }
-  }, [voiceReadAloud, ttsSupported]);
+  };
+
+  const speakInterviewerText = async (text: string, forceSpeak = false) => {
+    const cleanText = text.replace(/\n+/g, ' ').trim();
+    if (!cleanText || (!voiceReadAloud && !forceSpeak) || liveState === 'connected') return;
+
+    stopAllSpeechOutput();
+    const myNonce = ttsNonceRef.current;
+
+    // Prefer Gemini natural human speech for signed-in users
+    if (!isDemoUser) {
+      try {
+        setIsSpeakingAudio(true);
+        const ttsRes = await synthesizeInterviewSpeech({
+          text: cleanText.slice(0, 1400),
+          voice_name: liveVoice,
+        });
+        if (ttsNonceRef.current !== myNonce) return;
+        const stopHandle = await playGeminiAudioBase64(
+          ttsRes.response.audio_base64,
+          ttsRes.response.mime_type,
+          () => {
+            if (ttsNonceRef.current === myNonce) {
+              stopTtsAudioRef.current = null;
+              setIsSpeakingAudio(false);
+            }
+          }
+        );
+        if (ttsNonceRef.current !== myNonce) {
+          stopHandle();
+          return;
+        }
+        stopTtsAudioRef.current = stopHandle;
+        void onAIUsageChanged?.();
+        return;
+      } catch {
+        if (ttsNonceRef.current !== myNonce) return;
+        setIsSpeakingAudio(false);
+      }
+    }
+
+    // Fallback to browser SpeechSynthesis only if demo/offline or Gemini TTS unavailable
+    if (ttsSupported) {
+      try {
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 0.99;
+        utterance.pitch = 1.0;
+        utterance.onend = () => setIsSpeakingAudio(false);
+        utterance.onerror = () => setIsSpeakingAudio(false);
+        setIsSpeakingAudio(true);
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        setIsSpeakingAudio(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!voiceReadAloud) {
+      stopAllSpeechOutput();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceReadAloud]);
 
   useEffect(() => {
     setSpeechSupported(isVoiceCaptureSupported());
-
     return () => {
       if (thinkingTimerRef.current) window.clearTimeout(thinkingTimerRef.current);
       speechControllerRef.current?.abort();
       speechControllerRef.current = null;
       void liveClientRef.current?.disconnect();
       liveClientRef.current = null;
-      if (ttsSupported) {
-        try {
-          window.speechSynthesis.cancel();
-        } catch {
-          // Ignore
-        }
-      }
+      stopAllSpeechOutput();
     };
-  }, [ttsSupported]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!isPaceRunning || paceSeconds <= 0) return;
@@ -273,20 +305,33 @@ export const InterviewSimulatorView: React.FC<Props> = ({
   const startNewSession = (
     overrideFocus: InterviewFocusMode = focusMode,
     overrideDifficulty: DifficultyPreference = difficultyPref,
-    overrideRemote: CuratedInterviewQuestion[] = remoteQuestions,
-    specificStartQuestion?: CuratedInterviewQuestion
+    overrideRemote: CuratedInterviewQuestion[] = remoteQuestions
   ) => {
     if (thinkingTimerRef.current) {
       window.clearTimeout(thinkingTimerRef.current);
       thinkingTimerRef.current = null;
     }
+    stopAllSpeechOutput();
+    if (liveState === 'connected' || liveState === 'connecting') {
+      void liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+      setLiveState('idle');
+      setIsLiveMuted(false);
+      setIsLiveAiSpeaking(false);
+      setLiveUserCaption('');
+      setLiveAiCaption('');
+    }
+    liveUsedRef.current = false;
+
     setIsInterviewerTyping(false);
     setDraftAnswer('');
     setFollowUpCount(0);
     setUserTurnsForCurrentQ([]);
     setEvaluations([]);
     setSessionDebrief(null);
-    setAiStatusNote('');
+    setErrorBanner(null);
+    setLastFailedTurnText(null);
+    setVoiceStatusNote('');
     setExpandedSampleIds({});
     setPaceSeconds(120);
     setIsPaceRunning(false);
@@ -299,7 +344,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     };
     setMemory(freshMemory);
 
-    let queue = buildInterviewLoopQueue({
+    const queue = buildInterviewLoopQueue({
       category: resolvedCategory,
       targetRole,
       focusMode: overrideFocus,
@@ -309,34 +354,15 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       count: 4,
     });
 
-    if (specificStartQuestion) {
-      queue = [specificStartQuestion, ...queue.filter((q) => q.id !== specificStartQuestion.id)].slice(0, 4);
-    }
-
     setLoopQueue(queue);
     setCurrentIndex(0);
 
-    if (specificStartQuestion) {
-      // Jump straight into the chosen question naturally
-      const opener = buildQuestionIntroTurn({
-        question: specificStartQuestion,
-        questionIndex: 0,
-        totalQuestions: queue.length,
-        memory: freshMemory,
-      });
-      setStage('questioning');
-      setTurns([opener]);
-      setIsPaceRunning(true);
-      speakText(opener.text);
-    } else {
-      const greeting = buildOpeningGreetingTurn(freshMemory, overrideFocus);
-      setStage('warmup');
-      setTurns([greeting]);
-      speakText(greeting.text);
-    }
+    const greeting = buildOpeningGreetingTurn(freshMemory, overrideFocus);
+    setStage('warmup');
+    setTurns([greeting]);
+    void speakInterviewerText(greeting.text);
   };
 
-  // Load questions/history safely on mount or role change
   useEffect(() => {
     let active = true;
     const init = async () => {
@@ -369,12 +395,11 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             }));
         }
       } catch {
-        // Fallback cleanly to curated role-tailored catalog
+        // Curated catalog remains available
       }
 
       if (!active) return;
       setRemoteQuestions(loadedRemote);
-      setHistory(loadLocalHistory(userId));
       setLoading(false);
     };
     void init();
@@ -383,7 +408,6 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     };
   }, [userId, resolvedCategory]);
 
-  // Initialize first session whenever loading completes or targetRole changes
   useEffect(() => {
     if (!loading) {
       startNewSession(focusMode, difficultyPref, remoteQuestions);
@@ -391,295 +415,13 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, targetRole, resolvedCategory]);
 
-  // Smooth scroll to latest turn when dialogue progresses
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [turns.length, isInterviewerTyping, sessionDebrief]);
 
-  const executeVoiceCommand = (command: VoiceCommandType): boolean => {
-    if (command === 'next') {
-      if (stage === 'warmup') {
-        handleSkipWarmup();
-        return true;
-      }
-      if (stage === 'questioning' || stage === 'awaiting_continue') {
-        handleAdvanceToNextQuestion();
-        return true;
-      }
-      return false;
-    }
-    if (command === 'hint') {
-      if (stage === 'questioning') {
-        handleAskForHint();
-        return true;
-      }
-      return false;
-    }
-    if (command === 'repeat') {
-      const lastInterviewerTurn = [...turns].reverse().find((t) => t.speaker === 'interviewer');
-      if (lastInterviewerTurn) {
-        if (liveState === 'connected' && liveClientRef.current) {
-          liveClientRef.current.sendTextTurn('Could you please repeat that last question concisely?');
-        } else {
-          speakText(lastInterviewerTurn.text, true);
-          setVoiceStatusNote('Repeating interviewer prompt aloud.');
-        }
-        return true;
-      }
-      return false;
-    }
-    if (command === 'end') {
-      if (stage !== 'debrief') {
-        handleFinishAndDebrief();
-        return true;
-      }
-      return false;
-    }
-    if (command === 'restart') {
-      startNewSession(focusMode, difficultyPref, remoteQuestions);
-      return true;
-    }
-    return false;
-  };
-
-  const handleToggleLiveMute = () => {
-    if (!liveClientRef.current || liveState !== 'connected') return;
-    const nextMuted = !isLiveMuted;
-    liveClientRef.current.setMuted(nextMuted);
-    setIsLiveMuted(nextMuted);
-    setVoiceStatusNote(nextMuted ? 'Live mic muted.' : 'Live mic active — speak naturally.');
-  };
-
-  const handleToggleLiveCall = async () => {
-    if (liveState === 'connected' || liveState === 'connecting') {
-      await liveClientRef.current?.disconnect();
-      liveClientRef.current = null;
-      setLiveState('idle');
-      setIsLiveMuted(false);
-      setIsLiveAiSpeaking(false);
-      setLiveUserCaption('');
-      setLiveAiCaption('');
-      setLiveActiveModel('');
-      setVoiceStatusNote('Live voice conversation ended.');
-      return;
-    }
-
-    if (userId.startsWith('demo')) {
-      setVoiceStatusNote('Sign in with your account to start a live Gemini audio call. You can still use Speak Answer & AI loop below.');
-      return;
-    }
-
-    if (isRecording && speechControllerRef.current) {
-      speechControllerRef.current.abort();
-      speechControllerRef.current = null;
-      setIsRecording(false);
-    }
-
-    if (ttsSupported) {
-      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-    }
-
-    setVoiceStatusNote('Connecting live human-voice interviewer…');
-    setLiveState('connecting');
-    setIsLiveMuted(false);
-
-    try {
-      const tokenRes = await requestLiveInterviewToken({
-        target_role: targetRole,
-        voice_name: liveVoice,
-      });
-
-      const questionSummary = loopQueue
-        .map((q, idx) => `Q${idx + 1} (${q.round}, ${q.difficulty}): ${q.question}`)
-        .join('\n');
-
-      const systemInstruction = [
-        `You are Maya, a warm, articulate, perceptive human hiring manager conducting a live spoken mock interview for a ${targetRole} candidate.`,
-        firstName ? `The candidate's name is ${firstName}.` : '',
-        experienceLevel ? `Calibrate expectations cleanly to ${experienceLevel} level (${difficultyPref}).` : '',
-        `Focus mode: ${focusMode}. Speak naturally in crisp spoken sentences (typically 2-4 sentences per turn), acknowledge specifics the candidate says, listen patiently, ask insightful follow-up probes, and move cleanly through these topics one at a time:`,
-        questionSummary,
-        'Always respond verbally in a realistic conversational cadence. Never dump long bullet lists aloud.',
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      const client = new GeminiLiveSessionClient({
-        onStateChange: (nextState) => {
-          setLiveState(nextState);
-          if (nextState === 'closed' || nextState === 'idle') {
-            setIsLiveAiSpeaking(false);
-            setLiveUserCaption('');
-            setLiveAiCaption('');
-          }
-        },
-        onModelActive: (activeModel) => {
-          setLiveActiveModel(activeModel);
-          setVoiceStatusNote(`Live voice active (${activeModel}) — speak naturally anytime.`);
-        },
-        onMicLevel: (level) => setMicLevel(level),
-        onSpeakingStateChange: (speaking) => setIsLiveAiSpeaking(speaking),
-        onUserTranscriptChunk: (partial) => setLiveUserCaption(partial),
-        onInterviewerTranscriptChunk: (partial) => setLiveAiCaption(partial),
-        onUserTurnCommitted: (finalText) => {
-          const clean = finalText.trim();
-          if (!clean) return;
-          setTurns((prev) => [
-            ...prev,
-            {
-              id: `turn-live-user-${crypto.randomUUID().slice(0, 8)}`,
-              speaker: 'candidate',
-              kind: 'answer',
-              timestamp: new Date().toISOString(),
-              questionId: currentQuestion?.id,
-              badge: 'Voice',
-              text: clean,
-            },
-          ]);
-          const cmd = parseVoiceCommand(clean);
-          if (cmd && (cmd.type === 'end' || cmd.type === 'restart')) {
-            setVoiceStatusNote(`Voice command: ${cmd.label}`);
-            void client.disconnect();
-            executeVoiceCommand(cmd.type);
-          }
-        },
-        onInterviewerTurnCommitted: (finalText) => {
-          const clean = finalText.trim();
-          if (!clean) return;
-          const persona = getInterviewerPersona(currentQuestion?.round ?? 'Warmup', targetRole);
-          setTurns((prev) => [
-            ...prev,
-            {
-              id: `turn-live-ai-${crypto.randomUUID().slice(0, 8)}`,
-              speaker: 'interviewer',
-              kind: 'question',
-              timestamp: new Date().toISOString(),
-              questionId: currentQuestion?.id,
-              badge: 'Gemini Live',
-              interviewer: persona,
-              text: clean,
-            },
-          ]);
-        },
-        onError: (msg) => {
-          setVoiceStatusNote(msg);
-        },
-      });
-
-      liveClientRef.current = client;
-      const openerContext = stage === 'warmup'
-        ? `Greet ${firstName || 'the candidate'} warmly for a ${targetRole} mock interview and invite a quick 30-second intro before Question 1.`
-        : `Acknowledge we are switching into live voice conversation on Question ${currentIndex + 1}: "${currentQuestion?.question || ''}" and invite their thoughts.`;
-
-      await client.connect({
-        ephemeralToken: tokenRes.response.token,
-        models: tokenRes.response.live_models,
-        voiceName: liveVoice,
-        systemInstruction,
-        initialPrompt: openerContext,
-      });
-
-      await onAIUsageChanged?.();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not start live voice conversation.';
-      setVoiceStatusNote(`${message} Falling back to Speak Answer / text interview.`);
-      setLiveState('idle');
-      liveClientRef.current = null;
-    }
-  };
-
-  const toggleRecording = async () => {
-    if (isTranscribingVoice) return;
-
-    if (isRecording && speechControllerRef.current) {
-      setIsRecording(false);
-      setIsTranscribingVoice(true);
-      setVoiceStatusNote('Transcribing speech with Gemini…');
-      try {
-        const result = await speechControllerRef.current.stop();
-        speechControllerRef.current = null;
-        setMicLevel(0);
-
-        const transcript = result.transcript.trim();
-        if (!transcript) {
-          setVoiceStatusNote('No clear speech detected — speak close to your microphone and try again.');
-          return;
-        }
-
-        const matchedCommand = parseVoiceCommand(transcript);
-        if (matchedCommand) {
-          setVoiceStatusNote(`Voice command: ${matchedCommand.label}`);
-          if (executeVoiceCommand(matchedCommand.type)) return;
-        }
-
-        if (autoSendVoice) {
-          setVoiceStatusNote(
-            result.source === 'gemini'
-              ? 'Transcribed via Gemini & sent to interviewer.'
-              : 'Transcribed & sent to interviewer.'
-          );
-          if (!voiceReadAloud && ttsSupported) {
-            setVoiceReadAloud(true);
-          }
-          await submitCandidateMessage(transcript, { fromVoice: true });
-        } else {
-          setDraftAnswer((prev) => `${prev ? `${prev.trimEnd()} ` : ''}${transcript}`);
-          setVoiceStatusNote('Voice transcribed into answer box — edit or press Send.');
-        }
-      } catch {
-        setVoiceStatusNote('Could not finish voice transcription. Please type or try again.');
-      } finally {
-        setIsTranscribingVoice(false);
-      }
-      return;
-    }
-
-    if (ttsSupported) {
-      try { window.speechSynthesis.cancel(); } catch { /* ignore */ }
-    }
-
-    const baseDraft = draftAnswer.trim();
-    const controller = createHybridSpeechController({
-      preferGeminiTranscription: !userId.startsWith('demo'),
-      transcribeHint: `${targetRole}. ${currentQuestion?.question || ''}`.slice(0, 320),
-      onAudioLevel: (lvl) => setMicLevel(lvl),
-      onStatusText: (msg) => setVoiceStatusNote(msg),
-      onInterimTranscript: (interim) => {
-        setDraftAnswer(baseDraft ? `${baseDraft} ${interim}` : interim);
-      },
-    });
-    speechControllerRef.current = controller;
-
-    try {
-      await controller.start();
-      setIsRecording(true);
-    } catch (err) {
-      speechControllerRef.current = null;
-      setIsRecording(false);
-      setVoiceStatusNote(err instanceof Error ? err.message : 'Microphone access was denied or unavailable.');
-    }
-  };
-
   const persistCompletedAttempt = async (summary: QuestionEvaluationSummary) => {
-    const item: StoredAttemptSummary = {
-      id: summary.attempt.id,
-      question_id: summary.questionId,
-      question_text: summary.questionText,
-      round: summary.round,
-      score: summary.score,
-      signal_label: summary.signalLabel,
-      user_answer: summary.attempt.user_answer,
-      matched_keywords: summary.matchedConcepts,
-      created_at: summary.attempt.created_at,
-    };
-
-    const nextHistory = [item, ...history.filter((h) => h.id !== item.id)].slice(0, 20);
-    setHistory(nextHistory);
-    saveLocalHistory(userId, nextHistory);
-
-    // Opportunistically persist if Supabase `interview_attempts` is configured & question uses UUID
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(summary.questionId);
-    if (isUuid && !userId.startsWith('demo')) {
+    if (isUuid && !isDemoUser) {
       try {
         await supabase.from('interview_attempts').insert({
           user_id: userId,
@@ -690,12 +432,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           rubric_feedback: summary.attempt.rubric_feedback,
         });
       } catch {
-        // Non-blocking: local history already saved
+        // Non-blocking persistence
       }
     }
   };
 
-  const scheduleInterviewerReply = (fn: () => void) => {
+  const scheduleDemoReply = (fn: () => void) => {
     setIsInterviewerTyping(true);
     if (thinkingTimerRef.current) window.clearTimeout(thinkingTimerRef.current);
     thinkingTimerRef.current = window.setTimeout(() => {
@@ -716,14 +458,14 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     setPaceSeconds(120);
     setIsPaceRunning(true);
     setTurns((prev) => [...prev, introTurn]);
-    speakText(introTurn.text);
+    void speakInterviewerText(introTurn.text);
   };
 
   const handleAdvanceToNextQuestion = () => {
     if (isInterviewerTyping) return;
     const nextIdx = currentIndex + 1;
     if (nextIdx >= loopQueue.length) {
-      handleFinishAndDebrief();
+      void handleFinishAndDebrief();
       return;
     }
 
@@ -734,6 +476,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     setStage('questioning');
     setPaceSeconds(120);
     setIsPaceRunning(true);
+    setErrorBanner(null);
 
     const nextTurn = buildQuestionIntroTurn({
       question: nextQ,
@@ -743,14 +486,24 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     });
 
     setTurns((prev) => [...prev, nextTurn]);
-    speakText(nextTurn.text);
+    void speakInterviewerText(nextTurn.text);
   };
 
-  const handleFinishAndDebrief = () => {
+  const handleFinishAndDebrief = async () => {
     if (isInterviewerTyping) return;
     setIsPaceRunning(false);
+    setErrorBanner(null);
 
-    // If the user has an active unanswered/partial exchange with >= 1 response, evaluate it before debrief
+    if (liveState === 'connected' || liveState === 'connecting') {
+      await liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+      setLiveState('idle');
+      setIsLiveMuted(false);
+      setIsLiveAiSpeaking(false);
+      setLiveUserCaption('');
+      setLiveAiCaption('');
+    }
+
     let allEvaluations = [...evaluations];
     if (currentQuestion && userTurnsForCurrentQ.length > 0 && stage === 'questioning') {
       const partialEval = evaluateQuestionExchange({
@@ -763,6 +516,66 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       void persistCompletedAttempt(partialEval);
     }
 
+    const currentTurns = turnsRef.current;
+    const hasConversationContent = currentTurns.some((t) => t.speaker === 'candidate');
+
+    // Generate a smart Gemini debrief whenever signed in and the candidate spoke/replied
+    if (!isDemoUser && hasConversationContent) {
+      setIsInterviewerTyping(true);
+      try {
+        const transcript = currentTurns
+          .filter((t) => t.kind !== 'debrief')
+          .slice(-24)
+          .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
+          .join('\n')
+          .slice(0, 9500);
+
+        const aiDebrief = await requestInterviewTurn({
+          stage: 'debrief',
+          target_role: targetRole,
+          experience_level: experienceLevel || difficultyPref,
+          focus_mode: focusMode,
+          question: currentQuestion?.question || '',
+          answer: 'Generate the final hiring manager debrief for this interview session.',
+          history: transcript,
+        });
+
+        const resp = aiDebrief.response;
+        const fallbackDebrief = buildSessionDebrief(allEvaluations, memory);
+        const debrief: SessionDebrief = {
+          overallScore: resp.overall_score ?? fallbackDebrief.overallScore,
+          readinessLabel: resp.readiness_label ?? fallbackDebrief.readinessLabel,
+          summaryNote: resp.reply || fallbackDebrief.summaryNote,
+          dimensions: resp.dimensions && resp.dimensions.length > 0 ? resp.dimensions : fallbackDebrief.dimensions,
+          topStrengths: resp.strengths && resp.strengths.length > 0 ? resp.strengths : fallbackDebrief.topStrengths,
+          priorityImprovements:
+            resp.priority_improvements && resp.priority_improvements.length > 0
+              ? resp.priority_improvements
+              : fallbackDebrief.priorityImprovements,
+          questionsCompleted: Math.max(allEvaluations.length, liveUsedRef.current ? 1 : 0),
+        };
+
+        setIsInterviewerTyping(false);
+        setSessionDebrief(debrief);
+        setStage('debrief');
+        const closingTurn: ConversationTurn = {
+          id: `turn-debrief-${crypto.randomUUID().slice(0, 8)}`,
+          speaker: 'coach',
+          kind: 'debrief',
+          timestamp: new Date().toISOString(),
+          text: debrief.summaryNote,
+          debrief,
+        };
+        setTurns((prev) => [...prev, closingTurn]);
+        void speakInterviewerText(debrief.summaryNote);
+        void onAIUsageChanged?.();
+        return;
+      } catch {
+        setIsInterviewerTyping(false);
+        // Fall through cleanly to local debrief summary
+      }
+    }
+
     const debrief = buildSessionDebrief(allEvaluations, memory);
     setSessionDebrief(debrief);
     setStage('debrief');
@@ -772,17 +585,268 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       speaker: 'coach',
       kind: 'debrief',
       timestamp: new Date().toISOString(),
-      badge: `${debrief.readinessLabel}${debrief.questionsCompleted > 0 ? ` · ${debrief.overallScore}%` : ''}`,
       text: debrief.summaryNote,
       debrief,
     };
     setTurns((prev) => [...prev, closingTurn]);
-    speakText(debrief.summaryNote);
+    void speakInterviewerText(debrief.summaryNote);
+  };
+
+  const executeVoiceCommand = (command: VoiceCommandType): boolean => {
+    if (command === 'next') {
+      if (stage === 'warmup') {
+        handleSkipWarmup();
+        return true;
+      }
+      if (stage === 'questioning' || stage === 'awaiting_continue') {
+        handleAdvanceToNextQuestion();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'hint') {
+      if (stage === 'questioning') {
+        void handleAskForHint();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'repeat') {
+      const lastInterviewerTurn = [...turnsRef.current].reverse().find((t) => t.speaker === 'interviewer');
+      if (lastInterviewerTurn) {
+        if (liveState === 'connected' && liveClientRef.current) {
+          liveClientRef.current.sendTextTurn('Could you please repeat your last question concisely?');
+        } else {
+          void speakInterviewerText(lastInterviewerTurn.text, true);
+          setVoiceStatusNote('Repeating interviewer prompt.');
+        }
+        return true;
+      }
+      return false;
+    }
+    if (command === 'end') {
+      if (stage !== 'debrief') {
+        void handleFinishAndDebrief();
+        return true;
+      }
+      return false;
+    }
+    if (command === 'restart') {
+      startNewSession(focusMode, difficultyPref, remoteQuestions);
+      return true;
+    }
+    return false;
+  };
+
+  const handleToggleLiveMute = () => {
+    if (!liveClientRef.current || liveState !== 'connected') return;
+    const nextMuted = !isLiveMuted;
+    liveClientRef.current.setMuted(nextMuted);
+    setIsLiveMuted(nextMuted);
+    setVoiceStatusNote(nextMuted ? 'Microphone muted.' : 'Listening… speak naturally.');
+  };
+
+  const handleToggleLiveCall = async () => {
+    if (liveState === 'connected' || liveState === 'connecting') {
+      await liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+      setLiveState('idle');
+      setIsLiveMuted(false);
+      setIsLiveAiSpeaking(false);
+      setLiveUserCaption('');
+      setLiveAiCaption('');
+      setVoiceStatusNote('');
+      return;
+    }
+
+    if (isDemoUser) {
+      setErrorBanner('Sign in with your account to start a live Gemini voice call. You can still practice below.');
+      return;
+    }
+
+    if (isRecording && speechControllerRef.current) {
+      speechControllerRef.current.abort();
+      speechControllerRef.current = null;
+      setIsRecording(false);
+    }
+
+    stopAllSpeechOutput();
+    setErrorBanner(null);
+    setVoiceStatusNote('Connecting live voice interviewer…');
+    setLiveState('connecting');
+    setIsLiveMuted(false);
+
+    try {
+      const tokenRes = await requestLiveInterviewToken({
+        target_role: targetRole,
+        voice_name: liveVoice,
+      });
+
+      const questionSummary = loopQueue
+        .map((q, idx) => `Q${idx + 1} (${q.round}, ${q.difficulty}): ${q.question}`)
+        .join('\n');
+
+      const systemInstruction = [
+        `You are Maya Chen, a warm, sharp, perceptive hiring manager conducting a live spoken mock interview for a ${targetRole} candidate.`,
+        firstName ? `The candidate's name is ${firstName}. Address them as ${firstName}.` : '',
+        experienceLevel ? `Calibrate expectations to ${experienceLevel} level (${difficultyPref}).` : '',
+        `Focus: ${focusMode}. Speak naturally in crisp spoken sentences (2-4 sentences per turn), acknowledge specifics the candidate says, probe tradeoffs and impact with insightful follow-ups, and move cleanly through these interview topics one at a time:`,
+        questionSummary,
+        'Always respond verbally in a realistic conversational cadence. Never read markdown or long bullet lists aloud.',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const client = new GeminiLiveSessionClient({
+        onStateChange: (nextState) => {
+          setLiveState(nextState);
+          if (nextState === 'closed' || nextState === 'idle') {
+            setIsLiveAiSpeaking(false);
+            setLiveUserCaption('');
+            setLiveAiCaption('');
+          }
+        },
+        onModelActive: () => {
+          liveUsedRef.current = true;
+          setVoiceStatusNote('');
+        },
+        onMicLevel: (level) => setMicLevel(level),
+        onSpeakingStateChange: (speaking) => setIsLiveAiSpeaking(speaking),
+        onUserTranscriptChunk: (partial) => setLiveUserCaption(partial),
+        onInterviewerTranscriptChunk: (partial) => setLiveAiCaption(partial),
+        onUserTurnCommitted: (finalText) => {
+          const clean = finalText.trim();
+          if (!clean) return;
+          const activeQ = currentQuestionRef.current;
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: `turn-live-user-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'candidate',
+              kind: 'answer',
+              timestamp: new Date().toISOString(),
+              questionId: activeQ?.id,
+              text: clean,
+            },
+          ]);
+          const cmd = parseVoiceCommand(clean);
+          if (cmd && (cmd.type === 'end' || cmd.type === 'restart')) {
+            executeVoiceCommand(cmd.type);
+          }
+        },
+        onInterviewerTurnCommitted: (finalText) => {
+          const clean = finalText.trim();
+          if (!clean) return;
+          const activeQ = currentQuestionRef.current;
+          const persona = getInterviewerPersona(activeQ?.round ?? 'Warmup', targetRole);
+          setTurns((prev) => [
+            ...prev,
+            {
+              id: `turn-live-ai-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'interviewer',
+              kind: 'question',
+              timestamp: new Date().toISOString(),
+              questionId: activeQ?.id,
+              interviewer: persona,
+              text: clean,
+            },
+          ]);
+        },
+        onError: (msg) => {
+          setErrorBanner(msg);
+          setVoiceStatusNote('');
+        },
+      });
+
+      liveClientRef.current = client;
+      const openerContext = stage === 'warmup'
+        ? `Greet ${firstName || 'the candidate'} warmly for a ${targetRole} mock interview and invite a quick 30-second intro before Question 1.`
+        : `Acknowledge we are continuing in live voice on Question ${currentIndex + 1}: "${currentQuestion?.question || ''}" and invite their thoughts.`;
+
+      await client.connect({
+        ephemeralToken: tokenRes.response.token,
+        apiVersion: tokenRes.response.api_version,
+        models: tokenRes.response.live_models,
+        voiceName: liveVoice,
+        systemInstruction,
+        initialPrompt: openerContext,
+      });
+
+      await onAIUsageChanged?.();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not start live voice conversation.';
+      setErrorBanner(message);
+      setVoiceStatusNote('');
+      setLiveState('idle');
+      liveClientRef.current = null;
+    }
+  };
+
+  const toggleRecording = async () => {
+    if (isTranscribingVoice || isInterviewerTyping) return;
+
+    if (isRecording && speechControllerRef.current) {
+      setIsRecording(false);
+      setIsTranscribingVoice(true);
+      setVoiceStatusNote('Transcribing voice…');
+      try {
+        const result = await speechControllerRef.current.stop();
+        speechControllerRef.current = null;
+        setMicLevel(0);
+
+        const transcript = result.transcript.trim();
+        if (!transcript) {
+          setVoiceStatusNote('No clear speech detected — please speak closer to your mic and try again.');
+          return;
+        }
+
+        const matchedCommand = parseVoiceCommand(transcript);
+        if (matchedCommand) {
+          setVoiceStatusNote(matchedCommand.label);
+          if (executeVoiceCommand(matchedCommand.type)) return;
+        }
+
+        setVoiceStatusNote('');
+        if (!voiceReadAloud) {
+          setVoiceReadAloud(true);
+        }
+        await submitCandidateMessage(transcript, { fromVoice: true });
+      } catch {
+        setVoiceStatusNote('Could not finish transcription. Please type or try again.');
+      } finally {
+        setIsTranscribingVoice(false);
+      }
+      return;
+    }
+
+    stopAllSpeechOutput();
+    setErrorBanner(null);
+
+    const baseDraft = draftAnswer.trim();
+    const controller = createHybridSpeechController({
+      preferGeminiTranscription: !isDemoUser,
+      transcribeHint: `${targetRole}. ${currentQuestion?.question || ''}`.slice(0, 320),
+      onAudioLevel: (lvl) => setMicLevel(lvl),
+      onStatusText: (msg) => setVoiceStatusNote(msg),
+      onInterimTranscript: (interim) => {
+        setDraftAnswer(baseDraft ? `${baseDraft} ${interim}` : interim);
+      },
+    });
+    speechControllerRef.current = controller;
+
+    try {
+      await controller.start();
+      setIsRecording(true);
+    } catch (err) {
+      speechControllerRef.current = null;
+      setIsRecording(false);
+      setVoiceStatusNote(err instanceof Error ? err.message : 'Microphone access was denied or unavailable.');
+    }
   };
 
   const submitCandidateMessage = async (
     overrideText?: string,
-    options?: { fromVoice?: boolean }
+    options?: { fromVoice?: boolean; isRetry?: boolean }
   ) => {
     const trimmed = (overrideText ?? draftAnswer).trim();
     if (!trimmed || isInterviewerTyping || stage === 'debrief') return;
@@ -792,6 +856,9 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       speechControllerRef.current = null;
       setIsRecording(false);
     }
+    stopAllSpeechOutput();
+    setErrorBanner(null);
+    setLastFailedTurnText(null);
 
     if (liveState === 'connected' && liveClientRef.current) {
       setTurns((prev) => [
@@ -811,21 +878,22 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     }
 
     const speakReply = Boolean(options?.fromVoice || voiceReadAloud);
-    const candidateTurn: ConversationTurn = {
-      id: `turn-user-${crypto.randomUUID().slice(0, 8)}`,
-      speaker: 'candidate',
-      kind: 'answer',
-      timestamp: new Date().toISOString(),
-      questionId: currentQuestion?.id,
-      badge: options?.fromVoice ? 'Voice' : undefined,
-      text: trimmed,
-    };
+    let nextTurnsSnapshot = turnsRef.current;
 
-    const nextTurnsSnapshot = [...turns, candidateTurn];
-    setTurns(nextTurnsSnapshot);
-    setDraftAnswer('');
+    if (!options?.isRetry) {
+      const candidateTurn: ConversationTurn = {
+        id: `turn-user-${crypto.randomUUID().slice(0, 8)}`,
+        speaker: 'candidate',
+        kind: 'answer',
+        timestamp: new Date().toISOString(),
+        questionId: currentQuestion?.id,
+        text: trimmed,
+      };
+      nextTurnsSnapshot = [...turnsRef.current, candidateTurn];
+      setTurns(nextTurnsSnapshot);
+      setDraftAnswer('');
+    }
 
-    // Track tools mentioned across the session in candidate memory
     const toolsInReply = extractMentionedTools(trimmed);
     const updatedMemory: CandidateMemory = {
       ...memory,
@@ -840,25 +908,26 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     }
 
     if (stage === 'warmup' && !currentQuestion) {
-      handleFinishAndDebrief();
+      void handleFinishAndDebrief();
       return;
     }
 
     const recentHistoryText = nextTurnsSnapshot
-      .slice(-6)
+      .slice(-8)
       .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
       .join('\n')
-      .slice(0, 5000);
+      .slice(0, 7500);
 
-    // Try Gemini AI conversational interviewer first (with automatic multi-model fallback in gateway),
-    // and fall back cleanly to our deterministic interview engine whenever offline/demo/unavailable.
-    if (!userId.startsWith('demo')) {
+    // Signed-in users always use real Gemini intelligence via ai-gateway
+    if (!isDemoUser) {
       setIsInterviewerTyping(true);
       try {
         const aiTurn = await requestInterviewTurn({
           stage: stage === 'warmup' ? 'warmup' : 'questioning',
           target_role: targetRole,
           experience_level: experienceLevel || difficultyPref,
+          focus_mode: focusMode,
+          candidate_name: firstName || '',
           question: currentQuestion?.question || '',
           answer: trimmed,
           rubric: currentQuestion
@@ -879,24 +948,20 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         );
 
         if (stage === 'warmup' && currentQuestion) {
-          const qText = resp.reply.includes(currentQuestion.question.slice(0, 28))
-            ? resp.reply
-            : `${resp.reply}\n\nLet's begin Question 1 of ${loopQueue.length}: ${currentQuestion.question}`;
           const introTurn: ConversationTurn = {
             id: `turn-q-${crypto.randomUUID().slice(0, 8)}`,
             speaker: 'interviewer',
             kind: 'question',
             timestamp: new Date().toISOString(),
             questionId: currentQuestion.id,
-            badge: `Q1 · ${currentQuestion.round} · Gemini AI`,
             interviewer: persona,
-            text: qText,
+            text: resp.reply,
           };
           setStage('questioning');
           setPaceSeconds(120);
           setIsPaceRunning(true);
           setTurns((prev) => [...prev, introTurn]);
-          speakText(introTurn.text, speakReply);
+          void speakInterviewerText(introTurn.text, speakReply);
           void onAIUsageChanged?.();
           return;
         }
@@ -913,27 +978,32 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               kind: resp.action === 'clarify' ? 'clarification' : 'followup',
               timestamp: new Date().toISOString(),
               questionId: currentQuestion.id,
-              badge: resp.action === 'clarify' ? 'Clarification · Gemini AI' : 'Follow-up · Gemini AI',
               interviewer: persona,
               text: resp.reply,
             };
             setTurns((prev) => [...prev, followTurn]);
-            speakText(followTurn.text, speakReply);
+            void speakInterviewerText(followTurn.text, speakReply);
             void onAIUsageChanged?.();
             return;
           }
 
           const combinedAnswer = [...userTurnsForCurrentQ, trimmed].join('\n\n');
-          const evalSummary = evaluateQuestionExchange({
+          const heuristicBase = evaluateQuestionExchange({
             question: currentQuestion,
             combinedAnswer,
             targetRole,
           });
+          const aiScore = typeof resp.score === 'number' ? resp.score : heuristicBase.score;
+          const aiSignal = resp.signal_label
+            ?? (aiScore >= 78 ? 'Strong Signal' : aiScore >= 56 ? 'Solid Foundation' : 'Developing');
+
           const mergedEval: QuestionEvaluationSummary = {
-            ...evalSummary,
-            strengths: resp.strengths && resp.strengths.length > 0 ? resp.strengths : evalSummary.strengths,
-            growthTip: resp.growth_tip || evalSummary.growthTip,
-            aiCritique: resp.critique || resp.reply,
+            ...heuristicBase,
+            score: aiScore,
+            signalLabel: aiSignal,
+            strengths: resp.strengths && resp.strengths.length > 0 ? resp.strengths : heuristicBase.strengths,
+            growthTip: resp.growth_tip || heuristicBase.growthTip,
+            aiCritique: resp.critique || '',
           };
 
           setUserTurnsForCurrentQ((prev) => [...prev, trimmed]);
@@ -952,18 +1022,22 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             evaluation: mergedEval,
           };
           setTurns((prev) => [...prev, evalTurn]);
-          speakText(resp.reply, speakReply);
+          void speakInterviewerText(resp.reply, speakReply);
           void onAIUsageChanged?.();
           return;
         }
-      } catch {
+      } catch (err) {
         setIsInterviewerTyping(false);
-        // Seamless automatic fallback to deterministic interview engine below
+        const msg = err instanceof Error ? err.message : 'Could not reach the Gemini interviewer right now.';
+        setErrorBanner(msg);
+        setLastFailedTurnText(trimmed);
+        return;
       }
     }
 
+    // Demo-only deterministic fallback
     if (stage === 'warmup') {
-      scheduleInterviewerReply(() => {
+      scheduleDemoReply(() => {
         if (!currentQuestion) return;
         const introTurn = buildQuestionIntroTurn({
           question: currentQuestion,
@@ -976,13 +1050,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         setPaceSeconds(120);
         setIsPaceRunning(true);
         setTurns((prev) => [...prev, introTurn]);
-        speakText(introTurn.text, speakReply);
+        void speakInterviewerText(introTurn.text, speakReply);
       });
       return;
     }
 
     if (!currentQuestion) return;
-
     const updatedTurnsForQ = [...userTurnsForCurrentQ, trimmed];
     const outcome = generateInterviewerTurn({
       question: currentQuestion,
@@ -992,10 +1065,10 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       memory: updatedMemory,
     });
 
-    scheduleInterviewerReply(() => {
+    scheduleDemoReply(() => {
       if (outcome.action === 'clarify') {
         setTurns((prev) => [...prev, outcome.interviewerTurn]);
-        speakText(outcome.interviewerTurn.text, speakReply);
+        void speakInterviewerText(outcome.interviewerTurn.text, speakReply);
         return;
       }
 
@@ -1003,30 +1076,64 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         setUserTurnsForCurrentQ(updatedTurnsForQ);
         setFollowUpCount((prev) => prev + 1);
         setTurns((prev) => [...prev, outcome.interviewerTurn]);
-        speakText(outcome.interviewerTurn.text, speakReply);
+        void speakInterviewerText(outcome.interviewerTurn.text, speakReply);
         return;
       }
 
-      // Completed question exchange
       setUserTurnsForCurrentQ(updatedTurnsForQ);
       setIsPaceRunning(false);
       if (outcome.evaluation) {
-        const evalSummary = outcome.evaluation;
-        setEvaluations((prev) => [...prev, evalSummary]);
-        void persistCompletedAttempt(evalSummary);
+        setEvaluations((prev) => [...prev, outcome.evaluation!]);
+        void persistCompletedAttempt(outcome.evaluation);
       }
       setStage('awaiting_continue');
       setTurns((prev) => [...prev, outcome.interviewerTurn]);
-      speakText(outcome.interviewerTurn.text, speakReply);
+      void speakInterviewerText(outcome.interviewerTurn.text, speakReply);
     });
   };
 
-  const handleSendMessage = () => {
-    void submitCandidateMessage();
-  };
-
-  const handleAskForHint = () => {
+  const handleAskForHint = async () => {
     if (!currentQuestion || stage !== 'questioning' || isInterviewerTyping) return;
+    setErrorBanner(null);
+
+    if (!isDemoUser) {
+      setIsInterviewerTyping(true);
+      try {
+        const recentHistory = turnsRef.current
+          .slice(-6)
+          .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
+          .join('\n')
+          .slice(0, 6000);
+        const aiHint = await requestInterviewTurn({
+          stage: 'questioning',
+          target_role: targetRole,
+          experience_level: experienceLevel || difficultyPref,
+          focus_mode: focusMode,
+          question: currentQuestion.question,
+          answer: '[REQUEST_STEER] Can you give me a quick hint on how to structure this?',
+          history: recentHistory,
+          follow_up_count: followUpCount,
+        });
+        setIsInterviewerTyping(false);
+        const persona = getInterviewerPersona(currentQuestion.round, targetRole);
+        const hintTurn: ConversationTurn = {
+          id: `turn-hint-${crypto.randomUUID().slice(0, 8)}`,
+          speaker: 'interviewer',
+          kind: 'clarification',
+          timestamp: new Date().toISOString(),
+          questionId: currentQuestion.id,
+          interviewer: persona,
+          text: aiHint.response.reply,
+        };
+        setTurns((prev) => [...prev, hintTurn]);
+        void speakInterviewerText(hintTurn.text);
+        void onAIUsageChanged?.();
+        return;
+      } catch {
+        setIsInterviewerTyping(false);
+      }
+    }
+
     const hintText = getQuestionCoachingHint(currentQuestion, targetRole);
     const hintTurn: ConversationTurn = {
       id: `turn-hint-${crypto.randomUUID().slice(0, 8)}`,
@@ -1034,51 +1141,11 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       kind: 'clarification',
       timestamp: new Date().toISOString(),
       questionId: currentQuestion.id,
-      badge: 'Interviewer steer',
       interviewer: turns.find((t) => t.questionId === currentQuestion.id && t.interviewer)?.interviewer,
       text: `Here is how I'd frame this if we were pairing: ${hintText}`,
     };
     setTurns((prev) => [...prev, hintTurn]);
-    speakText(hintTurn.text);
-  };
-
-  const handleRequestAICritique = async (evalSummary: QuestionEvaluationSummary) => {
-    setLoadingAIQuestionId(evalSummary.questionId);
-    setAiStatusNote('');
-    try {
-      const result = await requestAI<{ ai_feedback: string }>('interview', {
-        question: evalSummary.questionText,
-        target_role: targetRole,
-        answer: evalSummary.attempt.user_answer,
-        score: String(evalSummary.score),
-        rubric: JSON.stringify(evalSummary.attempt.rubric_feedback),
-      });
-
-      const critiqueText = result.response?.ai_feedback?.trim();
-      if (critiqueText) {
-        setTurns((prev) =>
-          prev.map((turn) =>
-            turn.evaluation?.questionId === evalSummary.questionId
-              ? {
-                  ...turn,
-                  evaluation: {
-                    ...turn.evaluation,
-                    aiCritique: critiqueText,
-                  },
-                }
-              : turn
-          )
-        );
-        setEvaluations((prev) =>
-          prev.map((ev) => (ev.questionId === evalSummary.questionId ? { ...ev, aiCritique: critiqueText } : ev))
-        );
-        await onAIUsageChanged?.();
-      }
-    } catch {
-      setAiStatusNote('Live AI critique is unavailable right now — your structured coaching note above includes our full heuristic breakdown.');
-    } finally {
-      setLoadingAIQuestionId(null);
-    }
+    void speakInterviewerText(hintTurn.text);
   };
 
   const handleSelectFocusMode = (mode: InterviewFocusMode) => {
@@ -1091,307 +1158,155 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     startNewSession(focusMode, diff, remoteQuestions);
   };
 
-  const handleJumpToQuestion = (question: CuratedInterviewQuestion) => {
-    setShowQuestionBank(false);
-    startNewSession(focusMode, difficultyPref, remoteQuestions, question);
-  };
-
   if (loading) {
     return <InterviewSkeleton />;
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '920px', margin: '0 auto', width: '100%' }}>
-      {/* Header & Clean Session Controls */}
-      <div className="m3-surface-card" style={{ padding: '20px 24px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: '16px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--md-primary)' }}>
-                Mock Interview Studio
-              </span>
-              <span style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>·</span>
-              <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)', fontWeight: 600 }}>
-                {targetRole}
-              </span>
-            </div>
-            <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--md-text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
-              Conversational Interview Practice
-            </h2>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            {/* Gemini Live Voice Call Controls */}
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                maxWidth: '100%',
-                gap: '6px',
-                padding: '3px',
-                borderRadius: '18px',
-                border: liveState === 'connected' ? '1px solid #059669' : '1px solid var(--md-outline)',
-                background: liveState === 'connected' ? 'rgba(5, 150, 105, 0.1)' : 'var(--md-surface-variant)',
-              }}
-            >
-              <select
-                aria-label="Choose interviewer human voice"
-                value={liveVoice}
-                disabled={liveState === 'connected' || liveState === 'connecting'}
-                onChange={(e) => setLiveVoice(e.target.value as LiveVoiceName)}
-                style={{
-                  border: 'none',
-                  background: 'transparent',
-                  color: 'var(--md-text-primary)',
-                  fontSize: '11.5px',
-                  fontWeight: 600,
-                  padding: '4px 6px 4px 10px',
-                  maxWidth: '100%',
-                  cursor: liveState === 'connected' ? 'default' : 'pointer',
-                  outline: 'none',
-                }}
-              >
-                {LIVE_VOICE_OPTIONS.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={() => void handleToggleLiveCall()}
-                disabled={stage === 'debrief'}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
-                  borderRadius: '9999px',
-                  border: 'none',
-                  background: liveState === 'connected' ? '#DC2626' : 'var(--md-primary)',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                }}
-              >
-                {liveState === 'connected' ? <PhoneOff size={13} /> : <Phone size={13} />}
-                <span>
-                  {liveState === 'connecting'
-                    ? 'Connecting…'
-                    : liveState === 'connected'
-                      ? 'End Live Call'
-                      : 'Live Voice Call'}
-                </span>
-              </button>
-
-              {liveState === 'connected' && (
-                <button
-                  type="button"
-                  onClick={handleToggleLiveMute}
-                  aria-label={isLiveMuted ? 'Unmute live microphone' : 'Mute live microphone'}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    padding: '6px 10px',
-                    borderRadius: '9999px',
-                    border: '1px solid var(--md-outline)',
-                    background: isLiveMuted ? 'var(--md-error-bg)' : 'var(--md-surface)',
-                    color: isLiveMuted ? 'var(--md-error)' : 'var(--md-text-primary)',
-                    fontSize: '11.5px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  {isLiveMuted ? <MicOff size={13} /> : <Mic size={13} />}
-                  <span>{isLiveMuted ? 'Muted' : 'Mic On'}</span>
-                </button>
-              )}
-            </div>
-
-            {ttsSupported && liveState !== 'connected' && (
-              <button
-                type="button"
-                onClick={() => setVoiceReadAloud((prev) => !prev)}
-                title={voiceReadAloud ? 'Mute interviewer voice' : 'Read interviewer prompts aloud'}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  padding: '6px 12px',
-                  borderRadius: '9999px',
-                  border: voiceReadAloud ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                  background: voiceReadAloud ? 'var(--md-primary-container)' : 'var(--md-surface)',
-                  color: voiceReadAloud ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
-              >
-                {voiceReadAloud ? <Volume2 size={14} /> : <VolumeX size={14} />}
-                <span>{voiceReadAloud ? 'Voice On' : 'Read Aloud'}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowQuestionBank((prev) => !prev)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '9999px',
-                border: showQuestionBank ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                background: showQuestionBank ? 'var(--md-primary-container)' : 'var(--md-surface)',
-                color: showQuestionBank ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <BookOpen size={14} />
-              <span>Question Bank ({tailoredPool.length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => startNewSession(focusMode, difficultyPref, remoteQuestions)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '6px 12px',
-                borderRadius: '9999px',
-                border: '1px solid var(--md-outline)',
-                background: 'var(--md-surface)',
-                color: 'var(--md-text-secondary)',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <RotateCcw size={13} />
-              <span>New Loop</span>
-            </button>
-          </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '900px', margin: '0 auto', width: '100%' }}>
+      {/* Clean Single-Row Studio Header */}
+      <div
+        className="m3-surface-card"
+        style={{
+          padding: '14px 20px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: '12px',
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--md-text-primary)', margin: 0, letterSpacing: '-0.02em' }}>
+            Mock Interview
+          </h2>
+          <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)', fontWeight: 500 }}>
+            {targetRole}
+          </span>
         </div>
 
-        {/* Minimalist Focus & Calibration Controls */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px 18px', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid var(--md-outline)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--md-text-muted)', marginRight: '4px' }}>
-              Format:
-            </span>
-            {FOCUS_OPTIONS.map((opt) => {
-              const active = focusMode === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => handleSelectFocusMode(opt.value)}
-                  style={{
-                    padding: '5px 12px',
-                    borderRadius: '9999px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    border: active ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                    background: active ? 'var(--md-primary)' : 'transparent',
-                    color: active ? '#ffffff' : 'var(--md-text-secondary)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <select
+            aria-label="Interview format"
+            value={focusMode}
+            disabled={liveState === 'connected' || liveState === 'connecting'}
+            onChange={(e) => handleSelectFocusMode(e.target.value as InterviewFocusMode)}
+            style={selectPillStyle}
+          >
+            {FOCUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '11.5px', fontWeight: 600, color: 'var(--md-text-muted)', marginRight: '4px' }}>
-              Level:
+          <select
+            aria-label="Interview level"
+            value={difficultyPref}
+            disabled={liveState === 'connected' || liveState === 'connecting'}
+            onChange={(e) => handleSelectDifficulty(e.target.value as DifficultyPreference)}
+            style={selectPillStyle}
+          >
+            {DIFFICULTY_OPTIONS.map((diff) => (
+              <option key={diff} value={diff}>
+                {diff}
+              </option>
+            ))}
+          </select>
+
+          <select
+            aria-label="Interviewer voice"
+            value={liveVoice}
+            disabled={liveState === 'connected' || liveState === 'connecting'}
+            onChange={(e) => setLiveVoice(e.target.value as LiveVoiceName)}
+            style={selectPillStyle}
+          >
+            {LIVE_VOICE_OPTIONS.map((v) => (
+              <option key={v.id} value={v.id}>
+                Voice: {v.label}
+              </option>
+            ))}
+          </select>
+
+          {liveState !== 'connected' && (
+            <button
+              type="button"
+              onClick={() => setVoiceReadAloud((prev) => !prev)}
+              title={voiceReadAloud ? 'Mute spoken interviewer replies' : 'Speak interviewer replies aloud'}
+              style={{
+                ...subtlePillBtnStyle,
+                padding: '6px 12px',
+                border: voiceReadAloud ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                background: voiceReadAloud ? 'var(--md-primary-container)' : 'var(--md-surface)',
+                color: voiceReadAloud ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
+              }}
+            >
+              {voiceReadAloud ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              <span>{isSpeakingAudio ? 'Speaking…' : voiceReadAloud ? 'Voice On' : 'Voice Off'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => void handleToggleLiveCall()}
+            disabled={stage === 'debrief'}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '7px 14px',
+              borderRadius: '9999px',
+              border: 'none',
+              background: liveState === 'connected' ? '#DC2626' : 'var(--md-primary)',
+              color: '#ffffff',
+              fontSize: '12px',
+              fontWeight: 700,
+              cursor: stage === 'debrief' ? 'not-allowed' : 'pointer',
+              opacity: stage === 'debrief' ? 0.55 : 1,
+            }}
+          >
+            {liveState === 'connected' ? <PhoneOff size={13} /> : <Phone size={13} />}
+            <span>
+              {liveState === 'connecting'
+                ? 'Connecting…'
+                : liveState === 'connected'
+                  ? 'End Call'
+                  : 'Live Voice Call'}
             </span>
-            {DIFFICULTY_OPTIONS.map((diff) => {
-              const active = difficultyPref === diff;
-              return (
-                <button
-                  key={diff}
-                  type="button"
-                  onClick={() => handleSelectDifficulty(diff)}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: '9999px',
-                    fontSize: '11.5px',
-                    fontWeight: 600,
-                    border: active ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                    background: active ? 'var(--md-primary-container)' : 'transparent',
-                    color: active ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  {diff}
-                </button>
-              );
-            })}
-          </div>
+          </button>
+
+          {liveState === 'connected' && (
+            <button
+              type="button"
+              onClick={handleToggleLiveMute}
+              aria-label={isLiveMuted ? 'Unmute microphone' : 'Mute microphone'}
+              style={{
+                ...subtlePillBtnStyle,
+                padding: '6px 12px',
+                background: isLiveMuted ? 'var(--md-error-bg)' : 'var(--md-surface)',
+                color: isLiveMuted ? 'var(--md-error)' : 'var(--md-text-primary)',
+              }}
+            >
+              {isLiveMuted ? <MicOff size={13} /> : <Mic size={13} />}
+              <span>{isLiveMuted ? 'Muted' : 'Mic On'}</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => startNewSession(focusMode, difficultyPref, remoteQuestions)}
+            title="Start a fresh interview session"
+            style={{ ...subtlePillBtnStyle, padding: '6px 12px' }}
+          >
+            <RotateCcw size={13} />
+            <span>Reset</span>
+          </button>
         </div>
-
-        {/* Collapsible Question Bank Picker */}
-        {showQuestionBank && (
-          <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--md-outline)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
-                Role-Specific Questions for {targetRole}
-              </span>
-              <span style={{ fontSize: '11.5px', color: 'var(--md-text-muted)' }}>
-                Select any prompt to practice conversationally
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
-              {tailoredPool.map((q) => {
-                const isActive = currentQuestion?.id === q.id && stage !== 'warmup';
-                return (
-                  <button
-                    key={q.id}
-                    type="button"
-                    onClick={() => handleJumpToQuestion(q)}
-                    style={{
-                      textAlign: 'left',
-                      padding: '10px 14px',
-                      borderRadius: '10px',
-                      border: isActive ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                      background: isActive ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '12px',
-                    }}
-                  >
-                    <div>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)', display: 'block', marginBottom: '2px' }}>
-                        {q.round} · {q.difficulty}
-                      </span>
-                      <span style={{ fontSize: '13px', color: 'var(--md-text-primary)', lineHeight: 1.4 }}>
-                        {q.question}
-                      </span>
-                    </div>
-                    <ArrowRight size={14} color="var(--md-text-secondary)" style={{ flexShrink: 0 }} />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Conversational Interview Room */}
-      <div className="m3-surface-card" style={{ padding: '0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {/* Live Room Status Bar */}
+      {/* Main Conversational Interview Room */}
+      <div className="m3-surface-card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {/* Minimal Status Strip */}
         <div
           style={{
             display: 'flex',
@@ -1399,29 +1314,23 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             alignItems: 'center',
             flexWrap: 'wrap',
             gap: '10px',
-            padding: '12px 20px',
+            padding: '10px 20px',
             borderBottom: '1px solid var(--md-outline)',
             background: 'var(--md-surface-variant)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <MessageSquare size={15} color="var(--md-primary)" />
-            <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
-              {stage === 'warmup'
-                ? 'Warm-Up Introduction'
+          <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+            {liveState === 'connected'
+              ? `Live Voice Interview · ${targetRole}`
+              : stage === 'warmup'
+                ? 'Introduction'
                 : stage === 'debrief'
-                  ? 'Hiring Manager Debrief'
+                  ? 'Session Debrief'
                   : `Question ${currentIndex + 1} of ${loopQueue.length} · ${currentQuestion?.round ?? ''}`}
-            </span>
-            {stage === 'questioning' && followUpCount > 0 && (
-              <span style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)', fontWeight: 500 }}>
-                · Follow-up turn
-              </span>
-            )}
-          </div>
+          </span>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {stage !== 'warmup' && stage !== 'debrief' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {liveState !== 'connected' && stage !== 'warmup' && stage !== 'debrief' && (
               <div
                 style={{
                   display: 'inline-flex',
@@ -1441,7 +1350,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                 <button
                   type="button"
                   onClick={() => setIsPaceRunning((prev) => !prev)}
-                  aria-label={isPaceRunning ? 'Pause pacing timer' : 'Start pacing timer'}
+                  aria-label={isPaceRunning ? 'Pause timer' : 'Resume timer'}
                   style={{
                     background: 'none',
                     border: 'none',
@@ -1457,24 +1366,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               </div>
             )}
 
-            {stage !== 'debrief' && (evaluations.length > 0 || stage === 'questioning' || turns.length > 1) && (
+            {stage !== 'debrief' && (evaluations.length > 0 || stage === 'questioning' || turns.length > 1 || liveState === 'connected') && (
               <button
                 type="button"
-                onClick={handleFinishAndDebrief}
+                onClick={() => void handleFinishAndDebrief()}
                 disabled={isInterviewerTyping}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  padding: '5px 11px',
-                  borderRadius: '9999px',
-                  border: '1px solid var(--md-outline)',
-                  background: 'var(--md-surface)',
-                  color: 'var(--md-text-primary)',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                }}
+                style={{ ...subtlePillBtnStyle, color: 'var(--md-text-primary)' }}
               >
                 <Flag size={12} />
                 <span>End & Debrief</span>
@@ -1486,12 +1383,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         {/* Dialogue Thread */}
         <div
           style={{
-            padding: '22px 24px',
+            padding: '20px 22px',
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
-            minHeight: '340px',
-            maxHeight: '620px',
+            minHeight: '300px',
+            maxHeight: '520px',
             overflowY: 'auto',
           }}
         >
@@ -1514,12 +1411,12 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     gap: '12px',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                    <div>
-                      <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                        Interviewer Note · {ev.round}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ flex: 1, minWidth: '220px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Feedback · {ev.round}
                       </span>
-                      <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--md-text-primary)', fontWeight: 600 }}>
+                      <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--md-text-primary)', fontWeight: 600, lineHeight: 1.5 }}>
                         {turn.text}
                       </p>
                     </div>
@@ -1532,6 +1429,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                         fontSize: '12.5px',
                         fontWeight: 700,
                         color: 'var(--md-primary)',
+                        flexShrink: 0,
                       }}
                     >
                       {ev.signalLabel} · {ev.score}%
@@ -1541,7 +1439,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '12px' }}>
                     <div style={{ background: 'var(--md-surface)', borderRadius: '10px', padding: '12px 14px', border: '1px solid var(--md-outline)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
-                        What landed well
+                        Strengths
                       </span>
                       <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12.5px', color: 'var(--md-text-primary)', lineHeight: 1.5 }}>
                         {ev.strengths.map((s) => (
@@ -1552,7 +1450,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
 
                     <div style={{ background: 'var(--md-surface)', borderRadius: '10px', padding: '12px 14px', border: '1px solid var(--md-outline)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
-                        How to sharpen it
+                        Next Improvement
                       </span>
                       <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-text-primary)', lineHeight: 1.5 }}>
                         {ev.growthTip}
@@ -1560,63 +1458,16 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     </div>
                   </div>
 
-                  {/* Subtle concept coverage strip */}
-                  {(ev.matchedConcepts.length > 0 || ev.missedConcepts.length > 0) && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--md-text-muted)', marginRight: '4px' }}>
-                        Key signals:
-                      </span>
-                      {ev.matchedConcepts.map((c) => (
-                        <span
-                          key={c}
-                          style={{
-                            padding: '2px 9px',
-                            borderRadius: '9999px',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            background: 'var(--md-primary-container)',
-                            color: 'var(--md-on-primary-container)',
-                          }}
-                        >
-                          ✓ {c}
-                        </span>
-                      ))}
-                      {ev.missedConcepts.map((c) => (
-                        <span
-                          key={c}
-                          style={{
-                            padding: '2px 9px',
-                            borderRadius: '9999px',
-                            fontSize: '11px',
-                            color: 'var(--md-text-muted)',
-                            border: '1px solid var(--md-outline)',
-                            background: 'var(--md-surface)',
-                          }}
-                        >
-                          {c}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
                   {ev.aiCritique && (
-                    <div style={{ background: 'var(--md-surface)', borderRadius: '10px', padding: '12px 14px', border: '1px solid var(--md-primary)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-                        <Sparkles size={13} color="var(--md-primary)" />
-                        <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-primary)' }}>
-                          AI Coach Critique
-                        </span>
-                      </div>
-                      <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-text-primary)', lineHeight: 1.55 }}>
-                        {ev.aiCritique}
-                      </p>
-                    </div>
+                    <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-text-secondary)', lineHeight: 1.55 }}>
+                      {ev.aiCritique}
+                    </p>
                   )}
 
                   {isSampleOpen && (
                     <div style={{ background: 'var(--md-surface)', borderRadius: '10px', padding: '12px 14px', border: '1px solid var(--md-outline)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
-                        Example Strong Answer
+                        Strong Sample Answer
                       </span>
                       <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-text-primary)', lineHeight: 1.55 }}>
                         {ev.modelAnswer}
@@ -1625,57 +1476,19 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                   )}
 
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setExpandedSampleIds((prev) => ({
-                            ...prev,
-                            [ev.questionId]: !prev[ev.questionId],
-                          }))
-                        }
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          padding: '6px 12px',
-                          borderRadius: '9999px',
-                          border: '1px solid var(--md-outline)',
-                          background: 'var(--md-surface)',
-                          color: 'var(--md-text-secondary)',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {isSampleOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                        <span>{isSampleOpen ? 'Hide sample answer' : 'View sample answer'}</span>
-                      </button>
-
-                      {!ev.aiCritique && (
-                        <button
-                          type="button"
-                          onClick={() => void handleRequestAICritique(ev)}
-                          disabled={loadingAIQuestionId === ev.questionId}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '5px',
-                            padding: '6px 12px',
-                            borderRadius: '9999px',
-                            border: '1px solid var(--md-outline)',
-                            background: 'var(--md-surface)',
-                            color: 'var(--md-primary)',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <Sparkles size={13} />
-                          <span>{loadingAIQuestionId === ev.questionId ? 'Reviewing…' : 'AI Coach Critique'}</span>
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedSampleIds((prev) => ({
+                          ...prev,
+                          [ev.questionId]: !prev[ev.questionId],
+                        }))
+                      }
+                      style={subtlePillBtnStyle}
+                    >
+                      {isSampleOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                      <span>{isSampleOpen ? 'Hide sample answer' : 'View sample answer'}</span>
+                    </button>
 
                     {stage === 'awaiting_continue' && currentQuestion?.id === ev.questionId && (
                       <button
@@ -1686,7 +1499,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                       >
                         <span>
                           {currentIndex + 1 >= loopQueue.length
-                            ? 'Finish & View Debrief'
+                            ? 'View Final Debrief'
                             : `Continue to Q${currentIndex + 2}`}
                         </span>
                         <ArrowRight size={14} />
@@ -1706,7 +1519,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     borderRadius: '14px',
                     border: '1px solid var(--md-primary)',
                     background: 'var(--md-surface)',
-                    padding: '22px',
+                    padding: '20px',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: '16px',
@@ -1779,7 +1592,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     </div>
                     <div style={{ padding: '12px 14px', borderRadius: '10px', border: '1px solid var(--md-outline)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-muted)', textTransform: 'uppercase', display: 'block', marginBottom: '6px' }}>
-                        Priority Habits Next Loop
+                        Next Focus Areas
                       </span>
                       <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '12.5px', color: 'var(--md-text-primary)', lineHeight: 1.55 }}>
                         {d.priorityImprovements.map((item) => (
@@ -1797,7 +1610,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                       style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                     >
                       <RotateCcw size={14} />
-                      <span>Start Another Interview Loop</span>
+                      <span>Start New Session</span>
                     </button>
                   </div>
                 </div>
@@ -1837,21 +1650,6 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     <span style={{ fontSize: '11.5px', color: 'var(--md-text-muted)' }}>
                       {turn.interviewer.roleTitle}
                     </span>
-                    {turn.badge && (
-                      <span
-                        style={{
-                          padding: '2px 8px',
-                          borderRadius: '9999px',
-                          fontSize: '10.5px',
-                          fontWeight: 600,
-                          background: 'var(--md-surface-variant)',
-                          border: '1px solid var(--md-outline)',
-                          color: 'var(--md-text-secondary)',
-                        }}
-                      >
-                        {turn.badge}
-                      </span>
-                    )}
                   </div>
                 )}
 
@@ -1863,14 +1661,14 @@ export const InterviewSimulatorView: React.FC<Props> = ({
 
                 <div
                   style={{
-                    maxWidth: '88%',
-                    padding: '14px 18px',
+                    maxWidth: '85%',
+                    padding: '13px 17px',
                     borderRadius: isCandidate ? '14px 14px 4px 14px' : '4px 14px 14px 14px',
                     border: isCandidate ? '1px solid rgba(18, 60, 105, 0.2)' : '1px solid var(--md-outline)',
                     background: isCandidate ? 'var(--md-primary-container)' : 'var(--md-surface)',
                     color: isCandidate ? 'var(--md-on-primary-container)' : 'var(--md-text-primary)',
                     fontSize: '14px',
-                    lineHeight: 1.65,
+                    lineHeight: 1.6,
                     whiteSpace: 'pre-wrap',
                   }}
                 >
@@ -1895,11 +1693,11 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#059669' }}>
-                  ● Live Human Voice ({liveVoice} · {liveActiveModel || 'Gemini Live'})
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#059669' }}>
+                  ● Live Voice Active ({liveVoice})
                 </span>
-                <span style={{ fontSize: '11px', color: 'var(--md-text-secondary)' }}>
-                  {isLiveAiSpeaking ? 'Interviewer speaking (interrupt anytime)' : isLiveMuted ? 'Mic muted' : 'Listening… speak naturally'}
+                <span style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
+                  {isLiveAiSpeaking ? 'Maya is speaking (interrupt anytime)' : isLiveMuted ? 'Mic muted' : 'Listening… speak naturally'}
                 </span>
               </div>
               <div style={{ height: '4px', width: '100%', borderRadius: '999px', background: 'var(--md-outline)', overflow: 'hidden' }}>
@@ -1919,35 +1717,63 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               )}
               {liveAiCaption && (
                 <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-primary)' }}>
-                  <strong>Interviewer:</strong> {liveAiCaption}
+                  <strong>Maya:</strong> {liveAiCaption}
                 </p>
               )}
             </div>
           )}
 
           {isInterviewerTyping && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 4px' }}>
-              <span className="skeleton-box" style={{ width: '24px', height: '24px', borderRadius: '50%' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px' }}>
+              <span className="skeleton-box" style={{ width: '22px', height: '22px', borderRadius: '50%' }} />
               <span style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', fontStyle: 'italic' }}>
-                Interviewer is considering your response…
+                Maya is thinking…
               </span>
             </div>
           )}
 
-          {aiStatusNote && (
-            <p style={{ margin: 0, fontSize: '12px', color: 'var(--md-text-secondary)' }}>
-              {aiStatusNote}
-            </p>
+          {errorBanner && (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '10px',
+                flexWrap: 'wrap',
+                padding: '10px 14px',
+                borderRadius: '10px',
+                border: '1px solid rgba(220, 38, 38, 0.35)',
+                background: 'rgba(220, 38, 38, 0.07)',
+                color: 'var(--md-text-primary)',
+                fontSize: '12.5px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <AlertCircle size={15} color="#DC2626" style={{ flexShrink: 0 }} />
+                <span>{errorBanner}</span>
+              </div>
+              {lastFailedTurnText && (
+                <button
+                  type="button"
+                  onClick={() => void submitCandidateMessage(lastFailedTurnText, { isRetry: true })}
+                  style={{ ...subtlePillBtnStyle, color: 'var(--md-primary)' }}
+                >
+                  <RotateCcw size={12} />
+                  <span>Retry</span>
+                </button>
+              )}
+            </div>
           )}
 
           <div ref={threadEndRef} />
         </div>
 
-        {/* Sticky Composer */}
+        {/* Clean Composer */}
         {stage !== 'debrief' && (
           <div
             style={{
-              padding: '16px 20px',
+              padding: '14px 20px',
               borderTop: '1px solid var(--md-outline)',
               background: 'var(--md-surface-variant)',
             }}
@@ -1957,7 +1783,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                 role="status"
                 style={{
                   marginBottom: '8px',
-                  fontSize: '11.5px',
+                  fontSize: '12px',
                   fontWeight: 600,
                   color: 'var(--md-primary)',
                   display: 'flex',
@@ -1974,7 +1800,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                         display: 'block',
                         height: '100%',
                         width: `${Math.max(10, Math.round(micLevel * 100))}%`,
-                        background: 'var(--md-error)',
+                        background: '#DC2626',
                         transition: 'width 80ms linear',
                       }}
                     />
@@ -1983,167 +1809,34 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                {speechSupported && liveState !== 'connected' && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void toggleRecording()}
-                      disabled={isInterviewerTyping || isTranscribingVoice}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        padding: '5px 12px',
-                        borderRadius: '9999px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        border: isRecording ? '1px solid var(--md-error)' : '1px solid var(--md-outline)',
-                        background: isRecording ? 'var(--md-error-bg)' : 'var(--md-surface)',
-                        color: isRecording ? 'var(--md-error)' : 'var(--md-text-primary)',
-                        cursor: isTranscribingVoice ? 'wait' : 'pointer',
-                      }}
-                    >
-                      {isRecording ? <MicOff size={13} /> : <Mic size={13} />}
-                      <span>
-                        {isTranscribingVoice
-                          ? 'Transcribing…'
-                          : isRecording
-                            ? autoSendVoice
-                              ? 'Stop & Send Voice'
-                              : 'Stop Listening'
-                            : 'Speak Answer'}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setAutoSendVoice((prev) => !prev)}
-                      title="When enabled, finishing Speak Answer automatically transcribes and sends your reply to the AI interviewer"
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                        padding: '4px 10px',
-                        borderRadius: '9999px',
-                        fontSize: '11px',
-                        fontWeight: 600,
-                        border: autoSendVoice ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                        background: autoSendVoice ? 'var(--md-primary-container)' : 'var(--md-surface)',
-                        color: autoSendVoice ? 'var(--md-on-primary-container)' : 'var(--md-text-muted)',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <span>Auto-send voice: {autoSendVoice ? 'On' : 'Off'}</span>
-                    </button>
-                  </>
-                )}
-
-                {stage === 'questioning' && (
-                  <button
-                    type="button"
-                    onClick={handleAskForHint}
-                    disabled={isInterviewerTyping}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '5px 11px',
-                      borderRadius: '9999px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      border: '1px solid var(--md-outline)',
-                      background: 'var(--md-surface)',
-                      color: 'var(--md-text-secondary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <HelpCircle size={13} />
-                    <span>Ask for a Steer</span>
-                  </button>
-                )}
-
-                {stage === 'warmup' && (
-                  <button
-                    type="button"
-                    onClick={handleSkipWarmup}
-                    disabled={isInterviewerTyping}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '5px 11px',
-                      borderRadius: '9999px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      border: '1px solid var(--md-outline)',
-                      background: 'var(--md-surface)',
-                      color: 'var(--md-text-secondary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <SkipForward size={13} />
-                    <span>Jump straight to Q1</span>
-                  </button>
-                )}
-
-                {stage === 'questioning' && (
-                  <button
-                    type="button"
-                    onClick={handleAdvanceToNextQuestion}
-                    disabled={isInterviewerTyping}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      padding: '5px 11px',
-                      borderRadius: '9999px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      border: '1px solid var(--md-outline)',
-                      background: 'var(--md-surface)',
-                      color: 'var(--md-text-secondary)',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <SkipForward size={13} />
-                    <span>Next Question</span>
-                  </button>
-                )}
-              </div>
-
-              <span style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>
-                Ctrl + Enter to send
-              </span>
-            </div>
-
             <div className="iv-composer-row" style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
               <textarea
                 id="interview-answer"
-                rows={3}
+                rows={2}
                 value={draftAnswer}
                 maxLength={6000}
                 disabled={isInterviewerTyping}
                 onChange={(e) => setDraftAnswer(e.target.value)}
                 onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    handleSendMessage();
+                    void submitCandidateMessage();
                   }
                 }}
                 placeholder={
-                  stage === 'warmup'
-                    ? 'Briefly share what you built or debugged recently (tools, scale, outcome)...'
-                    : stage === 'awaiting_continue'
-                      ? 'Click Continue above or add a quick note to advance...'
-                      : followUpCount > 0
-                        ? 'Respond directly to the follow-up probe...'
-                        : 'Walk through your thinking naturally: context, choices, tradeoffs, and how you verified impact...'
+                  liveState === 'connected'
+                    ? 'Speak directly into your mic, or type a note here…'
+                    : stage === 'warmup'
+                      ? 'Share a quick overview of what you built or worked on recently…'
+                      : stage === 'awaiting_continue'
+                        ? 'Click Continue above, or press Enter to move to the next question…'
+                        : followUpCount > 0
+                          ? 'Respond to the follow-up…'
+                          : 'Explain your approach, tradeoffs, and measurable outcome…'
                 }
                 style={{
                   flex: 1,
-                  padding: '12px 14px',
+                  padding: '11px 14px',
                   borderRadius: '12px',
                   border: '1px solid var(--md-outline)',
                   background: 'var(--md-surface)',
@@ -2156,10 +1849,38 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                   boxSizing: 'border-box',
                 }}
               />
+
+              {speechSupported && liveState !== 'connected' && (
+                <button
+                  type="button"
+                  onClick={() => void toggleRecording()}
+                  disabled={isInterviewerTyping || isTranscribingVoice}
+                  title={isRecording ? 'Stop recording and send' : 'Speak your answer'}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '11px 14px',
+                    minHeight: '44px',
+                    borderRadius: '12px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    border: isRecording ? '1px solid #DC2626' : '1px solid var(--md-outline)',
+                    background: isRecording ? 'rgba(220, 38, 38, 0.12)' : 'var(--md-surface)',
+                    color: isRecording ? '#DC2626' : 'var(--md-text-primary)',
+                    cursor: isTranscribingVoice ? 'wait' : 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  {isRecording ? <MicOff size={15} /> : <Mic size={15} />}
+                  <span>{isTranscribingVoice ? 'Transcribing…' : isRecording ? 'Stop & Send' : 'Speak'}</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 className="btn-m3-primary iv-send-btn"
-                onClick={handleSendMessage}
+                onClick={() => void submitCandidateMessage()}
                 disabled={!draftAnswer.trim() || isInterviewerTyping}
                 style={{
                   display: 'inline-flex',
@@ -2174,73 +1895,48 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                 <span>Send</span>
               </button>
             </div>
+
+            {liveState !== 'connected' && (stage === 'warmup' || stage === 'questioning') && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '10px' }}>
+                {stage === 'warmup' && (
+                  <button
+                    type="button"
+                    onClick={handleSkipWarmup}
+                    disabled={isInterviewerTyping}
+                    style={subtlePillBtnStyle}
+                  >
+                    <SkipForward size={12} />
+                    <span>Skip to Question 1</span>
+                  </button>
+                )}
+
+                {stage === 'questioning' && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleAskForHint()}
+                      disabled={isInterviewerTyping}
+                      style={subtlePillBtnStyle}
+                    >
+                      <HelpCircle size={12} />
+                      <span>Ask for a hint</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleAdvanceToNextQuestion}
+                      disabled={isInterviewerTyping}
+                      style={subtlePillBtnStyle}
+                    >
+                      <SkipForward size={12} />
+                      <span>Next question</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {/* Compact Collapsible Practice History */}
-      {history.length > 0 && (
-        <div className="m3-surface-card" style={{ padding: '16px 22px' }}>
-          <button
-            type="button"
-            onClick={() => setShowHistory((prev) => !prev)}
-            style={{
-              width: '100%',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              color: 'var(--md-text-primary)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <CheckCircle2 size={15} color="var(--md-primary)" />
-              <span style={{ fontSize: '13.5px', fontWeight: 700 }}>
-                Recent Practice Responses ({history.length})
-              </span>
-            </div>
-            {showHistory ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-
-          {showHistory && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '14px' }}>
-              {history.slice(0, 6).map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    padding: '12px 14px',
-                    borderRadius: '10px',
-                    border: '1px solid var(--md-outline)',
-                    background: 'var(--md-surface-variant)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    gap: '12px',
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)', display: 'block', marginBottom: '2px' }}>
-                      {item.round} · {item.signal_label}
-                    </span>
-                    <p style={{ margin: '0 0 4px', fontSize: '12.5px', fontWeight: 600, color: 'var(--md-text-primary)' }}>
-                      {item.question_text}
-                    </p>
-                    <p style={{ margin: 0, fontSize: '12px', color: 'var(--md-text-secondary)', lineHeight: 1.45 }}>
-                      {item.user_answer.length > 140 ? `${item.user_answer.slice(0, 140)}…` : item.user_answer}
-                    </p>
-                  </div>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--md-primary)', flexShrink: 0 }}>
-                    {item.score}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 };
