@@ -635,6 +635,136 @@ async function generateWithGeminiFallbacks(params: {
   return null;
 }
 
+interface ReservationHandle {
+  allowed: boolean;
+  reason?: string;
+  used: number;
+  reservationId?: number;
+  mode: 'rpc' | 'direct';
+}
+
+function isMissingRpcOrSchemaError(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false;
+  const code = err.code || '';
+  const msg = (err.message || '').toLowerCase();
+  return code === 'PGRST202'
+    || code === '42883'
+    || code === '42703'
+    || msg.includes('could not find the function')
+    || msg.includes('does not exist');
+}
+
+async function reserveUsageWithFallback(
+  admin: ReturnType<typeof createClient>,
+  observability: { log: (level: 'info' | 'warn' | 'error', event: string, attributes?: Record<string, string | number | boolean | null>) => void },
+  params: { userId: string; feature: Feature; featureLimit: number; reservedTokens: number }
+): Promise<ReservationHandle | null> {
+  const { userId, feature, featureLimit, reservedTokens } = params;
+
+  const rpc4 = await admin.rpc('reserve_ai_usage', {
+    p_user_id: userId,
+    p_feature: feature,
+    p_feature_limit: featureLimit,
+    p_reserved_tokens: reservedTokens,
+  });
+  if (!rpc4.error && rpc4.data) {
+    const d = rpc4.data as { allowed?: boolean; reason?: string; used?: number; reservation_id?: number };
+    return {
+      allowed: Boolean(d.allowed),
+      reason: d.reason,
+      used: Number(d.used || 0),
+      reservationId: d.reservation_id !== undefined ? Number(d.reservation_id) : undefined,
+      mode: 'rpc',
+    };
+  }
+
+  if (isMissingRpcOrSchemaError(rpc4.error)) {
+    const rpc3 = await admin.rpc('reserve_ai_usage', {
+      p_user_id: userId,
+      p_feature: feature,
+      p_feature_limit: featureLimit,
+    });
+    if (!rpc3.error && rpc3.data) {
+      const d = rpc3.data as { allowed?: boolean; reason?: string; used?: number; reservation_id?: number };
+      return {
+        allowed: Boolean(d.allowed),
+        reason: d.reason,
+        used: Number(d.used || 0),
+        reservationId: d.reservation_id !== undefined ? Number(d.reservation_id) : undefined,
+        mode: 'rpc',
+      };
+    }
+    if (!isMissingRpcOrSchemaError(rpc3.error)) {
+      observability.log('warn', 'ai_usage.rpc3_failed', { error_code: rpc3.error?.code || 'unknown' });
+      return null;
+    }
+
+    // Fallback when migration RPCs haven't been applied yet: account directly on public.ai_usage
+    observability.log('warn', 'ai_usage.reserve_direct_fallback', { reason: rpc4.error?.code || 'missing_rpc' });
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { count, error: countError } = await admin
+      .from('ai_usage')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('feature', feature)
+      .gte('created_at', since);
+    if (countError) {
+      observability.log('error', 'ai_usage.direct_count_failed', { error_code: countError.code || 'unknown' });
+      return null;
+    }
+    const used = Number(count || 0);
+    if (used >= featureLimit) {
+      return { allowed: false, reason: 'weekly_feature_limit', used, mode: 'direct' };
+    }
+    const { data: inserted, error: insertError } = await admin
+      .from('ai_usage')
+      .insert({ user_id: userId, feature })
+      .select('id')
+      .single();
+    if (insertError || !inserted) {
+      observability.log('error', 'ai_usage.direct_insert_failed', { error_code: insertError?.code || 'unknown' });
+      return null;
+    }
+    return {
+      allowed: true,
+      used: used + 1,
+      reservationId: Number(inserted.id),
+      mode: 'direct',
+    };
+  }
+
+  observability.log('error', 'ai_usage.rpc_failed', { error_code: rpc4.error?.code || 'unknown' });
+  return null;
+}
+
+async function finishUsageWithFallback(
+  admin: ReturnType<typeof createClient>,
+  handle: ReservationHandle,
+  params: { success: boolean; tokensIn: number | null; tokensOut: number | null }
+): Promise<boolean> {
+  if (!handle.reservationId) return true;
+  if (handle.mode === 'rpc') {
+    const { error } = await admin.rpc('finish_ai_usage', {
+      p_reservation_id: handle.reservationId,
+      p_success: params.success,
+      p_tokens_in: params.tokensIn,
+      p_tokens_out: params.tokensOut,
+    });
+    if (!error) return true;
+    if (!isMissingRpcOrSchemaError(error)) return false;
+  }
+
+  if (params.success) {
+    const { error } = await admin
+      .from('ai_usage')
+      .update({ tokens_in: params.tokensIn ?? 0, tokens_out: params.tokensOut ?? 0 })
+      .eq('id', handle.reservationId);
+    return !error;
+  }
+  await admin.from('ai_usage').delete().eq('id', handle.reservationId);
+  return true;
+}
+
 serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return response({ error: 'Method not allowed.' }, 405);
@@ -710,13 +840,13 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       if (!geminiKey) {
         return response({ error: 'Gemini Live voice requires GEMINI_API_KEY in Edge Function secrets.' }, 503);
       }
-      const { data: reservation, error: reservationError } = await admin.rpc('reserve_ai_usage', {
-        p_user_id: user.id,
-        p_feature: 'interview',
-        p_feature_limit: featureLimit,
-        p_reserved_tokens: 1500,
+      const reservation = await reserveUsageWithFallback(admin, observability, {
+        userId: user.id,
+        feature: 'interview',
+        featureLimit,
+        reservedTokens: 1500,
       });
-      if (reservationError || !reservation) return response({ error: 'Could not reserve AI usage. Please try again.' }, 503);
+      if (!reservation) return response({ error: 'Could not reserve AI usage. Please try again.' }, 503);
       if (!reservation.allowed) {
         return response({
           error: reservation.reason === 'daily_budget_reached' ? 'daily_budget_reached' : 'limit_reached',
@@ -726,7 +856,6 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
         }, 429);
       }
 
-      const reservationId = Number(reservation.reservation_id);
       try {
         const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
         const newSessionExpireTime = new Date(Date.now() + 5 * 60 * 1000).toISOString();
@@ -765,11 +894,10 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
           throw new Error(`Token endpoint returned HTTP ${lastTokenStatus || 502}`);
         }
 
-        await admin.rpc('finish_ai_usage', {
-          p_reservation_id: reservationId,
-          p_success: true,
-          p_tokens_in: 1,
-          p_tokens_out: 1,
+        await finishUsageWithFallback(admin, reservation, {
+          success: true,
+          tokensIn: 1,
+          tokensOut: 1,
         });
 
         return response({
@@ -786,15 +914,14 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
             feature: 'interview',
             tokens_in: 1,
             tokens_out: 1,
-            remaining_quota: Math.max(0, featureLimit - Number(reservation.used || 0)),
+            remaining_quota: Math.max(0, featureLimit - reservation.used),
           },
         });
       } catch (tokenErr) {
-        await admin.rpc('finish_ai_usage', {
-          p_reservation_id: reservationId,
-          p_success: false,
-          p_tokens_in: null,
-          p_tokens_out: null,
+        await finishUsageWithFallback(admin, reservation, {
+          success: false,
+          tokensIn: null,
+          tokensOut: null,
         });
         const detail = tokenErr instanceof Error ? tokenErr.message : 'Unknown error';
         return response({ error: `Could not initialize Gemini Live voice session (${detail}).` }, 502);
@@ -873,13 +1000,13 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     const inputSizeForTokens = interviewMode === 'transcribe' ? 2000 : JSON.stringify(cleanInput).length;
     const reservedTokens = Math.min(200_000, Math.max(400, (inputSizeForTokens + instructions.length) * 2 + maxOutputTokens));
 
-    const { data: reservation, error: reservationError } = await admin.rpc('reserve_ai_usage', {
-      p_user_id: user.id,
-      p_feature: feature,
-      p_feature_limit: featureLimit,
-      p_reserved_tokens: reservedTokens,
+    const reservation = await reserveUsageWithFallback(admin, observability, {
+      userId: user.id,
+      feature,
+      featureLimit,
+      reservedTokens,
     });
-    if (reservationError || !reservation) return response({ error: 'Could not reserve AI usage. Please try again.' }, 503);
+    if (!reservation) return response({ error: 'Could not reserve AI usage. Please try again.' }, 503);
     if (!reservation.allowed) {
       if (reservation.reason === 'daily_budget_reached') {
         return response({
@@ -894,7 +1021,6 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       }, 429);
     }
 
-    const reservationId = Number(reservation.reservation_id);
     try {
       let resultBundle: { modelResult: Record<string, unknown>; modelUsed: string; tokensIn: number; tokensOut: number } | null = null;
 
@@ -939,24 +1065,22 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       }
 
       if (!resultBundle) {
-        await admin.rpc('finish_ai_usage', {
-          p_reservation_id: reservationId,
-          p_success: false,
-          p_tokens_in: null,
-          p_tokens_out: null,
+        await finishUsageWithFallback(admin, reservation, {
+          success: false,
+          tokensIn: null,
+          tokensOut: null,
         });
         return response({ error: 'All configured AI models were busy or unavailable. Please try again shortly.' }, 502);
       }
 
       if (feature === 'role') resultBundle.modelResult.role_title = cleanInput.role_title;
 
-      const { error: usageError } = await admin.rpc('finish_ai_usage', {
-        p_reservation_id: reservationId,
-        p_success: true,
-        p_tokens_in: resultBundle.tokensIn,
-        p_tokens_out: resultBundle.tokensOut,
+      const finalized = await finishUsageWithFallback(admin, reservation, {
+        success: true,
+        tokensIn: resultBundle.tokensIn,
+        tokensOut: resultBundle.tokensOut,
       });
-      if (usageError) throw new Error('Could not finalize AI usage accounting. Please retry.');
+      if (!finalized) throw new Error('Could not finalize AI usage accounting. Please retry.');
 
       if (feature === 'role' && roleCacheKey) {
         const reusableResult = { ...resultBundle.modelResult };
@@ -990,15 +1114,14 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
           feature,
           tokens_in: resultBundle.tokensIn,
           tokens_out: resultBundle.tokensOut,
-          remaining_quota: Math.max(0, featureLimit - Number(reservation.used || 0)),
+          remaining_quota: Math.max(0, featureLimit - reservation.used),
         },
       });
     } catch (error) {
-      await admin.rpc('finish_ai_usage', {
-        p_reservation_id: reservationId,
-        p_success: false,
-        p_tokens_in: null,
-        p_tokens_out: null,
+      await finishUsageWithFallback(admin, reservation, {
+        success: false,
+        tokensIn: null,
+        tokensOut: null,
       });
       throw error;
     }
