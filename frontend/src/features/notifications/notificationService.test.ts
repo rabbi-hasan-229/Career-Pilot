@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest';
 import { notificationService, DEFAULT_NOTIFICATION_SETTINGS } from './notificationService';
 import type { Task, Profile } from '../../types';
+import { supabase } from '../../lib/supabase';
 
 describe('Notification Service & Controls', () => {
   const store = new Map<string, string>();
@@ -105,5 +106,59 @@ describe('Notification Service & Controls', () => {
     expect(loaded.quiet_hours_enabled).toBe(true);
     expect(loaded.quiet_hours_start).toBe('23:00');
     expect(loaded.quiet_hours_end).toBe('06:30');
+  });
+
+  it('falls back to local notification storage when user_notifications is missing in schema cache (PGRST205)', async () => {
+    const signedInProfile: Profile = {
+      ...dummyProfile,
+      id: 'signed-in-user-1',
+      is_demo: false,
+    };
+
+    const fromSpy = vi.spyOn(supabase, 'from').mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          order: () => ({
+            limit: async () => ({
+              data: null,
+              error: { code: 'PGRST205', message: 'Could not find the table public.user_notifications in the schema cache' },
+            }),
+          }),
+        }),
+      }),
+      insert: async () => ({
+        data: null,
+        error: { code: 'PGRST205', message: 'Could not find the table public.user_notifications in the schema cache' },
+      }),
+      update: () => ({
+        eq: () => ({
+          is: async () => ({
+            data: null,
+            error: { code: 'PGRST205', message: 'Could not find the table public.user_notifications in the schema cache' },
+          }),
+        }),
+      }),
+    }) as unknown as ReturnType<typeof supabase.from>);
+
+    try {
+      const sent = await notificationService.sendNotification(
+        'Test Alert',
+        'Roadmap push fallback check',
+        'reminder',
+        signedInProfile
+      );
+      expect(sent).toBe(true);
+
+      const list = await notificationService.listNotifications(signedInProfile.id, false);
+      expect(list).toHaveLength(1);
+      expect(list[0].title).toBe('Test Alert');
+      expect(list[0].read).toBe(false);
+
+      await notificationService.markAllAsRead(signedInProfile.id, false);
+      const updated = await notificationService.listNotifications(signedInProfile.id, false);
+      expect(updated[0].read).toBe(true);
+    } finally {
+      fromSpy.mockRestore();
+    }
   });
 });

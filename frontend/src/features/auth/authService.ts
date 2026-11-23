@@ -5,8 +5,13 @@ import {
   setRememberMePreference,
   supabase,
 } from '../../lib/supabase';
-import type { Profile } from '../../types';
+import type { ExpertRegistrationDraft, Profile } from '../../types';
 import { PRIVACY_NOTICE_VERSION, TERMS_VERSION } from '../legal/policyVersions';
+import {
+  consumePendingOAuthAccountRole,
+  expertRepository,
+  setPendingOAuthAccountRole,
+} from '../experts/expertRepository';
 
 const SESSION_STORAGE_KEY = 'career_pilot_user_session';
 const PROFILE_EXT_STORAGE_PREFIX = 'career_pilot_profile_ext_';
@@ -49,7 +54,7 @@ function writeProfileExtensionCache(userId: string, changes: Partial<Profile>): 
 
 const CORE_PROFILE_COLUMNS = 'id, full_name, avatar_url, target_role, plan, daily_minutes, created_at';
 const FULL_PROFILE_COLUMNS =
-  'id, full_name, avatar_url, target_role, target_role_category, target_timeline_months, target_completion_date, experience_level, phone, username, bio, location, portfolio_url, github_url, linkedin_url, notification_daily_reminder, notification_milestone_alerts, notification_weekly_digest, weekly_reminder_frequency, learning_style, plan, daily_minutes, created_at';
+  'id, full_name, avatar_url, target_role, target_role_category, target_timeline_months, target_completion_date, experience_level, phone, username, bio, location, portfolio_url, github_url, linkedin_url, notification_daily_reminder, notification_milestone_alerts, notification_weekly_digest, weekly_reminder_frequency, learning_style, account_role, plan, daily_minutes, created_at';
 const CORE_EDITABLE_FIELDS: ReadonlySet<string> = new Set(['full_name', 'avatar_url', 'target_role', 'daily_minutes']);
 
 function isMissingColumnError(error: { code?: string; message?: string } | null | undefined): boolean {
@@ -93,6 +98,8 @@ export interface SignUpParams {
   password: string;
   fullName: string;
   phone?: string;
+  accountRole?: 'learner' | 'expert';
+  expertDraft?: Omit<ExpertRegistrationDraft, 'cv_file_data_url'>;
   rememberMe?: boolean;
   legalConsentAccepted: boolean;
 }
@@ -184,6 +191,8 @@ export const authService = {
       password,
       fullName,
       phone,
+      accountRole = 'learner',
+      expertDraft,
       rememberMe = true,
       legalConsentAccepted,
     } = params;
@@ -217,7 +226,9 @@ export const authService = {
         ...(emailRedirectTo ? { emailRedirectTo } : {}),
         data: {
           full_name: cleanName,
+          account_role: accountRole === 'expert' ? 'expert' : 'learner',
           ...(phone?.trim() ? { phone: phone.trim() } : {}),
+          ...(accountRole === 'expert' && expertDraft ? { expert_draft: expertDraft } : {}),
         },
       },
     });
@@ -243,7 +254,7 @@ export const authService = {
   },
 
   /**
-   * Verify 6-digit Sign Up confirmation OTP issued by Supabase Auth
+   * Verify 6-to-8-digit Sign Up confirmation OTP issued by Supabase Auth
    */
   async verifySignUpOtp(params: VerifySignUpOtpParams): Promise<AuthResult> {
     const {
@@ -264,8 +275,8 @@ export const authService = {
         error: 'Review and accept the Terms of Service and Privacy Notice before continuing.',
       };
     }
-    if (cleanOtp.length !== 6) {
-      return { success: false, error: 'Enter the 6-digit verification code from your email.' };
+    if (cleanOtp.length < 6 || cleanOtp.length > 8) {
+      return { success: false, error: 'Enter the 6 to 8-digit verification code from your email.' };
     }
 
     setRememberMePreference(rememberMe);
@@ -298,7 +309,7 @@ export const authService = {
   },
 
   /**
-   * Resend 6-digit signup verification OTP via Supabase Auth
+   * Resend signup verification OTP via Supabase Auth
    */
   async resendVerificationEmail(email: string): Promise<SimpleAuthActionResult> {
     const normalizedEmail = email.trim().toLowerCase();
@@ -447,13 +458,28 @@ export const authService = {
       }
 
       if (!profileError && row) {
-        return { success: true, needsEmailVerification: false, profile: this.mapProfile(user, row) };
+        const mapped = this.mapProfile(user, row);
+        if (mapped.account_role === 'expert') {
+          try {
+            await expertRepository.completePendingRegistration(user.id, mapped.avatar_url, user.user_metadata);
+          } catch (expertErr) {
+            console.warn('Could not finalize pending expert draft during signup:', expertErr);
+          }
+        }
+        return { success: true, needsEmailVerification: false, profile: mapped };
       }
     }
 
     const profile = await this.loadProfile(user);
     if (!profile) {
       return { success: false, error: 'Account created, but your profile could not be loaded. Please sign in.' };
+    }
+    if (profile.account_role === 'expert') {
+      try {
+        await expertRepository.completePendingRegistration(user.id, profile.avatar_url, user.user_metadata);
+      } catch (expertErr) {
+        console.warn('Could not finalize pending expert draft during signup:', expertErr);
+      }
     }
     return { success: true, needsEmailVerification: false, profile };
   },
@@ -463,9 +489,11 @@ export const authService = {
    */
   async signInWithSocial(
     provider: 'google',
-    rememberMe: boolean = true
+    rememberMe: boolean = true,
+    accountRole: 'learner' | 'expert' = 'learner'
   ): Promise<SimpleAuthActionResult> {
     setRememberMePreference(rememberMe);
+    setPendingOAuthAccountRole(accountRole);
 
     const { url, anonKey } = getSupabasePublicConfig();
     if (isSupabaseConfigured() && url && anonKey && typeof fetch === 'function') {
@@ -526,12 +554,31 @@ export const authService = {
     }
 
     if (error || !data) return null;
+
+    const pendingOAuthRole = consumePendingOAuthAccountRole();
+    if (pendingOAuthRole === 'expert' && data.account_role !== 'expert' && !data.target_role) {
+      try {
+        await expertRepository.claimInitialExpertRole();
+        data.account_role = 'expert';
+      } catch (claimErr) {
+        console.warn('Could not switch new OAuth user to expert role:', claimErr);
+      }
+    }
+
     const { data: gamification } = await supabase
       .from('user_gamification')
       .select('current_streak')
       .eq('user_id', user.id)
       .maybeSingle();
-    return { ...this.mapProfile(user, data), streak_days: gamification?.current_streak ?? 0 };
+    const mapped = { ...this.mapProfile(user, data), streak_days: gamification?.current_streak ?? 0 };
+    if (mapped.account_role === 'expert') {
+      try {
+        await expertRepository.completePendingRegistration(user.id, mapped.avatar_url, user.user_metadata);
+      } catch (expertErr) {
+        console.warn('Could not finalize pending expert registration on load:', expertErr);
+      }
+    }
+    return mapped;
   },
 
   async hasCurrentLegalAcceptance(userId: string): Promise<boolean> {
@@ -613,6 +660,10 @@ export const authService = {
       notification_weekly_digest: row.notification_weekly_digest !== undefined ? row.notification_weekly_digest !== false : (ext.notification_weekly_digest ?? true),
       weekly_reminder_frequency: (row.weekly_reminder_frequency as Profile['weekly_reminder_frequency']) || ext.weekly_reminder_frequency || '3x',
       learning_style: (row.learning_style as Profile['learning_style']) || ext.learning_style,
+      account_role:
+        row.account_role === 'expert' || user.user_metadata?.account_role === 'expert'
+          ? 'expert'
+          : 'learner',
       plan: row.plan === 'premium' ? 'premium' : 'free',
       daily_minutes: Number(row.daily_minutes || 60),
       streak_days: 0,

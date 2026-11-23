@@ -228,7 +228,10 @@ export const OnboardingGoalModal: React.FC<Props> = ({ profile, aiQuota, onAIUsa
 
     try {
       try {
-        await notificationService.requestPermission();
+        const perm = await notificationService.requestPermission();
+        if (perm === 'granted') {
+          await notificationService.enableSmartPush(profile.id, Boolean(profile.is_demo)).catch(() => undefined);
+        }
       } catch {
         // Notification permission is optional during onboarding.
       }

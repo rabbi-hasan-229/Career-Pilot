@@ -57,6 +57,7 @@ export interface CandidateMemory {
   firstName?: string;
   targetRole: string;
   experienceLevel?: 'beginner' | 'switcher' | 'junior' | 'mid';
+  roleSkills?: string[];
   warmupSummary?: string;
   mentionedTools: string[];
 }
@@ -96,6 +97,14 @@ const KNOWN_TECH_CONCEPTS: Array<{ pattern: RegExp; label: string }> = [
   { pattern: /\bjavascript\b/i, label: 'JavaScript' },
   { pattern: /\bnode(?:\.?js)?\b/i, label: 'Node.js' },
   { pattern: /\bpython\b/i, label: 'Python' },
+  { pattern: /\bfastapi\b/i, label: 'FastAPI' },
+  { pattern: /\bdjango\b/i, label: 'Django' },
+  { pattern: /\bsqlalchemy\b/i, label: 'SQLAlchemy' },
+  { pattern: /\bpydantic\b/i, label: 'Pydantic' },
+  { pattern: /\bpytest\b/i, label: 'PyTest' },
+  { pattern: /\basyncio\b/i, label: 'Asyncio' },
+  { pattern: /\bcelery\b/i, label: 'Celery' },
+  { pattern: /\bgil\b|\bmultiprocessing\b/i, label: 'Python concurrency' },
   { pattern: /\bgolang\b|\bgo\b/i, label: 'Go' },
   { pattern: /\brust\b/i, label: 'Rust' },
   { pattern: /\bjava\b/i, label: 'Java' },
@@ -212,15 +221,17 @@ export function buildInterviewLoopQueue(options: {
   focusMode: InterviewFocusMode;
   difficulty: DifficultyPreference;
   experienceLevel?: 'beginner' | 'switcher' | 'junior' | 'mid';
+  roleSkills?: string[];
   remoteQuestions?: CuratedInterviewQuestion[];
   count?: number;
 }): CuratedInterviewQuestion[] {
-  const { category, targetRole, focusMode, difficulty, experienceLevel, remoteQuestions = [], count = 4 } = options;
+  const { category, targetRole, focusMode, difficulty, experienceLevel, roleSkills = [], remoteQuestions = [], count = 4 } = options;
 
   const curated = getRoleTailoredInterviewQuestions(
     category,
     targetRole,
-    focusMode === 'Mixed' ? undefined : focusMode
+    focusMode === 'Mixed' ? undefined : focusMode,
+    roleSkills
   );
 
   // Deduplicate keeping curated/role-tailored priority, appending unique DB questions if present
@@ -245,9 +256,9 @@ export function buildInterviewLoopQueue(options: {
           ? 'Mid'
           : 'Mid';
 
-  // For Mixed loops, pick balanced rounds (Behavioral -> Technical -> Technical -> System Design)
+  // For Mixed loops, lead with core Technical craft, then System Design, Behavioral ownership, and a deeper Technical round
   if (focusMode === 'Mixed') {
-    const orderedRounds: Array<CuratedInterviewQuestion['round']> = ['Behavioral', 'Technical', 'System Design', 'Technical'];
+    const orderedRounds: Array<CuratedInterviewQuestion['round']> = ['Technical', 'System Design', 'Behavioral', 'Technical'];
     const picked: CuratedInterviewQuestion[] = [];
     const usedIds = new Set<string>();
 
@@ -283,10 +294,13 @@ export function buildInterviewLoopQueue(options: {
 export function buildOpeningGreetingTurn(memory: CandidateMemory, focusMode: InterviewFocusMode): ConversationTurn {
   const persona = getInterviewerPersona('Warmup', memory.targetRole);
   const namePart = memory.firstName ? `Hi ${memory.firstName}` : 'Hi there';
+  const topSkills = memory.roleSkills && memory.roleSkills.length > 0
+    ? ` (${memory.roleSkills.slice(0, 3).join(', ')})`
+    : '';
   const focusDescription =
     focusMode === 'Mixed'
-      ? `behavioral ownership, practical ${memory.targetRole} scenarios, and architecture tradeoffs`
-      : `${focusMode.toLowerCase()} scenarios tailored to ${memory.targetRole}`;
+      ? `practical ${memory.targetRole}${topSkills} scenarios, system architecture tradeoffs, and real project ownership`
+      : `${focusMode.toLowerCase()} scenarios tailored to ${memory.targetRole}${topSkills}`;
 
   return {
     id: `turn-greeting-${crypto.randomUUID().slice(0, 8)}`,
@@ -295,7 +309,7 @@ export function buildOpeningGreetingTurn(memory: CandidateMemory, focusMode: Int
     timestamp: new Date().toISOString(),
     badge: 'Warm-up',
     interviewer: persona,
-    text: `${namePart}, thanks for making time today. I'm Maya, and we'll walk through ${focusDescription}. Before we jump into the first scenario, give me a quick 30-second overview of a project or technical challenge you've worked on recently — it helps me tailor our conversation to your background.`,
+    text: `${namePart}, welcome to your ${memory.targetRole} interview room. I'm Maya, and today's loop covers ${focusDescription}. Tell me in 2–3 sentences about a recent project or system you built—or click "Start Question 1" anytime to dive straight into the first technical scenario.`,
   };
 }
 

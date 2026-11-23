@@ -778,6 +778,87 @@ export const CURATED_INTERVIEW_CATALOG: CuratedInterviewQuestion[] = [
  * Next.js, Backend, APIs, ML/LLM, DevOps, Security, Mobile, Design, etc.).
  */
 export const ROLE_SPECIALIST_QUESTIONS: CuratedInterviewQuestion[] = [
+  // Python Software Engineering & Backend Python
+  {
+    id: 'spec-py-concurrency',
+    role_category: 'Software & Web',
+    round: 'Technical',
+    difficulty: 'Mid',
+    role_tags: ['python', 'python software engineer', 'fastapi', 'django', 'asyncio', 'backend'],
+    question: 'A Python service handles I/O-bound external API calls alongside CPU-heavy PDF/image processing, and p95 latency spikes under concurrent load. How do you choose between asyncio, threads, and multiprocessing in Python?',
+    expected_keywords: ['gil', 'asyncio', 'event loop', 'multiprocessing', 'threadpool', 'blocking'],
+    rubric: { situation: true, task: true, action: true, result: true },
+    coaching_hint: 'Explain how CPython’s GIL behaves for I/O-bound vs CPU-bound work, how a single blocking sync call stalls an asyncio event loop, and how to offload CPU work to process pools or background workers.',
+    follow_up_probes: [
+      'What happens if a synchronous requests.get() or heavy pandas operation accidentally runs inside an async def FastAPI route?',
+      'When would you move CPU-heavy tasks out of FastAPI worker processes into a dedicated Celery/RQ queue instead of ProcessPoolExecutor?',
+    ],
+    model_answer: 'Because CPython releases the GIL on socket I/O but holds it during CPU bytecode execution, I use asyncio (or async FastAPI with httpx) for high-concurrency I/O wait, run unavoidable sync libraries in bounded thread pools via asyncio.to_thread, and offload CPU-bound PDF/image jobs to ProcessPoolExecutor or a dedicated Celery/Redis worker queue so the web event loop never stalls.',
+  },
+  {
+    id: 'spec-py-fastapi-sqlalchemy',
+    role_category: 'Software & Web',
+    round: 'Technical',
+    difficulty: 'Mid',
+    role_tags: ['python', 'python software engineer', 'fastapi', 'sqlalchemy', 'pydantic', 'pytest', 'django'],
+    question: 'In a Python API using FastAPI and SQLAlchemy, an endpoint updating wallet balances and creating an order intermittently fails or leaves partial writes during retries. How do you structure transactions, Pydantic validation, and PyTest coverage?',
+    expected_keywords: ['transaction', 'rollback', 'pydantic', 'idempotency', 'select for update', 'pytest'],
+    rubric: { situation: true, task: true, action: true, result: true },
+    coaching_hint: 'Walk through request boundary validation with Pydantic, atomic SQLAlchemy session transactions with row-level locking or unique idempotency keys, and integration tests using pytest fixtures.',
+    follow_up_probes: [
+      'How do you isolate database state cleanly between parallel PyTest runs without mocking away real transaction constraints?',
+      'What SQLAlchemy session lifetime anti-pattern causes DetachedInstanceError or leaked connections under load?',
+    ],
+    model_answer: 'I validate payloads upfront with strict Pydantic v2 models, bind one scoped async SQLAlchemy session per request via Depends, wrap the balance debit and order insert inside a single transaction using SELECT ... FOR UPDATE or optimistic version checks plus a unique idempotency key, roll back automatically on error, and verify concurrency and constraint integrity using transactional PyTest fixtures against PostgreSQL.',
+  },
+  {
+    id: 'spec-py-memory-generators',
+    role_category: 'Software & Web',
+    round: 'Technical',
+    difficulty: 'Junior',
+    role_tags: ['python', 'python software engineer', 'django', 'fastapi', 'pytest', 'data'],
+    question: 'A Python batch job processing large customer CSV exports gets killed with Out-Of-Memory (OOM) in production even though it works on small test files. How do you diagnose and refactor it cleanly?',
+    expected_keywords: ['generator', 'streaming', 'yield', 'chunksize', 'tracemalloc', 'memory'],
+    rubric: { situation: true, task: true, action: true, result: true },
+    coaching_hint: 'Cover how you measure memory growth (tracemalloc / memory profiler), switch eager list accumulation to lazy generators or chunked database cursors, and stream output instead of buffering everything.',
+    follow_up_probes: [
+      'What happens when you iterate over a Python generator twice, and how would you catch that bug in PyTest?',
+      'How do you stream database rows in SQLAlchemy or Django ORM without loading the entire query result into RAM?',
+    ],
+    model_answer: 'I reproduce on realistic row counts with tracemalloc or memray to locate objects retaining heap memory—typically loading full query sets or lists into RAM. I refactor ETL/export steps into streaming Python generators using yield, batch DB reads via server-side cursors (yield_per / iterator(chunk_size)), stream CSV/JSON chunks straight to HTTP/S3, and add a memory-bounded regression test in PyTest.',
+  },
+  {
+    id: 'spec-py-system-design',
+    role_category: 'Software & Web',
+    round: 'System Design',
+    difficulty: 'Mid',
+    role_tags: ['python', 'python software engineer', 'fastapi', 'django', 'sqlalchemy', 'asyncio'],
+    question: 'Design a reliable Python backend service (FastAPI + PostgreSQL + background workers) for a digital marketplace where buyer checkout verification and webhook fulfillment must handle burst traffic without double-charging or lost orders.',
+    expected_keywords: ['idempotency', 'queue', 'transaction', 'worker', 'connection pool', 'dead letter'],
+    rubric: { situation: true, task: true, action: true, result: true },
+    coaching_hint: 'Separate fast synchronous API acknowledgment from idempotent async fulfillment workers, cover Uvicorn/Gunicorn + SQLAlchemy pool sizing, and explain retry + dead-letter handling.',
+    follow_up_probes: [
+      'If a payment gateway delivers the same webhook 3 times concurrently, how do your Python API and PostgreSQL schema guarantee only one entitlement is granted?',
+      'How do you size Gunicorn/Uvicorn workers and SQLAlchemy connection pools so Postgres does not exhaust connections?',
+    ],
+    model_answer: 'I place FastAPI behind Gunicorn/Uvicorn workers with bounded asyncpg/SQLAlchemy pools (or PgBouncer). Checkout and webhook endpoints verify signatures, persist events atomically in PostgreSQL keyed by a unique idempotency/event ID, return 200/202 rapidly, and enqueue fulfillment onto Celery/Dramatiq workers with exponential backoff, jitter, and a dead-letter queue for inspection.',
+  },
+  {
+    id: 'spec-py-behavioral-bug',
+    role_category: 'Software & Web',
+    round: 'Behavioral',
+    difficulty: 'Mid',
+    role_tags: ['python', 'python software engineer', 'fastapi', 'django', 'pytest', 'backend'],
+    question: 'Tell me about a tricky bug or data/performance failure you debugged in a Python application or API. How did you isolate the root cause and verify the fix?',
+    expected_keywords: ['reproduction', 'logging', 'pytest', 'root cause', 'validation', 'metrics'],
+    rubric: { situation: true, task: true, action: true, result: true },
+    coaching_hint: 'Pick one concrete Python/API incident—describe how you reproduced it, inspected logs/traces/DB queries, fixed the invariant, and locked in a PyTest regression test.',
+    follow_up_probes: [
+      'What warning sign or test gap allowed that bug into production in the first place?',
+      'How did you prove the fix eliminated the failure without slowing down adjacent endpoints?',
+    ],
+    model_answer: 'In an API project (Situation), validation intermittently passed malformed payloads that later broke downstream fulfillment (Task). I reproduced the edge case locally with structured logs and added strict Pydantic schema constraints plus atomic DB checks inside the service layer, followed by negative PyTest integration tests (Action), cutting invalid write errors to zero and halving triage time (Result).',
+  },
   // Frontend / React / Next.js
   {
     id: 'spec-fe-rendering',
@@ -997,15 +1078,17 @@ function tokenizeRole(text: string): string[] {
 
 /**
  * Selects real interview questions tailored specifically to both the candidate's
- * career category AND exact targetRole (e.g., "Frontend Engineer" vs "Backend Specialist").
+ * career category AND exact targetRole / core skills (e.g., "Python Software Engineer"
+ * with Python 3.12, FastAPI, Django, SQLAlchemy, PyTest, Asyncio).
  */
 export function getRoleTailoredInterviewQuestions(
   category: CareerCategory,
   targetRole: string,
-  preferredRound?: 'Behavioral' | 'Technical' | 'System Design'
+  preferredRound?: 'Behavioral' | 'Technical' | 'System Design',
+  roleSkills: string[] = []
 ): CuratedInterviewQuestion[] {
   const roleLower = targetRole.toLowerCase();
-  const roleTokens = tokenizeRole(targetRole);
+  const roleTokens = tokenizeRole([targetRole, ...roleSkills].join(' '));
 
   const scoreRoleRelevance = (question: CuratedInterviewQuestion): number => {
     let score = question.role_category === category ? 10 : 0;
@@ -1013,8 +1096,15 @@ export function getRoleTailoredInterviewQuestions(
     for (const tag of tags) {
       const normalizedTag = tag.toLowerCase();
       if (roleLower.includes(normalizedTag)) {
-        score += 25;
+        score += 30;
       } else if (roleTokens.some((token) => normalizedTag.includes(token) || token.includes(normalizedTag))) {
+        score += 14;
+      }
+    }
+    const searchableText = `${question.question} ${question.expected_keywords.join(' ')}`.toLowerCase();
+    for (const skill of roleSkills) {
+      const baseSkill = skill.toLowerCase().replace(/\s+\d+(?:\.\d+)*$/, '').trim();
+      if (baseSkill.length >= 2 && searchableText.includes(baseSkill)) {
         score += 12;
       }
     }

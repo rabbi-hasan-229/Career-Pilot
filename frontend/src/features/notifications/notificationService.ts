@@ -112,25 +112,117 @@ function isWithinQuietHours(nowMins: number, startHHMM: string, endHHMM: string)
   return nowMins >= start || nowMins < end;
 }
 
-async function showBrowserNotification(title: string, message: string, tag = 'career-pilot-reminder'): Promise<boolean> {
+function isNotificationRemoteFallbackError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { code?: string; message?: string; status?: number };
+  const code = err.code || '';
+  const msg = err.message || '';
+  return (
+    code === 'PGRST200' ||
+    code === 'PGRST202' ||
+    code === 'PGRST204' ||
+    code === 'PGRST205' ||
+    code === '42703' ||
+    code === '42883' ||
+    code === '42P01' ||
+    code === '42501' ||
+    err.status === 404 ||
+    /does not exist|schema cache|could not find|permission denied|row-level security|failed to fetch|network/i.test(msg)
+  );
+}
+
+function readLocalDedupeKeys(userId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`${localKey(userId)}:dedupe`);
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeLocalDedupeKey(userId: string, key: string): void {
+  try {
+    const set = readLocalDedupeKeys(userId);
+    set.add(key);
+    localStorage.setItem(`${localKey(userId)}:dedupe`, JSON.stringify(Array.from(set).slice(-100)));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+function appendLocalNotification(
+  userId: string,
+  title: string,
+  message: string,
+  type: AppNotification['type'],
+  dedupeKey?: string
+): boolean {
+  if (dedupeKey) {
+    const seen = readLocalDedupeKeys(userId);
+    if (seen.has(dedupeKey)) return false;
+    writeLocalDedupeKey(userId, dedupeKey);
+  }
+  const item: AppNotification = {
+    id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    title,
+    message,
+    time: new Date().toLocaleString(),
+    type,
+    read: false,
+  };
+  writeLocal(userId, [item, ...readLocal(userId)]);
+  return true;
+}
+
+async function getActiveServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | undefined> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return undefined;
+  try {
+    let reg = await navigator.serviceWorker.getRegistration('/');
+    if (!reg) {
+      reg = await navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    }
+    if (reg?.active) return reg;
+
+    const readyPromise = navigator.serviceWorker.ready.catch(() => undefined);
+    const timeoutPromise = new Promise<undefined>((resolve) => {
+      window.setTimeout(() => resolve(undefined), 1200);
+    });
+    const readyReg = await Promise.race([readyPromise, timeoutPromise]);
+    return readyReg?.active ? readyReg : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function showBrowserNotification(title: string, message: string, tag?: string): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') {
     return false;
   }
-  try {
-    if ('serviceWorker' in navigator) {
-      const reg = (await navigator.serviceWorker.getRegistration('/')) || (await navigator.serviceWorker.register('/sw.js').catch(() => undefined));
-      if (reg && typeof reg.showNotification === 'function') {
-        await reg.showNotification(title, {
-          body: message,
-          icon: '/favicon.svg',
-          badge: '/favicon.svg',
-          tag,
-          data: { url: '/?view=plan' },
-        });
-        return true;
-      }
+
+  const effectiveTag = tag || `career-pilot-${Date.now()}`;
+  const reg = await getActiveServiceWorkerRegistration();
+  if (reg && typeof reg.showNotification === 'function') {
+    try {
+      await reg.showNotification(title, {
+        body: message,
+        icon: '/favicon.svg',
+        badge: '/favicon.svg',
+        tag: effectiveTag,
+        data: { url: '/?view=plan' },
+      });
+      return true;
+    } catch (swError) {
+      console.warn('Service worker showNotification failed, falling back to Notification API:', swError);
     }
-    const notification = new Notification(title, { body: message, icon: '/favicon.svg', badge: '/favicon.svg', tag });
+  }
+
+  try {
+    const notification = new Notification(title, {
+      body: message,
+      icon: '/favicon.svg',
+      badge: '/favicon.svg',
+      tag: effectiveTag,
+    });
     notification.onclick = () => window.focus();
     return true;
   } catch (error) {
@@ -250,15 +342,27 @@ export const notificationService = {
   },
 
   async listNotifications(userId: string, isDemo = false): Promise<AppNotification[]> {
-    if (isDemo) return readLocal(userId);
-    const { data, error } = await supabase
-      .from('user_notifications')
-      .select('id,category,title,body,metadata,read_at,created_at')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    if (error) throw error;
-    return (data ?? []).map(fromDatabase);
+    const localItems = readLocal(userId);
+    if (isDemo) return localItems;
+    try {
+      const { data, error } = await supabase
+        .from('user_notifications')
+        .select('id,category,title,body,metadata,read_at,created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (error) {
+        if (isNotificationRemoteFallbackError(error)) return localItems;
+        throw error;
+      }
+      const remoteItems = (data ?? []).map(fromDatabase);
+      if (localItems.length === 0) return remoteItems;
+      const seen = new Set(remoteItems.map((item) => item.id));
+      return [...localItems.filter((item) => !seen.has(item.id)), ...remoteItems].slice(0, 50);
+    } catch (error) {
+      if (isNotificationRemoteFallbackError(error)) return localItems;
+      throw error;
+    }
   },
 
   async addInAppNotification(
@@ -270,27 +374,30 @@ export const notificationService = {
     dedupeKey?: string
   ): Promise<boolean> {
     if (isDemo) {
-      const item: AppNotification = {
-        id: `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        title,
-        message,
-        time: new Date().toLocaleString(),
-        type,
-        read: false,
-      };
-      writeLocal(userId, [item, ...readLocal(userId)]);
-      return true;
+      return appendLocalNotification(userId, title, message, type, dedupeKey);
     }
-    const { error } = await supabase.from('user_notifications').insert({
-      user_id: userId,
-      category: categoryFor(type),
-      title,
-      body: message,
-      ...(dedupeKey ? { metadata: { dedupe_key: dedupeKey } } : {}),
-    });
-    if (error?.code === '23505' && dedupeKey) return false;
-    if (error) throw error;
-    return true;
+    try {
+      const { error } = await supabase.from('user_notifications').insert({
+        user_id: userId,
+        category: categoryFor(type),
+        title,
+        body: message,
+        ...(dedupeKey ? { metadata: { dedupe_key: dedupeKey } } : {}),
+      });
+      if (error?.code === '23505' && dedupeKey) return false;
+      if (error) {
+        if (isNotificationRemoteFallbackError(error)) {
+          return appendLocalNotification(userId, title, message, type, dedupeKey);
+        }
+        throw error;
+      }
+      return true;
+    } catch (error) {
+      if (isNotificationRemoteFallbackError(error)) {
+        return appendLocalNotification(userId, title, message, type, dedupeKey);
+      }
+      throw error;
+    }
   },
 
   async sendNotification(
@@ -300,8 +407,20 @@ export const notificationService = {
     profile: Profile,
     dedupeKey?: string
   ): Promise<boolean> {
-    const recorded = await this.addInAppNotification(profile.id, Boolean(profile.is_demo), title, message, type, dedupeKey);
-    if (recorded) await showBrowserNotification(title, message, dedupeKey || `career-pilot-${type}`);
+    let recorded = true;
+    try {
+      recorded = await this.addInAppNotification(profile.id, Boolean(profile.is_demo), title, message, type, dedupeKey);
+    } catch (err) {
+      console.warn('Could not persist notification to remote history, falling back locally:', err);
+      recorded = appendLocalNotification(profile.id, title, message, type, dedupeKey);
+    }
+    if (recorded) {
+      await showBrowserNotification(
+        title,
+        message,
+        dedupeKey || `career-pilot-${type}-${Date.now()}`
+      );
+    }
     return recorded;
   },
 
@@ -395,14 +514,18 @@ export const notificationService = {
     if (this.isSupported() && !browserEnabled) browserEnabled = (await this.requestPermission()) === 'granted';
     const pending = tasks.filter((task) => !task.done_at).length;
     const settings = this.getNotificationSettings(profile.id, profile);
-    await this.sendNotification(
-      'Roadmap Progress Reminder',
-      pending > 0
-        ? `You have ${pending} unfinished roadmap task${pending === 1 ? '' : 's'} for ${profile.target_role}.`
-        : `All clear! You are on track for your ${profile.target_role} goal.`,
-      'reminder',
-      profile
-    );
+    const title = 'Roadmap Progress Reminder';
+    const body = pending > 0
+      ? `You have ${pending} unfinished roadmap task${pending === 1 ? '' : 's'} for ${profile.target_role || 'your career goal'}.`
+      : `All clear! You are on track for your ${profile.target_role || 'career'} goal.`;
+
+    await this.sendNotification(title, body, 'reminder', profile);
+    if (browserEnabled) {
+      await this.saveNotificationSettings(profile.id, Boolean(profile.is_demo), {
+        ...settings,
+        push_enabled: true,
+      });
+    }
     if (settings.sound_enabled) {
       this.playChime();
     }
@@ -426,7 +549,7 @@ export const notificationService = {
     } catch { /* ignore */ }
 
     return {
-      push_enabled: local.push_enabled ?? DEFAULT_NOTIFICATION_SETTINGS.push_enabled,
+      push_enabled: local.push_enabled ?? (this.getPermission() === 'granted' ? true : DEFAULT_NOTIFICATION_SETTINGS.push_enabled),
       daily_reminder: profile?.notification_daily_reminder ?? local.daily_reminder ?? DEFAULT_NOTIFICATION_SETTINGS.daily_reminder,
       daily_reminder_time: profile?.notification_daily_reminder_time ?? local.daily_reminder_time ?? DEFAULT_NOTIFICATION_SETTINGS.daily_reminder_time,
       selected_days: Array.isArray(local.selected_days) && local.selected_days.length > 0
@@ -607,15 +730,19 @@ export const notificationService = {
   },
 
   async markAllAsRead(userId: string, isDemo = false): Promise<void> {
+    writeLocal(userId, readLocal(userId).map((notification) => ({ ...notification, read: true })));
     if (isDemo) {
-      writeLocal(userId, readLocal(userId).map((notification) => ({ ...notification, read: true })));
       return;
     }
-    const { error } = await supabase
-      .from('user_notifications')
-      .update({ read_at: new Date().toISOString() })
-      .eq('user_id', userId)
-      .is('read_at', null);
-    if (error) throw error;
+    try {
+      const { error } = await supabase
+        .from('user_notifications')
+        .update({ read_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .is('read_at', null);
+      if (error && !isNotificationRemoteFallbackError(error)) throw error;
+    } catch (error) {
+      if (!isNotificationRemoteFallbackError(error)) throw error;
+    }
   },
 };

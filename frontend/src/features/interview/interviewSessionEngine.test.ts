@@ -38,10 +38,36 @@ describe('interviewSessionEngine', () => {
     });
 
     expect(queue).toHaveLength(4);
+    expect(queue[0].round).toBe('Technical');
     const rounds = new Set(queue.map((q) => q.round));
     expect(rounds.has('Behavioral')).toBe(true);
     expect(rounds.has('Technical')).toBe(true);
     expect(rounds.has('System Design')).toBe(true);
+  });
+
+  it('builds Python-grounded opening greeting and Technical-first loop when roleSkills are provided', () => {
+    const pyMemory: CandidateMemory = {
+      firstName: 'Rabbi',
+      targetRole: 'Python Software Engineer',
+      experienceLevel: 'junior',
+      roleSkills: ['Python 3.12', 'FastAPI', 'SQLAlchemy', 'PyTest'],
+      mentionedTools: [],
+    };
+    const greeting = buildOpeningGreetingTurn(pyMemory, 'Mixed');
+    expect(greeting.text).toContain('Python Software Engineer');
+    expect(greeting.text).toContain('Python 3.12, FastAPI, SQLAlchemy');
+
+    const queue = buildInterviewLoopQueue({
+      category: 'Software & Web',
+      targetRole: 'Python Software Engineer',
+      focusMode: 'Mixed',
+      difficulty: 'Adaptive',
+      experienceLevel: 'junior',
+      roleSkills: pyMemory.roleSkills,
+      count: 4,
+    });
+    expect(queue[0].round).toBe('Technical');
+    expect(queue[0].id).toMatch(/^spec-py-/);
   });
 
   it('personalizes opening greeting and carries warm-up context into Q1', () => {

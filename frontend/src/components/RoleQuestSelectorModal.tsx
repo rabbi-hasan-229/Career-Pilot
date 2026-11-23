@@ -5,7 +5,8 @@ import {
   AlertTriangle,
   Sparkles,
   Search,
-  ChevronRight,
+  Check,
+  CheckCircle2,
   Code2,
   Cloud,
   Database,
@@ -13,8 +14,13 @@ import {
   Shield,
   Smartphone,
   Gamepad2,
-  CheckCircle2,
+  Layers,
+  Briefcase,
+  Cpu,
+  FlaskConical,
+  Coins,
   ArrowRight,
+  Clock,
 } from 'lucide-react';
 import {
   comprehensiveCareerCatalog,
@@ -22,8 +28,7 @@ import {
   createCustomCareerBlueprint,
   getOrCreateCareerBlueprint,
 } from '../features/roadmap/careerCatalog';
-import type { CareerCategory, CareerOption } from '../features/roadmap/careerCatalog';
-import type { RolePlanOutline } from '../features/roadmap/careerCatalog';
+import type { CareerCategory, CareerOption, RolePlanOutline } from '../features/roadmap/careerCatalog';
 import { isRolePlanOutline, requestAI, type AIQuotaSummary } from '../features/ai/aiGateway';
 import { generateRoadmapForRole } from '../features/roadmap/plannerEngine';
 import type { Milestone, Profile } from '../types';
@@ -49,14 +54,50 @@ interface Props {
 
 const PRESET_TIMELINES = [
   { label: '3 Mo', months: 3, fullLabel: '3 Months (Fast Track)' },
-  { label: '6 Mo', months: 6, fullLabel: '6 Months (Recommended Standard)' },
+  { label: '6 Mo', months: 6, fullLabel: '6 Months (Recommended)' },
   { label: '9 Mo', months: 9, fullLabel: '9 Months (Steady Pace)' },
-  { label: '12 Mo', months: 12, fullLabel: '12 Months (1 Year Comprehensive)' },
+  { label: '12 Mo', months: 12, fullLabel: '12 Months (Comprehensive)' },
   { label: '18+ Mo', months: 18, fullLabel: '18 Months (Extended Mastery)' },
 ];
 
 function calculateTargetDate(months: number): string {
   return addMonthsToDateOnly(getLocalDateOnly(), months);
+}
+
+function getCategoryIcon(role: CareerOption) {
+  const title = role.title.toLowerCase();
+  const category = role.category;
+
+  if (title.includes('next')) {
+    return (
+      <span style={{ fontSize: '12px', fontWeight: 900, letterSpacing: '-0.02em' }}>
+        N
+      </span>
+    );
+  }
+  if (title.includes('backend') || title.includes('database') || title.includes('sql')) {
+    return <Database size={16} strokeWidth={2} />;
+  }
+  if (title.includes('frontend') || title.includes('react') || title.includes('vue') || title.includes('angular')) {
+    return <Monitor size={16} strokeWidth={2} />;
+  }
+
+  const iconByCategory: Record<CareerCategory, React.ReactNode> = {
+    'Software & Web': <Code2 size={16} strokeWidth={2} />,
+    'AI & Data Science': <Sparkles size={16} strokeWidth={2} />,
+    'Cloud & DevOps': <Cloud size={16} strokeWidth={2} />,
+    Cybersecurity: <Shield size={16} strokeWidth={2} />,
+    'Mobile & Multiplatform': <Smartphone size={16} strokeWidth={2} />,
+    'Game Dev & 3D': <Gamepad2 size={16} strokeWidth={2} />,
+    'UI/UX & Product Design': <Layers size={16} strokeWidth={2} />,
+    'Product & Agile Leadership': <Briefcase size={16} strokeWidth={2} />,
+    'QA & Reliability': <FlaskConical size={16} strokeWidth={2} />,
+    'FinTech & Web3': <Coins size={16} strokeWidth={2} />,
+    'Hardware & Robotics': <Cpu size={16} strokeWidth={2} />,
+    'Enterprise & Applied Tech': <Briefcase size={16} strokeWidth={2} />,
+  };
+
+  return iconByCategory[category] ?? <Code2 size={16} strokeWidth={2} />;
 }
 
 export const RoleQuestSelectorModal: React.FC<Props> = ({
@@ -83,13 +124,8 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
   const [roleDraftError, setRoleDraftError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
-  // Timeline preset: 3, 6, 9, 12, 18 months or 'custom'
   const [selectedTimelinePreset, setSelectedTimelinePreset] = useState<number | 'custom'>(6);
-
-  // Default target date: 6 months from now
-  const [targetDateStr, setTargetDateStr] = useState<string>(() => {
-    return calculateTargetDate(6);
-  });
+  const [targetDateStr, setTargetDateStr] = useState<string>(() => calculateTargetDate(6));
 
   const handleSelectPreset = (months: number) => {
     setSelectedTimelinePreset(months);
@@ -102,7 +138,6 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
     setSelectedTimelinePreset('custom');
   };
 
-  // Filter 200+ careers
   const filteredCareers = useMemo(() => {
     let list: CareerOption[] = comprehensiveCareerCatalog;
     if (selectedCategory !== 'all') {
@@ -120,7 +155,6 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
     return list;
   }, [selectedCategory, searchQuery]);
 
-  // Proportional math calculation
   const selectedRole = useMemo(() => {
     if (customRoleTitle) return createCustomCareerBlueprint(customRoleTitle, customRoleCategory);
     return getOrCreateCareerBlueprint(selectedSlug);
@@ -154,7 +188,11 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
       setRoleOutline(outline);
     } catch (error) {
       setRoleOutline(null);
-      setRoleDraftError(error instanceof Error ? error.message : 'Could not draft the role outline. You can still use the category playbook.');
+      setRoleDraftError(
+        error instanceof Error
+          ? error.message
+          : 'Could not draft the role outline. You can still use the category playbook.'
+      );
     } finally {
       setIsDraftingRole(false);
       await onAIUsageChanged?.();
@@ -191,7 +229,14 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
       selectedRole.category,
       roleOutline ?? undefined
     );
-    onSelectNewPlan(selectedRole.title, selectedRole.category, targetDateStr, dailyMinutes, milestones, roleOutline ?? undefined);
+    onSelectNewPlan(
+      selectedRole.title,
+      selectedRole.category,
+      targetDateStr,
+      dailyMinutes,
+      milestones,
+      roleOutline ?? undefined
+    );
   };
 
   const formatDisplayDate = (isoStr: string) => {
@@ -201,204 +246,7 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
     const day = String(d.getDate()).padStart(2, '0');
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const month = months[d.getMonth()] || 'Jan';
-    return `${day} - ${month} - ${d.getFullYear()}`;
-  };
-
-  const getRoleIcon = (role: CareerOption) => {
-    const t = role.title.toLowerCase();
-    const c = role.category.toLowerCase();
-    if (t.includes('next')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#0F172A',
-            color: '#FFFFFF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '14px',
-            fontWeight: 900,
-            flexShrink: 0,
-          }}
-        >
-          N
-        </div>
-      );
-    }
-    if (t.includes('vue') || t.includes('nuxt')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#E6F9F0',
-            color: '#10B981',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '14px',
-            fontWeight: 900,
-            flexShrink: 0,
-          }}
-        >
-          <span style={{ color: '#10B981' }}>▲</span>
-        </div>
-      );
-    }
-    if (t.includes('serverless') || t.includes('cloud') || c.includes('cloud')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Cloud size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (t.includes('backend') || t.includes('database')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Database size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (t.includes('frontend') || t.includes('web') || c.includes('web')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Monitor size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (c.includes('ai') || c.includes('data')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Sparkles size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (c.includes('cyber') || c.includes('security')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Shield size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (c.includes('mobile')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Smartphone size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    if (c.includes('game')) {
-      return (
-        <div
-          style={{
-            width: '32px',
-            height: '32px',
-            borderRadius: '8px',
-            background: '#EFF6FF',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#2563EB',
-            flexShrink: 0,
-          }}
-        >
-          <Gamepad2 size={18} strokeWidth={2.2} />
-        </div>
-      );
-    }
-    return (
-      <div
-        style={{
-          width: '32px',
-          height: '32px',
-          borderRadius: '8px',
-          background: '#EFF6FF',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          color: '#2563EB',
-          flexShrink: 0,
-        }}
-      >
-        <Code2 size={18} strokeWidth={2.2} />
-      </div>
-    );
+    return `${day} ${month} ${d.getFullYear()}`;
   };
 
   return (
@@ -407,18 +255,16 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
         position: 'fixed',
         inset: 0,
         zIndex: 1300,
-        background: 'rgba(15, 23, 42, 0.72)',
-        backdropFilter: 'blur(8px)',
+        background: 'rgba(15, 23, 42, 0.56)',
+        backdropFilter: 'blur(6px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '16px',
-        animation: 'fadeIn 0.2s ease-out',
-        fontFamily: "'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        animation: 'fadeIn 0.16s ease-out',
       }}
       onClick={onClose}
     >
-      {/* Modal Dialog Window */}
       <div
         ref={dialogRef}
         className="career-path-window"
@@ -427,753 +273,783 @@ export const RoleQuestSelectorModal: React.FC<Props> = ({
         aria-label="Choose a career goal"
         tabIndex={-1}
         style={{
-          maxWidth: '1060px',
+          maxWidth: '1040px',
           width: '100%',
-          height: '92vh',
-          maxHeight: '680px',
-          background: '#FFFFFF',
-          borderRadius: '24px',
-          boxShadow: '0 25px 60px -15px rgba(0,0,0,0.3)',
-          border: '1px solid #E2E8F0',
+          maxHeight: '88vh',
+          background: 'var(--md-surface)',
+          borderRadius: '20px',
+          boxShadow: '0 24px 64px -16px rgba(15, 23, 42, 0.28)',
+          border: '1px solid var(--md-outline)',
           overflow: 'hidden',
           display: 'flex',
-          flexDirection: 'row',
-          position: 'relative',
+          flexDirection: 'column',
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ======================================================== */}
-        {/* LEFT PANEL: MOUNTAIN SCENIC & EXPLORE/LEARN/GROW PILLS   */}
-        {/* ======================================================== */}
-        <div
-          className="career-path-left-panel"
+        {/* Clean Workspace Modal Header */}
+        <header
           style={{
-            width: '240px',
-            position: 'relative',
-            background: '#0B1E38',
-            flexShrink: 0,
-            overflow: 'hidden',
-          }}
-        >
-          {/* Background Mountain Image from Reference */}
-          <img
-            src="/assets/career-mountain-desktop.png"
-            alt="Career road scenic"
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'top center',
-            }}
-          />
-        </div>
-
-        {/* ======================================================== */}
-        {/* RIGHT PANEL: ROADMAP SEARCH, SELECTION, AND CONTROLS      */}
-        {/* ======================================================== */}
-        <div
-          className="career-path-right-panel"
-          style={{
-            flex: 1,
+            padding: '18px 24px 14px',
+            borderBottom: '1px solid var(--md-outline)',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'space-between',
-            padding: '24px 28px',
-            boxSizing: 'border-box',
-            overflowY: 'auto',
-            background: '#FFFFFF',
+            gap: '12px',
+            background: 'var(--md-surface)',
+            flexShrink: 0,
           }}
         >
-          <div>
-            {/* Top Bar: Title & Search Bar */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'space-between',
-                gap: '16px',
-                marginBottom: '16px',
-              }}
-            >
-              <div>
-                <div
+          <div
+            className="career-modal-header-top"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: 'var(--md-primary)',
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                  marginBottom: '2px',
+                }}
+              >
+                Career Track &amp; Pace
+              </div>
+              <h2
+                style={{
+                  fontSize: '20px',
+                  fontWeight: 800,
+                  color: 'var(--md-text-primary)',
+                  letterSpacing: '-0.02em',
+                  margin: 0,
+                }}
+              >
+                Choose your career path
+              </h2>
+            </div>
+
+            <div className="career-modal-search-row" style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 1 auto' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'var(--md-surface-variant)',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  width: '290px',
+                  maxWidth: '100%',
+                  boxSizing: 'border-box',
+                }}
+              >
+                <Search size={14} color="var(--md-text-muted)" style={{ flexShrink: 0 }} />
+                <input
+                  type="text"
+                  aria-label="Search career roles"
+                  placeholder="Search 200+ roles or skills..."
+                  data-dialog-initial-focus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   style={{
-                    fontSize: '10.5px',
-                    fontWeight: 800,
-                    color: '#64748B',
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    marginBottom: '4px',
+                    border: 'none',
+                    background: 'transparent',
+                    outline: 'none',
+                    fontSize: '13px',
+                    color: 'var(--md-text-primary)',
+                    width: '100%',
+                    minWidth: 0,
                   }}
-                >
-                  Career Pilot
-                </div>
-                <h2
-                  style={{
-                    fontSize: '22px',
-                    fontWeight: 800,
-                    color: '#0F172A',
-                    letterSpacing: '-0.02em',
-                    margin: '0 0 4px 0',
-                  }}
-                >
-                  Choose your career path
-                </h2>
-                <div style={{ fontSize: '12px', color: '#64748B' }}>
-                  Explore curated roles or create a custom path shaped to your goals.
-                </div>
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    onClick={() => setSearchQuery('')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--md-text-muted)', padding: 0, display: 'inline-flex' }}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {/* Search Bar Input */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    background: '#F8FAFC',
-                    border: '1px solid #E2E8F0',
-                    borderRadius: '10px',
-                    padding: '8px 12px',
-                    width: '260px',
-                  }}
-                >
-                  <Search size={14} color="#94A3B8" />
-                  <input
-                    type="text"
-                    aria-label="Search career roles"
-                    placeholder="Search 200+ careers (e.g. Next.js, DevOps, AI)..."
-                    data-dialog-initial-focus
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    style={{
-                      border: 'none',
-                      background: 'transparent',
-                      outline: 'none',
-                      fontSize: '11.5px',
-                      color: '#0F172A',
-                      width: '100%',
-                    }}
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery('')}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: 0 }}
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
+              <button
+                type="button"
+                aria-label="Close modal"
+                onClick={onClose}
+                style={{
+                  background: 'var(--md-surface-variant)',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '10px',
+                  width: '36px',
+                  height: '36px',
+                  cursor: 'pointer',
+                  color: 'var(--md-text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
 
-                {/* Close Button */}
+          {/* Scrollable Domain Filter Pills */}
+          <div
+            role="tablist"
+            aria-label="Career categories"
+            style={{
+              display: 'flex',
+              gap: '6px',
+              overflowX: 'auto',
+              paddingBottom: '2px',
+              scrollbarWidth: 'none',
+            }}
+          >
+            {careerCategories.map((cat) => {
+              const isActive = selectedCategory === cat.id;
+              return (
                 <button
+                  key={cat.id}
                   type="button"
-                  onClick={onClose}
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setSelectedCategory(cat.id)}
                   style={{
-                    background: '#F1F5F9',
-                    border: 'none',
+                    padding: '6px 12px',
                     borderRadius: '9999px',
-                    width: '32px',
-                    height: '32px',
+                    fontSize: '12px',
+                    fontWeight: isActive ? 700 : 600,
+                    whiteSpace: 'nowrap',
+                    border: isActive ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                    background: isActive ? 'var(--md-primary)' : 'var(--md-surface)',
+                    color: isActive ? '#FFFFFF' : 'var(--md-text-secondary)',
                     cursor: 'pointer',
-                    color: '#64748B',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                    transition: 'all 0.15s ease',
                     flexShrink: 0,
                   }}
                 >
-                  <X size={16} />
+                  {cat.id === 'all' ? `All (${comprehensiveCareerCatalog.length})` : cat.label}
                 </button>
-              </div>
-            </div>
+              );
+            })}
+          </div>
+        </header>
 
-            {/* Filter Category Pills */}
-            <div
-              style={{
-                display: 'flex',
-                gap: '8px',
-                overflowX: 'auto',
-                paddingBottom: '8px',
-                marginBottom: '16px',
-                scrollbarWidth: 'none',
-              }}
-            >
-              {[
-                { id: 'all', label: 'All (200+)' },
-                { id: 'Software & Web', label: 'Software & Web' },
-                { id: 'AI & Data Science', label: 'AI & Data' },
-                { id: 'Cloud & DevOps', label: 'Cloud & DevOps' },
-                { id: 'Cybersecurity', label: 'Cybersecurity' },
-                { id: 'Mobile & Multiplatform', label: 'Mobile App' },
-                { id: 'Game Dev & 3D', label: 'Game Dev' },
-              ].map((cat) => {
-                const isActive = selectedCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setSelectedCategory(cat.id)}
-                    style={{
-                      padding: '6px 14px',
-                      borderRadius: '9999px',
-                      fontSize: '11.5px',
-                      fontWeight: 700,
-                      whiteSpace: 'nowrap',
-                      border: 'none',
-                      background: isActive ? '#0F2744' : '#F1F5F9',
-                      color: isActive ? '#FFFFFF' : '#475569',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    }}
-                  >
-                    {cat.label}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Target Role Section Header */}
+        {/* Main 2-Pane Body: Directory (Left) + Pace & Schedule Configurator (Right) */}
+        <div
+          className="career-path-body"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.35fr) minmax(300px, 0.95fr)',
+            overflow: 'hidden',
+          }}
+        >
+          {/* LEFT PANE: Role Directory */}
+          <div
+            className="career-path-directory"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              padding: '16px 20px',
+              borderRight: '1px solid var(--md-outline)',
+              overflowY: 'auto',
+            }}
+          >
             <div
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 marginBottom: '10px',
+                gap: '8px',
               }}
             >
-              <div
+              <span
                 style={{
                   fontSize: '11px',
-                  fontWeight: 800,
-                  color: '#64748B',
+                  fontWeight: 700,
+                  color: 'var(--md-text-muted)',
                   letterSpacing: '0.04em',
                   textTransform: 'uppercase',
                 }}
               >
-                Target Role ({filteredCareers.length} available)
-              </div>
-              <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#2563EB' }}>
-                Selected: {selectedRole.title}
-              </div>
+                Available Roles ({filteredCareers.length})
+              </span>
+              <span style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
+                Click a role to preview &amp; calibrate
+              </span>
             </div>
 
-            {/* Role Cards Grid (2 columns on desktop) */}
-            <div
-              className="career-role-cards-grid"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '10px',
-                maxHeight: '190px',
-                overflowY: 'auto',
-                overflowX: 'hidden',
-                paddingRight: '4px',
-                marginBottom: '18px',
-              }}
-            >
-              {filteredCareers.map((role) => {
-                const isSelected = !customRoleTitle && selectedRole.slug === role.slug;
-                return (
-                  <div
-                    key={role.id}
-                    role="button"
-                    tabIndex={0}
-                    aria-pressed={isSelected}
-                    onClick={() => { setCustomRoleTitle(''); setRoleOutline(null); setRoleDraftError(null); setSelectedSlug(role.slug); }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
+            {filteredCareers.length > 0 ? (
+              <div
+                className="career-role-cards-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                  gap: '10px',
+                }}
+              >
+                {filteredCareers.map((role) => {
+                  const isSelected = !customRoleTitle && selectedRole.slug === role.slug;
+                  return (
+                    <button
+                      key={role.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => {
                         setCustomRoleTitle('');
                         setRoleOutline(null);
                         setRoleDraftError(null);
                         setSelectedSlug(role.slug);
-                      }
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 14px',
-                      borderRadius: '12px',
-                      border: `1.5px solid ${isSelected ? '#3B82F6' : '#E2E8F0'}`,
-                      background: isSelected ? '#EFF6FF' : '#FFFFFF',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      boxShadow: isSelected ? '0 2px 8px rgba(37, 99, 235, 0.12)' : '0 1px 2px rgba(0,0,0,0.02)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                      {getRoleIcon(role)}
-                      <div style={{ overflow: 'hidden' }}>
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '10px',
+                        minWidth: 0,
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '11px 12px',
+                        borderRadius: '12px',
+                        border: `1.5px solid ${isSelected ? 'var(--md-primary)' : 'var(--md-outline)'}`,
+                        background: isSelected ? 'var(--md-primary-container)' : 'var(--md-surface)',
+                        cursor: 'pointer',
+                        transition: 'all 0.14s ease',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
                         <div
                           style={{
-                            fontSize: '12.5px',
-                            fontWeight: 800,
-                            color: isSelected ? '#1D4ED8' : '#0F172A',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
+                            width: '32px',
+                            height: '32px',
+                            borderRadius: '8px',
+                            background: isSelected ? 'var(--md-primary)' : 'var(--md-surface-variant)',
+                            color: isSelected ? '#FFFFFF' : 'var(--md-primary)',
+                            border: isSelected ? 'none' : '1px solid var(--md-outline)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
                           }}
                         >
-                          {role.title}
+                          {getCategoryIcon(role)}
                         </div>
-                        <div style={{ fontSize: '10.5px', color: '#64748B' }}>{role.category}</div>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div
+                            style={{
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              color: isSelected ? 'var(--md-primary)' : 'var(--md-text-primary)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {role.title}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '11px',
+                              color: 'var(--md-text-muted)',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                            }}
+                          >
+                            {role.category}
+                          </div>
+                        </div>
                       </div>
-                    </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-                      <span
-                        style={{
-                          background: isSelected ? '#DBEAFE' : '#EFF6FF',
-                          color: '#2563EB',
-                          fontSize: '10px',
-                          fontWeight: 700,
-                          padding: '3px 8px',
-                          borderRadius: '6px',
-                        }}
-                      >
-                        {role.effortHours}h
-                      </span>
-                      <ChevronRight size={14} color={isSelected ? '#2563EB' : '#94A3B8'} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                        <span
+                          style={{
+                            background: isSelected ? 'var(--md-surface)' : 'var(--md-surface-variant)',
+                            color: isSelected ? 'var(--md-primary)' : 'var(--md-text-secondary)',
+                            border: '1px solid var(--md-outline)',
+                            fontSize: '10.5px',
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: '6px',
+                          }}
+                        >
+                          {role.effortHours}h
+                        </span>
+                        {isSelected && <Check size={14} color="var(--md-primary)" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              searchQuery.trim() && (
+                <section
+                  aria-label="Create a custom career roadmap"
+                  className="career-custom-role-create"
+                  style={{
+                    display: 'grid',
+                    alignItems: 'end',
+                    gap: '12px',
+                    padding: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid var(--md-primary)',
+                    background: 'var(--md-surface-variant)',
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+                      Create a custom role
+                    </div>
+                    <p style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)', margin: '4px 0 0', lineHeight: 1.45 }}>
+                      Starts from a category playbook. Once selected, you can optionally draft a role-specific outline.
+                    </p>
+                    <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-primary)', marginTop: '6px' }}>
+                      {searchQuery.trim().replace(/\s+/g, ' ').slice(0, 80)}
                     </div>
                   </div>
-                );
-              })}
+                  <label style={{ display: 'grid', gap: '5px', fontSize: '10.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
+                    CAREER CATEGORY
+                    <select
+                      value={customRoleCategory}
+                      onChange={(event) => {
+                        setCustomRoleCategory(event.target.value as CareerCategory);
+                        setRoleOutline(null);
+                        setRoleDraftError(null);
+                      }}
+                      style={{
+                        minHeight: '38px',
+                        border: '1px solid var(--md-outline)',
+                        borderRadius: '8px',
+                        padding: '0 10px',
+                        background: 'var(--md-surface)',
+                        color: 'var(--md-text-primary)',
+                      }}
+                    >
+                      {careerCategories.filter((category) => category.id !== 'all').map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={selectCustomRole}
+                    className="btn-m3-primary"
+                    style={{ minHeight: '38px', padding: '0 16px' }}
+                  >
+                    Use role
+                  </button>
+                </section>
+              )
+            )}
+          </div>
+
+          {/* RIGHT PANE: Selected Plan Preview & Pace Configurator */}
+          <div
+            className="career-path-config"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+              padding: '18px 22px',
+              background: 'var(--md-surface-variant)',
+              overflowY: 'auto',
+              minHeight: 0,
+            }}
+          >
+            {/* Selected Role Summary Card */}
+            <div
+              style={{
+                padding: '14px 16px',
+                borderRadius: '14px',
+                background: 'var(--md-surface)',
+                border: '1px solid var(--md-outline)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: '10.5px',
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      color: 'var(--md-primary)',
+                    }}
+                  >
+                    Selected Track
+                  </span>
+                  <h3 style={{ margin: '2px 0 0', fontSize: '16px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
+                    {selectedRole.title}
+                  </h3>
+                </div>
+                <span
+                  style={{
+                    fontSize: '11.5px',
+                    fontWeight: 700,
+                    color: 'var(--md-primary)',
+                    background: 'var(--md-primary-container)',
+                    padding: '3px 9px',
+                    borderRadius: '999px',
+                    flexShrink: 0,
+                  }}
+                >
+                  {totalEffortHours}h total
+                </span>
+              </div>
+
+              <div style={{ fontSize: '12px', color: 'var(--md-text-secondary)', lineHeight: 1.4 }}>
+                {selectedRole.shortDesc}
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '2px' }}>
+                {selectedRole.skills.slice(0, 5).map((skill) => (
+                  <span
+                    key={skill}
+                    style={{
+                      fontSize: '10.5px',
+                      fontWeight: 600,
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      background: 'var(--md-surface-variant)',
+                      border: '1px solid var(--md-outline)',
+                      color: 'var(--md-text-secondary)',
+                    }}
+                  >
+                    {skill}
+                  </span>
+                ))}
+              </div>
             </div>
 
             {customRoleTitle && (
               <section
                 aria-label="Custom role learning plan"
-                style={{ margin: '-6px 0 18px', padding: '14px', border: '1px solid #C7D2FE', borderRadius: '12px', background: '#F8FAFF' }}
+                style={{
+                  padding: '12px 14px',
+                  border: '1px solid var(--md-primary)',
+                  borderRadius: '12px',
+                  background: 'var(--md-surface)',
+                }}
               >
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                  <div style={{ flex: '1 1 260px' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F2744' }}>Personalize this custom role</div>
-                    <p style={{ fontSize: '11px', color: '#64748B', lineHeight: 1.45, margin: '4px 0 0' }}>
-                      The category playbook is the default. You can request a role-specific outline; its four reviewed stages and skills will shape your saved milestones and tasks.
-                    </p>
-                    <p style={{ fontSize: '10.5px', color: '#64748B', margin: '5px 0 0' }}>
-                      Only the role title, experience level, category, and baseline skills are sent when you request an outline.
-                      {aiQuota?.role ? ` ${aiQuota.role.remaining} of ${aiQuota.role.limit} weekly requests remain.` : ''}
-                    </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+                      Personalize custom role
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--md-text-secondary)', marginTop: '2px' }}>
+                      {aiQuota?.role ? `${aiQuota.role.remaining} of ${aiQuota.role.limit} AI drafts left.` : 'Optional AI stage draft.'}
+                    </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleDraftRoleOutline()}
                     disabled={isDemo || isDraftingRole || (aiQuota?.role?.remaining ?? 1) <= 0}
-                    style={{ minHeight: '38px', padding: '0 13px', border: '1px solid #A5B4FC', borderRadius: '9px', background: '#FFFFFF', color: '#3730A3', fontWeight: 800, cursor: isDemo || isDraftingRole ? 'wait' : 'pointer' }}
+                    style={{
+                      minHeight: '34px',
+                      padding: '0 12px',
+                      border: '1px solid var(--md-primary)',
+                      borderRadius: '8px',
+                      background: 'var(--md-surface)',
+                      color: 'var(--md-primary)',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: isDemo || isDraftingRole ? 'wait' : 'pointer',
+                    }}
                   >
-                    {isDraftingRole ? 'Drafting outline…' : roleOutline ? 'Draft a new outline' : 'Draft AI outline'}
+                    {isDraftingRole ? 'Drafting…' : roleOutline ? 'Regenerate AI outline' : 'Draft AI outline'}
                   </button>
                 </div>
-                {isDemo && <p style={{ fontSize: '11px', color: '#64748B', margin: '9px 0 0' }}>AI outlines are available after you sign in. The category playbook works in demo mode.</p>}
-                {roleDraftError && <p role="alert" style={{ fontSize: '11px', color: '#B91C1C', margin: '9px 0 0' }}>{roleDraftError}</p>}
+                {roleDraftError && (
+                  <p role="alert" style={{ fontSize: '11px', color: '#DC2626', margin: '8px 0 0' }}>
+                    {roleDraftError}
+                  </p>
+                )}
                 {roleOutline && (
-                  <div aria-live="polite" style={{ display: 'grid', gap: '8px', marginTop: '12px' }}>
-                    <div style={{ fontSize: '11px', fontWeight: 800, color: '#3730A3' }}>
-                      AI draft · {roleOutline.total_hours} estimated hours · included in the roadmap if applied
-                    </div>
+                  <div aria-live="polite" style={{ display: 'grid', gap: '6px', marginTop: '10px' }}>
                     {roleOutline.milestones.map((milestone) => (
-                      <article key={milestone.position} style={{ padding: '9px 10px', borderRadius: '8px', background: '#FFFFFF', border: '1px solid #E0E7FF' }}>
-                        <div style={{ fontSize: '11px', fontWeight: 800, color: '#1E293B' }}>Stage {milestone.position}: {milestone.title}</div>
-                        <div style={{ fontSize: '10.5px', color: '#475569', marginTop: '3px' }}>{milestone.focus}</div>
-                        <div style={{ fontSize: '10px', color: '#64748B', marginTop: '4px' }}>{milestone.skills.join(' · ')} · {milestone.effort_hours}h</div>
+                      <article
+                        key={milestone.position}
+                        style={{
+                          padding: '8px 10px',
+                          borderRadius: '8px',
+                          background: 'var(--md-surface-variant)',
+                          border: '1px solid var(--md-outline)',
+                        }}
+                      >
+                        <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+                          Stage {milestone.position}: {milestone.title} ({milestone.effort_hours}h)
+                        </div>
+                        <div style={{ fontSize: '10.5px', color: 'var(--md-text-secondary)', marginTop: '2px' }}>
+                          {milestone.skills.join(' · ')}
+                        </div>
                       </article>
                     ))}
-                    <p style={{ fontSize: '10px', color: '#64748B', margin: 0 }}>Review this AI-generated draft before applying it. It is a learning suggestion, not verified labor-market research.</p>
                   </div>
                 )}
               </section>
             )}
 
-            {filteredCareers.length === 0 && searchQuery.trim() && (
-              <section
-                aria-label="Create a custom career roadmap"
-                className="career-custom-role-create"
+            {/* Target Completion Deadline */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '7px' }}>
+                <label
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: 'var(--md-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  Target Completion
+                </label>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)' }}>
+                  {selectedTimelinePreset === 'custom' ? 'Custom date' : `${selectedTimelinePreset} Months · ${totalDays}d`}
+                </span>
+              </div>
+
+              <div
+                className="career-timeline-presets"
                 style={{
                   display: 'grid',
-                  alignItems: 'end',
-                  gap: '12px',
-                  padding: '14px',
-                  marginBottom: '18px',
-                  borderRadius: '12px',
-                  border: '1px solid #BFDBFE',
-                  background: '#F8FBFF',
+                  gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
+                  gap: '5px',
+                  marginBottom: '8px',
                 }}
               >
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F2744' }}>Create a custom role</div>
-                  <p style={{ fontSize: '11px', color: '#64748B', margin: '4px 0 0' }}>
-                    Starts from a category playbook. After selecting the role, you can optionally request a role-specific AI outline.
-                  </p>
-                  <div style={{ fontSize: '12px', fontWeight: 700, color: '#1D4ED8', marginTop: '6px' }}>
-                    {searchQuery.trim().replace(/\s+/g, ' ').slice(0, 80)}
-                  </div>
-                </div>
-                <label style={{ display: 'grid', gap: '5px', fontSize: '10px', fontWeight: 800, color: '#475569' }}>
-                  CAREER CATEGORY
-                  <select
-                    value={customRoleCategory}
-                    onChange={(event) => {
-                      setCustomRoleCategory(event.target.value as CareerCategory);
-                      setRoleOutline(null);
-                      setRoleDraftError(null);
-                    }}
-                    style={{ minHeight: '38px', border: '1px solid #CBD5E1', borderRadius: '8px', padding: '0 10px', background: '#FFFFFF', color: '#0F172A' }}
-                  >
-                    {careerCategories.filter((category) => category.id !== 'all').map((category) => (
-                      <option key={category.id} value={category.id}>{category.label}</option>
-                    ))}
-                  </select>
-                </label>
+                {PRESET_TIMELINES.map((preset) => {
+                  const isSelected = selectedTimelinePreset === preset.months;
+                  return (
+                    <button
+                      key={preset.months}
+                      type="button"
+                      onClick={() => handleSelectPreset(preset.months)}
+                      title={preset.fullLabel}
+                      style={{
+                        padding: '7px 2px',
+                        borderRadius: '8px',
+                        border: isSelected ? '1.5px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                        background: isSelected ? 'var(--md-primary)' : 'var(--md-surface)',
+                        color: isSelected ? '#FFFFFF' : 'var(--md-text-primary)',
+                        fontWeight: 700,
+                        fontSize: '11.5px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
                 <button
                   type="button"
-                  onClick={selectCustomRole}
-                  style={{ minHeight: '38px', padding: '0 14px', border: 0, borderRadius: '8px', background: '#1D4ED8', color: '#FFFFFF', fontWeight: 800, cursor: 'pointer' }}
-                >
-                  Use role
-                </button>
-              </section>
-            )}
-
-            {/* Target Deadline & Study Commitment Inputs */}
-            <div
-              className="career-controls-row"
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1.2fr 1fr',
-                gap: '16px',
-                marginBottom: '16px',
-              }}
-            >
-              {/* Target Completion (Presets + Custom Deadline) */}
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '6px',
+                  onClick={() => {
+                    setSelectedTimelinePreset('custom');
+                    dateInputRef.current?.showPicker?.();
                   }}
-                >
-                  <label
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      color: '#64748B',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    Target Completion Deadline
-                  </label>
-                  <span
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 700,
-                      color: selectedTimelinePreset === 'custom' ? '#D97706' : '#2563EB',
-                      background: selectedTimelinePreset === 'custom' ? '#FEF3C7' : '#EFF6FF',
-                      padding: '2px 7px',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    {selectedTimelinePreset === 'custom'
-                      ? 'Custom Deadline'
-                      : `${selectedTimelinePreset} Months (${totalDays}d)`}
-                  </span>
-                </div>
-
-                {/* Preset Time Buttons (3, 6, 9, 12, 18+ Months & Custom) */}
-                <div
-                  className="career-timeline-presets"
                   style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(6, 1fr)',
-                    gap: '4px',
-                    marginBottom: '8px',
-                  }}
-                >
-                  {PRESET_TIMELINES.map((preset) => {
-                    const isSelected = selectedTimelinePreset === preset.months;
-                    return (
-                      <button
-                        key={preset.months}
-                        type="button"
-                        onClick={() => handleSelectPreset(preset.months)}
-                        title={preset.fullLabel}
-                        style={{
-                          padding: '7px 0',
-                          borderRadius: '8px',
-                          border: isSelected ? '1.5px solid #1D4ED8' : '1px solid #E2E8F0',
-                          background: isSelected ? '#0F2744' : '#F8FAFC',
-                          color: isSelected ? '#FFFFFF' : '#334155',
-                          fontWeight: isSelected ? 800 : 700,
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                          textAlign: 'center',
-                        }}
-                      >
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-
-                  {/* Custom Date Option */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedTimelinePreset('custom');
-                      dateInputRef.current?.showPicker?.();
-                    }}
-                    title="Choose custom calendar deadline"
-                    style={{
-                      padding: '7px 0',
-                      borderRadius: '8px',
-                      border:
-                        selectedTimelinePreset === 'custom' ? '1.5px solid #D97706' : '1px solid #E2E8F0',
-                      background: selectedTimelinePreset === 'custom' ? '#D97706' : '#F8FAFC',
-                      color: selectedTimelinePreset === 'custom' ? '#FFFFFF' : '#334155',
-                      fontWeight: selectedTimelinePreset === 'custom' ? 800 : 700,
-                      fontSize: '11px',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      textAlign: 'center',
-                    }}
-                  >
-                    Custom
-                  </button>
-                </div>
-
-                {/* Date Display and Picker Card */}
-                <div
-                  onClick={() => dateInputRef.current?.showPicker?.()}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    flexWrap: 'wrap',
-                    gap: '8px',
-                    background: '#FFFFFF',
-                    border: `1.5px solid ${selectedTimelinePreset === 'custom' ? '#F59E0B' : '#E2E8F0'}`,
-                    borderRadius: '10px',
-                    padding: '8px 12px',
+                    padding: '7px 2px',
+                    borderRadius: '8px',
+                    border: selectedTimelinePreset === 'custom' ? '1.5px solid #D97706' : '1px solid var(--md-outline)',
+                    background: selectedTimelinePreset === 'custom' ? '#D97706' : 'var(--md-surface)',
+                    color: selectedTimelinePreset === 'custom' ? '#FFFFFF' : 'var(--md-text-primary)',
+                    fontWeight: 700,
+                    fontSize: '11.5px',
                     cursor: 'pointer',
-                    position: 'relative',
-                    boxShadow:
-                      selectedTimelinePreset === 'custom' ? '0 0 0 2px rgba(245, 158, 11, 0.15)' : 'none',
-                    transition: 'all 0.15s ease',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Calendar
-                      size={15}
-                      color={selectedTimelinePreset === 'custom' ? '#D97706' : '#2563EB'}
-                    />
-                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#0F172A' }}>
-                      {formatDisplayDate(targetDateStr)}
-                    </span>
-                    <span style={{ fontSize: '10.5px', color: '#64748B' }}>
-                      ({totalWeeks.toFixed(1)} wks · {totalDays} days)
-                    </span>
-                  </div>
-
-                  <span
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 700,
-                      color: '#2563EB',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    Change date
-                  </span>
-
-                  <input
-                    ref={dateInputRef}
-                    type="date"
-                    min={today}
-                    value={targetDateStr}
-                    onChange={(e) => handleCustomDateChange(e.target.value)}
-                    style={{
-                      position: 'absolute',
-                      opacity: 0,
-                      width: '100%',
-                      height: '100%',
-                      left: 0,
-                      top: 0,
-                      cursor: 'pointer',
-                    }}
-                  />
-                </div>
+                  Custom
+                </button>
               </div>
 
-              {/* Daily Study Commitment */}
-              <div>
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: '6px',
-                  }}
-                >
-                  <label
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      color: '#64748B',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                    }}
-                  >
-                    Daily Study Commitment
-                  </label>
-                  <span
-                    style={{
-                      fontSize: '10.5px',
-                      fontWeight: 700,
-                      color: '#166534',
-                      background: '#F0FDF4',
-                      padding: '2px 7px',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    {dailyMinutes} mins / day
+              <div
+                onClick={() => dateInputRef.current?.showPicker?.()}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                  background: 'var(--md-surface)',
+                  border: `1px solid ${selectedTimelinePreset === 'custom' ? '#D97706' : 'var(--md-outline)'}`,
+                  borderRadius: '10px',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  position: 'relative',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <Calendar size={14} color={selectedTimelinePreset === 'custom' ? '#D97706' : 'var(--md-primary)'} />
+                  <span style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary)' }}>
+                    {formatDisplayDate(targetDateStr)}
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>
+                    ({totalWeeks.toFixed(1)} wks)
                   </span>
                 </div>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(4, 1fr)',
-                    gap: '6px',
-                    marginBottom: '8px',
-                  }}
-                >
-                  {[30, 60, 90, 120].map((mins) => {
-                    const isSelected = dailyMinutes === mins;
-                    return (
-                      <button
-                        key={mins}
-                        type="button"
-                        onClick={() => setDailyMinutes(mins)}
-                        style={{
-                          padding: '7px 0',
-                          borderRadius: '8px',
-                          border: isSelected ? '1.5px solid #1D4ED8' : '1px solid #E2E8F0',
-                          background: isSelected ? '#0F2744' : '#F8FAFC',
-                          color: isSelected ? '#FFFFFF' : '#334155',
-                          fontWeight: isSelected ? 800 : 700,
-                          fontSize: '11px',
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        {mins}m
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Commitment Summary Card */}
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    background: '#F8FAFC',
-                    border: '1px solid #E2E8F0',
-                    borderRadius: '10px',
-                    padding: '8px 12px',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <Sparkles size={14} color="#2563EB" />
-                    <span style={{ fontSize: '11.5px', color: '#334155', fontWeight: 600 }}>
-                      Study Pace: <strong>{((dailyMinutes * 5) / 60).toFixed(1)} hrs</strong> / weekday
-                    </span>
-                  </div>
-                  <span style={{ fontSize: '10.5px', color: '#64748B' }}>5 days/week</span>
-                </div>
+                <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-primary)', flexShrink: 0 }}>
+                  Change
+                </span>
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  min={today}
+                  value={targetDateStr}
+                  onChange={(e) => handleCustomDateChange(e.target.value)}
+                  style={{ position: 'absolute', opacity: 0, inset: 0, width: '100%', height: '100%', cursor: 'pointer' }}
+                />
               </div>
             </div>
 
-            {/* Overload Warning / Feasible Banner */}
+            {/* Daily Study Commitment */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '7px' }}>
+                <label
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    color: 'var(--md-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.04em',
+                  }}
+                >
+                  Daily Commitment
+                </label>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#059669' }}>
+                  {((dailyMinutes * 5) / 60).toFixed(1)} hrs / weekday
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '6px' }}>
+                {[30, 60, 90, 120].map((mins) => {
+                  const isSelected = dailyMinutes === mins;
+                  return (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => setDailyMinutes(mins)}
+                      style={{
+                        padding: '8px 0',
+                        borderRadius: '8px',
+                        border: isSelected ? '1.5px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                        background: isSelected ? 'var(--md-primary)' : 'var(--md-surface)',
+                        color: isSelected ? '#FFFFFF' : 'var(--md-text-primary)',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <Clock size={12} />
+                      <span>{mins}m</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Feasibility Card */}
             <div
               style={{
-                background: isOverloaded ? '#FEF2F2' : '#F0FDF4',
-                border: `1px solid ${isOverloaded ? '#FECACA' : '#BBF7D0'}`,
-                borderRadius: '10px',
-                padding: '10px 14px',
-                marginBottom: '16px',
+                background: isOverloaded ? 'rgba(220, 38, 38, 0.08)' : 'rgba(5, 150, 105, 0.08)',
+                border: `1px solid ${isOverloaded ? 'rgba(220, 38, 38, 0.3)' : 'rgba(5, 150, 105, 0.3)'}`,
+                borderRadius: '12px',
+                padding: '10px 12px',
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '3px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '3px' }}>
+                {isOverloaded ? (
+                  <AlertTriangle size={14} color="#DC2626" />
+                ) : (
+                  <CheckCircle2 size={14} color="#059669" />
+                )}
+                <span style={{ fontSize: '12px', fontWeight: 700, color: isOverloaded ? '#DC2626' : '#047857' }}>
+                  {isOverloaded ? 'Schedule Overload Warning' : 'Feasible Study Plan'}
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--md-text-secondary)', lineHeight: 1.45 }}>
                 {isOverloaded ? (
                   <>
-                    <AlertTriangle size={15} color="#DC2626" />
-                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#DC2626' }}>
-                      Schedule Overload Warning
-                    </span>
+                    Requires ~<strong>{requiredDailyMinutes} mins/weekday</strong> across {totalDays} days. Extend your deadline or increase daily pace.
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 size={15} color="#166534" />
-                    <span style={{ fontSize: '12px', fontWeight: 800, color: '#166534' }}>
-                      Feasible Study Plan
-                    </span>
+                    {totalEffortHours}h across {selectedRole.stages.length} stages in{' '}
+                    <strong>{totalWeeks.toFixed(1)} weeks</strong> at {dailyMinutes} mins/weekday.
                   </>
                 )}
-              </div>
-              <div style={{ fontSize: '11.5px', color: '#475569', lineHeight: 1.4 }}>
-                {isOverloaded ? (
-                  <>
-                    Total effort is {totalEffortHours}h across {totalDays} days. You need at least{' '}
-                    <strong style={{ color: '#DC2626' }}>{requiredDailyMinutes} mins/day</strong>. Consider
-                    extending the deadline.
-                  </>
-                ) : (
-                  <>
-                    Total effort is {totalEffortHours}h across {totalDays} days. Feasible allocation of{' '}
-                    <strong>{totalWeeks.toFixed(1)} weeks</strong> across {selectedRole.stages.length} stages at{' '}
-                    {dailyMinutes} mins/weekday.
-                  </>
-                )}
-              </div>
+              </p>
             </div>
           </div>
-
-          {/* Bottom Action Button */}
-          <button
-            type="button"
-            onClick={handleConfirm}
-            style={{
-              width: '100%',
-              padding: '13px',
-              borderRadius: '12px',
-              border: 'none',
-              background: '#0F2744',
-              color: '#FFFFFF',
-              fontSize: '14px',
-              fontWeight: 800,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(15, 39, 68, 0.35)',
-              transition: 'background 0.15s ease',
-            }}
-          >
-            <span>Apply This Career Roadmap</span>
-            <ArrowRight size={16} />
-          </button>
         </div>
+
+        {/* Clean Action Footer */}
+        <footer
+          className="career-modal-footer"
+          style={{
+            padding: '14px 24px',
+            borderTop: '1px solid var(--md-outline)',
+            background: 'var(--md-surface)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            flexWrap: 'wrap',
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ fontSize: '12px', color: 'var(--md-text-secondary)', fontWeight: 500 }}>
+            Plan: <strong style={{ color: 'var(--md-text-primary)' }}>{selectedRole.title}</strong> · {totalEffortHours}h · {dailyMinutes}m/day
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                padding: '9px 16px',
+                borderRadius: '9999px',
+                border: '1px solid var(--md-outline)',
+                background: 'var(--md-surface)',
+                color: 'var(--md-text-secondary)',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              className="btn-m3-primary"
+              style={{ padding: '9px 20px', fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '7px' }}
+            >
+              <span>Apply Career Roadmap</span>
+              <ArrowRight size={15} />
+            </button>
+          </div>
+        </footer>
       </div>
     </div>
   );

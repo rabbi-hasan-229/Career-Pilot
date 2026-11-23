@@ -26,7 +26,7 @@ interface Props {
   messages: AICoachMessage[];
   onSendMessage: (text: string) => Promise<void>;
   isSending: boolean;
-  onApplyProposal: (action: string, days?: number) => void;
+  onApplyProposal: (action: string, days?: number) => Promise<boolean | void> | void;
   onBack?: () => void;
   isDesktopEmbedded?: boolean;
 }
@@ -61,6 +61,8 @@ export const AICoachView: React.FC<Props> = ({
   const [speakReplies, setSpeakReplies] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [appliedProposalIds, setAppliedProposalIds] = useState<Record<string, boolean>>({});
+  const [isApplyingShift, setIsApplyingShift] = useState(false);
   const speechControllerRef = useRef<HybridSpeechController | null>(null);
   const lastSpokenMessageIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -151,10 +153,22 @@ export const AICoachView: React.FC<Props> = ({
     await onSendMessage(content);
   };
 
-  const handlePlanShift = (action: 'behind' | 'early' | 'pause', label: string) => {
-    onApplyProposal(action);
-    setActionFeedback(`Applied: ${label}`);
-    window.setTimeout(() => setActionFeedback(null), 3500);
+  const handlePlanShift = async (action: string, label: string, days?: number, proposalMessageId?: string) => {
+    if (isApplyingShift || (proposalMessageId && appliedProposalIds[proposalMessageId])) return;
+    setIsApplyingShift(true);
+    try {
+      const outcome = await onApplyProposal(action, days);
+      if (outcome !== false) {
+        if (proposalMessageId) {
+          setAppliedProposalIds((prev) => ({ ...prev, [proposalMessageId]: true }));
+        }
+        const message = `Plan shift applied: ${label} (roadmap & schedule dates updated)`;
+        setActionFeedback(message);
+        window.setTimeout(() => setActionFeedback((prev) => (prev === message ? null : prev)), 5000);
+      }
+    } finally {
+      setIsApplyingShift(false);
+    }
   };
 
   const handleCopy = async (id: string, text: string) => {
@@ -288,8 +302,8 @@ export const AICoachView: React.FC<Props> = ({
           >
             <button
               type="button"
-              disabled={isSending}
-              onClick={() => handlePlanShift('behind', '+3d Buffer')}
+              disabled={isSending || isApplyingShift}
+              onClick={() => void handlePlanShift('behind', '+3d Buffer')}
               className="ac-shift-btn"
               title="Add 3-day buffer to upcoming deadlines"
             >
@@ -297,8 +311,8 @@ export const AICoachView: React.FC<Props> = ({
             </button>
             <button
               type="button"
-              disabled={isSending}
-              onClick={() => handlePlanShift('early', 'Move Earlier')}
+              disabled={isSending || isApplyingShift}
+              onClick={() => void handlePlanShift('early', 'Move Earlier')}
               className="ac-shift-btn"
               title="Advance schedule early"
             >
@@ -306,8 +320,8 @@ export const AICoachView: React.FC<Props> = ({
             </button>
             <button
               type="button"
-              disabled={isSending}
-              onClick={() => handlePlanShift('pause', 'Pause 7d')}
+              disabled={isSending || isApplyingShift}
+              onClick={() => void handlePlanShift('pause', 'Pause 7d')}
               className="ac-shift-btn last"
               title="Pause schedule for 7 days"
             >
@@ -319,20 +333,22 @@ export const AICoachView: React.FC<Props> = ({
 
       {actionFeedback && (
         <div
+          role="status"
+          aria-live="polite"
           style={{
-            padding: '8px 14px',
-            borderRadius: '9px',
-            background: 'var(--md-primary-container)',
-            border: '1px solid var(--md-primary)',
-            color: 'var(--md-primary)',
-            fontSize: '12px',
+            padding: '10px 14px',
+            borderRadius: '10px',
+            background: 'rgba(5, 150, 105, 0.1)',
+            border: '1px solid rgba(5, 150, 105, 0.35)',
+            color: '#047857',
+            fontSize: '12.5px',
             fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
+            gap: '8px',
           }}
         >
-          <Check size={13} />
+          <CheckCircle2 size={15} color="#059669" />
           <span>{actionFeedback}</span>
         </div>
       )}
@@ -420,28 +436,77 @@ export const AICoachView: React.FC<Props> = ({
                     )}
 
                     {/* Structured Proposal Card */}
-                    {msg.proposal && (
-                      <div className="ac-proposal-card">
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '4px' }}>
-                          <Sparkles size={14} color="var(--md-primary)" />
-                          <strong style={{ fontSize: '13px', color: 'var(--md-text-primary)' }}>
-                            {msg.proposal.title}
-                          </strong>
-                        </div>
-                        <p style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
-                          {msg.proposal.description}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => onApplyProposal(msg.proposal!.action, msg.proposal!.days)}
-                          className="btn-m3-primary"
-                          style={{ padding: '7px 14px', fontSize: '12px' }}
+                    {msg.proposal && (() => {
+                      const isProposalApplied = Boolean(appliedProposalIds[msg.id]);
+                      return (
+                        <div
+                          className="ac-proposal-card"
+                          style={isProposalApplied ? { borderColor: 'rgba(5, 150, 105, 0.45)', background: 'rgba(5, 150, 105, 0.05)' } : undefined}
                         >
-                          <CheckCircle2 size={13} />
-                          Apply Plan Shift
-                        </button>
-                      </div>
-                    )}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                              {isProposalApplied
+                                ? <CheckCircle2 size={14} color="#059669" />
+                                : <Sparkles size={14} color="var(--md-primary)" />}
+                              <strong style={{ fontSize: '13px', color: 'var(--md-text-primary)' }}>
+                                {msg.proposal.title}
+                              </strong>
+                            </div>
+                            {isProposalApplied && (
+                              <span
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  color: '#047857',
+                                  background: 'rgba(5, 150, 105, 0.14)',
+                                  border: '1px solid rgba(5, 150, 105, 0.35)',
+                                  padding: '2px 8px',
+                                  borderRadius: '999px',
+                                }}
+                              >
+                                Applied
+                              </span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
+                            {msg.proposal.description}
+                          </p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              disabled={isApplyingShift || isProposalApplied}
+                              onClick={() => void handlePlanShift(msg.proposal!.action, msg.proposal!.title, msg.proposal!.days, msg.id)}
+                              className={isProposalApplied ? undefined : 'btn-m3-primary'}
+                              style={
+                                isProposalApplied
+                                  ? {
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '7px 14px',
+                                      borderRadius: '9999px',
+                                      border: '1px solid rgba(5, 150, 105, 0.4)',
+                                      background: 'rgba(5, 150, 105, 0.12)',
+                                      color: '#047857',
+                                      fontSize: '12px',
+                                      fontWeight: 700,
+                                      cursor: 'default',
+                                    }
+                                  : { padding: '7px 14px', fontSize: '12px' }
+                              }
+                            >
+                              {isProposalApplied ? <Check size={13} /> : <CheckCircle2 size={13} />}
+                              {isProposalApplied ? 'Applied to Schedule' : isApplyingShift ? 'Applying…' : 'Apply Plan Shift'}
+                            </button>
+                            {isProposalApplied && (
+                              <span style={{ fontSize: '11.5px', color: '#047857', fontWeight: 600 }}>
+                                Roadmap &amp; task dates shifted cleanly.
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })

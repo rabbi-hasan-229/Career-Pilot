@@ -1,7 +1,8 @@
-import React from 'react';
-import { Compass, CheckCircle2, Flame } from 'lucide-react';
+import React, { useState } from 'react';
+import { Compass, CheckCircle2, Flame, Upload } from 'lucide-react';
 import { AVATAR_OPTIONS } from './avatarConstants';
 import type { AvatarOption } from './avatarConstants';
+import { processAvatarFileToDataUrl } from '../account/avatarUpload';
 
 export { AVATAR_OPTIONS };
 export type { AvatarOption };
@@ -181,11 +182,115 @@ interface AvatarPickerProps {
 }
 
 /**
- * Interactive Avatar Selector for Sign Up & Profile Editing
+ * Interactive Avatar Selector & Custom Photo Uploader for Sign Up & Profile Editing
  */
 export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelect }) => {
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setUploadError(null);
+    setIsProcessing(true);
+    try {
+      const dataUrl = await processAvatarFileToDataUrl(file);
+      onSelect(dataUrl);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Could not process image.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const isCustomPhoto =
+    Boolean(selectedUrl) && !AVATAR_OPTIONS.some((avatar) => avatar.url === selectedUrl);
+
   return (
     <div style={{ marginBottom: '18px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+          flexWrap: 'wrap',
+          padding: '10px 12px',
+          borderRadius: '12px',
+          border: '1px dashed var(--md-outline-variant, #CBD5E1)',
+          background: 'var(--md-surface-variant, #F8FAFC)',
+          marginBottom: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+          <img
+            src={selectedUrl || '/avatars/career_navigator.jpg'}
+            alt="Current profile picture"
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: '50%',
+              objectFit: 'cover',
+              border: '1.5px solid var(--md-outline, #CBD5E1)',
+              flexShrink: 0,
+            }}
+          />
+          <div>
+            <div style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary, #0F172A)' }}>
+              {isCustomPhoto ? 'Custom profile picture selected' : 'Upload your own profile picture'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--md-text-secondary, #64748B)' }}>
+              JPG, PNG, or WebP (max 5 MB)
+            </div>
+          </div>
+        </div>
+
+        <label
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '7px 12px',
+            borderRadius: '9px',
+            background: 'var(--md-surface, #FFFFFF)',
+            border: '1px solid var(--md-outline, #CBD5E1)',
+            color: 'var(--md-primary, #123C69)',
+            fontSize: '12px',
+            fontWeight: 700,
+            cursor: isProcessing ? 'wait' : 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          <Upload size={13} />
+          <span>{isProcessing ? 'Processing...' : 'Upload Photo'}</span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            onChange={(e) => void handlePhotoUpload(e)}
+            disabled={isProcessing}
+            style={{ display: 'none' }}
+          />
+        </label>
+      </div>
+
+      {uploadError && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: '10px',
+            padding: '7px 10px',
+            borderRadius: '8px',
+            background: '#FEE2E2',
+            color: '#B91C1C',
+            fontSize: '12px',
+            fontWeight: 600,
+          }}
+        >
+          {uploadError}
+        </div>
+      )}
+
       <label
         style={{
           display: 'block',
@@ -197,7 +302,7 @@ export const AvatarPicker: React.FC<AvatarPickerProps> = ({ selectedUrl, onSelec
           letterSpacing: '0.04em',
         }}
       >
-        Choose Your Career Avatar
+        Or Choose a Career Avatar
       </label>
 
       <div

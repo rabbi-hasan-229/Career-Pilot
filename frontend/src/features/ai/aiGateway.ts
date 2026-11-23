@@ -85,10 +85,28 @@ export interface AIGatewayResult<T> {
   };
 }
 
-export async function requestAI<T>(feature: AIFeature, input: Record<string, unknown>): Promise<AIGatewayResult<T>> {
-  const { data, error } = await supabase.functions.invoke('ai-gateway', {
+export async function requestAI<T>(
+  feature: AIFeature,
+  input: Record<string, unknown>,
+  options?: { timeoutMs?: number }
+): Promise<AIGatewayResult<T>> {
+  const invokePromise = supabase.functions.invoke('ai-gateway', {
     body: { feature, input },
   });
+
+  let timeoutId: number | undefined;
+  const { data, error } = options?.timeoutMs && options.timeoutMs > 0
+    ? await Promise.race([
+        invokePromise,
+        new Promise<never>((_, reject) => {
+          timeoutId = window.setTimeout(() => {
+            reject(new Error('AI request timed out. Switching to fast mode.'));
+          }, options.timeoutMs);
+        }),
+      ]).finally(() => {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      })
+    : await invokePromise;
 
   if (error) {
     const context = (error as Error & { context?: unknown }).context;
@@ -161,7 +179,7 @@ export async function requestInterviewTurn(input: {
   rubric?: string;
   history?: string;
   follow_up_count?: number;
-}): Promise<AIGatewayResult<ConversationalInterviewTurnResponse>> {
+}, options?: { timeoutMs?: number }): Promise<AIGatewayResult<ConversationalInterviewTurnResponse>> {
   return requestAI<ConversationalInterviewTurnResponse>('interview', {
     mode: 'converse',
     stage: input.stage,
@@ -174,5 +192,5 @@ export async function requestInterviewTurn(input: {
     rubric: input.rubric || '',
     history: input.history || '',
     follow_up_count: String(input.follow_up_count ?? 0),
-  });
+  }, options);
 }

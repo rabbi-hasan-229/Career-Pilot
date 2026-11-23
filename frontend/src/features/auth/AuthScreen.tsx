@@ -11,12 +11,17 @@ import {
   RefreshCw,
   CheckCircle2,
   Compass,
+  Briefcase,
+  GraduationCap,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { GoogleIcon } from '../../components/SocialIcons';
 import { authService } from './authService';
 import { isSupabaseConfigured } from '../../lib/supabase';
-import type { Profile } from '../../types';
+import type { ExpertRegistrationDraft, Profile } from '../../types';
+import { ExpertProfileFormFields } from '../experts/ExpertProfileFormFields';
+import { createInitialExpertDraft } from '../experts/expertMatching';
+import { fileToDataUrl, savePendingExpertDraft, clearPendingExpertDraft } from '../experts/expertRepository';
 
 interface Props {
   onAuthenticated: (profile: Profile) => void;
@@ -28,13 +33,16 @@ const ACCENT_BORDER = '#1E4D8B';
 
 export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
   const supabaseConfigured = isSupabaseConfigured();
+  const [portalRole, setPortalRole] = useState<'learner' | 'expert'>('learner');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [expertSignupStep, setExpertSignupStep] = useState<'account' | 'expertise' | 'credentials'>('account');
   const [verificationStep, setVerificationStep] = useState<'form' | 'otp'>('form');
   const [verificationSource, setVerificationSource] = useState<'signup' | 'signin'>('signup');
 
   // Form Fields
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -42,9 +50,13 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(() => authService.getRememberMe());
   const [agreeTerms, setAgreeTerms] = useState(false);
+  const [expertDraft, setExpertDraft] = useState<ExpertRegistrationDraft>(() => createInitialExpertDraft());
+  const [expertCvFile, setExpertCvFile] = useState<File | null>(null);
 
-  // OTP Fields (6 individual digits)
-  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  // OTP Fields (up to 8 digits to match Supabase 6-digit or 8-digit email tokens)
+  const OTP_MAX_DIGITS = 8;
+  const OTP_MIN_DIGITS = 6;
+  const [otpDigits, setOtpDigits] = useState<string[]>(() => Array(8).fill(''));
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [resendCountdown, setResendCountdown] = useState(0);
 
@@ -65,6 +77,15 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     setError(null);
     setResetEmailSent(false);
     setMode(nextMode);
+    setExpertSignupStep('account');
+    setVerificationStep('form');
+  };
+
+  const switchPortalRole = (nextRole: 'learner' | 'expert') => {
+    setError(null);
+    setResetEmailSent(false);
+    setPortalRole(nextRole);
+    setExpertSignupStep('account');
     setVerificationStep('form');
   };
 
@@ -118,12 +139,61 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         return;
       }
 
+      if (portalRole === 'expert' && expertSignupStep === 'account') {
+        setExpertDraft((prev) => ({ ...prev, display_name: fullName }));
+        setExpertSignupStep('expertise');
+        return;
+      }
+
+      if (portalRole === 'expert' && expertSignupStep === 'expertise') {
+        if (expertDraft.headline.trim().length < 3) {
+          setError('Enter your professional headline (at least 3 characters).');
+          return;
+        }
+        if (expertDraft.categories.length === 0) {
+          setError('Select at least one career category you mentor in.');
+          return;
+        }
+        setExpertSignupStep('credentials');
+        return;
+      }
+
+      if (portalRole === 'expert') {
+        if (!expertCvFile && expertDraft.cv_summary.trim().length < 10) {
+          setError('Upload your CV file or enter a brief CV summary (10+ characters).');
+          return;
+        }
+      }
+
       setIsLoading(true);
       try {
+        let expertDraftMeta: Omit<ExpertRegistrationDraft, 'cv_file_data_url'> | undefined;
+        if (portalRole === 'expert') {
+          let cvDataUrl: string | undefined;
+          if (expertCvFile) {
+            cvDataUrl = await fileToDataUrl(expertCvFile);
+          }
+          expertDraftMeta = {
+            ...expertDraft,
+            display_name: fullName,
+            experiences: expertDraft.experiences.filter((exp) => exp.title.trim() || exp.company.trim()),
+            cv_filename: expertCvFile?.name || expertDraft.cv_filename,
+          };
+          savePendingExpertDraft({
+            ...expertDraftMeta,
+            cv_file_data_url: cvDataUrl,
+          });
+        } else {
+          clearPendingExpertDraft();
+        }
+
         const res = await authService.signUp({
           email: email.trim(),
           password,
           fullName,
+          phone: phone.trim() || undefined,
+          accountRole: portalRole,
+          expertDraft: expertDraftMeta,
           rememberMe,
           legalConsentAccepted: agreeTerms,
         });
@@ -136,7 +206,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         if (res.needsEmailVerification) {
           setVerificationSource('signup');
           setResendCountdown(60);
-          setOtpDigits(['', '', '', '', '', '']);
+          setOtpDigits(Array(OTP_MAX_DIGITS).fill(''));
           setVerificationStep('otp');
           onToast(`Confirmation link sent to ${email.trim()}. Check your inbox to activate your account.`);
           return;
@@ -178,7 +248,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
 
       if (res.needsEmailVerification) {
         setVerificationSource('signin');
-        setOtpDigits(['', '', '', '', '', '']);
+        setOtpDigits(Array(OTP_MAX_DIGITS).fill(''));
         setVerificationStep('otp');
         setError(res.error || 'Verify your email before signing in.');
         return;
@@ -204,9 +274,9 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
       return;
     }
 
-    const code = codeOverride || otpDigits.join('').trim();
-    if (code.length < 6) {
-      setError('Please enter all 6 digits of your verification code.');
+    const code = (codeOverride || otpDigits.join('')).replace(/\D/g, '').trim();
+    if (code.length < OTP_MIN_DIGITS || code.length > OTP_MAX_DIGITS) {
+      setError(`Please enter all ${OTP_MIN_DIGITS} to ${OTP_MAX_DIGITS} digits of your verification code.`);
       return;
     }
 
@@ -218,6 +288,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         email: email.trim(),
         otp: code,
         fullName: fullName || undefined,
+        phone: phone.trim() || undefined,
         rememberMe,
         legalConsentAccepted: verificationSource === 'signup' ? agreeTerms : true,
         recordConsent: verificationSource === 'signup',
@@ -265,6 +336,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         email: email.trim(),
         password,
         fullName: fullName || undefined,
+        phone: phone.trim() || undefined,
         rememberMe,
         legalConsentAccepted: verificationSource === 'signup' ? agreeTerms : true,
         recordConsent: verificationSource === 'signup',
@@ -310,17 +382,15 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
 
   const handleOtpDigitChange = (index: number, val: string) => {
     if (val.length > 1) {
-      const clean = val.replace(/\D/g, '').slice(0, 6);
+      const clean = val.replace(/\D/g, '').slice(0, OTP_MAX_DIGITS);
       if (clean.length > 0) {
-        const nextDigits = [...otpDigits];
-        for (let i = 0; i < 6; i++) {
-          nextDigits[i] = clean[i] || '';
-        }
+        const nextDigits = Array.from({ length: OTP_MAX_DIGITS }, (_, i) => clean[i] || '');
         setOtpDigits(nextDigits);
-        if (clean.length === 6) {
+        setError(null);
+        if (clean.length === OTP_MAX_DIGITS) {
           void handleVerifyOtp(clean);
         } else {
-          otpInputRefs.current[Math.min(clean.length, 5)]?.focus();
+          otpInputRefs.current[Math.min(clean.length, OTP_MAX_DIGITS - 1)]?.focus();
         }
       }
       return;
@@ -332,13 +402,13 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     setOtpDigits(updated);
     setError(null);
 
-    if (digit && index < 5) {
+    if (digit && index < OTP_MAX_DIGITS - 1) {
       otpInputRefs.current[index + 1]?.focus();
     }
 
-    if (digit && index === 5) {
+    if (digit && index === OTP_MAX_DIGITS - 1) {
       const full = updated.join('');
-      if (full.length === 6) {
+      if (full.length === OTP_MAX_DIGITS) {
         void handleVerifyOtp(full);
       }
     }
@@ -365,7 +435,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         return;
       }
       setResendCountdown(60);
-      setOtpDigits(['', '', '', '', '', '']);
+      setOtpDigits(Array(OTP_MAX_DIGITS).fill(''));
       onToast(`Confirmation email resent to ${email.trim()}. Check your inbox or spam folder.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error resending verification email.');
@@ -382,7 +452,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await authService.signInWithSocial('google', rememberMe);
+      const res = await authService.signInWithSocial('google', rememberMe, portalRole);
       if (!res.success) {
         setError(res.error || 'Google sign-in could not be started.');
       }
@@ -415,13 +485,24 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
     }
   };
 
+  const isExpertMultiStep =
+    mode === 'signup' && portalRole === 'expert' && expertSignupStep !== 'account' && verificationStep === 'form';
+
   const submitLabel = isLoading
     ? mode === 'signup'
       ? 'Creating account...'
       : 'Signing in...'
     : mode === 'signup'
-      ? 'Create account'
-      : 'Sign in';
+      ? portalRole === 'expert' && expertSignupStep === 'account'
+        ? 'Continue to Expertise & Wage'
+        : portalRole === 'expert' && expertSignupStep === 'expertise'
+          ? 'Continue to Portfolio & CV'
+          : portalRole === 'expert'
+            ? 'Create Expert Account'
+            : 'Create account'
+      : portalRole === 'expert'
+        ? 'Sign in to Expert Dashboard'
+        : 'Sign in';
 
   return (
     <div className="auth-page-shell">
@@ -429,8 +510,9 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         className="auth-main-window"
         style={{
           width: '100%',
-          maxWidth: mode === 'signup' ? '1000px' : '940px',
-          minHeight: '600px',
+          maxWidth: isExpertMultiStep ? '1100px' : mode === 'signup' ? '1000px' : '940px',
+          height: 'min(760px, calc(100vh - 40px))',
+          minHeight: '560px',
           background: '#FFFFFF',
           borderRadius: '22px',
           boxShadow: '0 20px 50px -15px rgba(15, 23, 42, 0.1), 0 0 0 1px rgba(226, 232, 240, 0.85)',
@@ -445,7 +527,8 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
         <div
           className="auth-left-brand-panel"
           style={{
-            width: mode === 'signup' ? '42%' : '44%',
+            width: isExpertMultiStep ? '38%' : mode === 'signup' ? '42%' : '44%',
+            height: '100%',
             position: 'relative',
             background: '#0B1E38',
             overflow: 'hidden',
@@ -520,42 +603,82 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
           className="auth-right-form-panel"
           style={{
             flex: 1,
+            height: '100%',
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'center',
-            padding: '40px 48px',
+            padding: isExpertMultiStep ? '28px 44px 36px' : '32px 44px',
             boxSizing: 'border-box',
             position: 'relative',
             overflowY: 'auto',
           }}
         >
-          {mode === 'signup' && verificationStep === 'form' && (
-            <div
-              className="auth-top-switch-link"
-              style={{
-                position: 'absolute',
-                top: '28px',
-                right: '40px',
-                fontSize: '12.5px',
-                color: '#64748B',
-                fontWeight: 500,
-              }}
-            >
-              Already have an account?{' '}
-              <button
-                type="button"
-                className="auth-link-btn"
-                onClick={() => switchMode('signin')}
+          <div style={{ maxWidth: isExpertMultiStep ? '580px' : '420px', width: '100%', margin: isExpertMultiStep ? '0 auto' : 'auto', paddingBottom: '8px' }}>
+            {verificationStep === 'form' && !isExpertMultiStep && (
+              <div
+                role="tablist"
+                aria-label="Account portal type"
                 style={{
-                  fontSize: '12.5px',
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr',
+                  gap: '6px',
+                  padding: '4px',
+                  borderRadius: '12px',
+                  background: '#F1F5F9',
+                  border: '1px solid #E2E8F0',
+                  marginBottom: '18px',
                 }}
               >
-                Sign in
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={portalRole === 'learner'}
+                  onClick={() => switchPortalRole('learner')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    borderRadius: '9px',
+                    border: 'none',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    background: portalRole === 'learner' ? '#FFFFFF' : 'transparent',
+                    color: portalRole === 'learner' ? '#0F172A' : '#64748B',
+                    boxShadow: portalRole === 'learner' ? '0 1px 3px rgba(15, 23, 42, 0.08)' : 'none',
+                  }}
+                >
+                  <GraduationCap size={15} />
+                  <span>Learner Portal</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={portalRole === 'expert'}
+                  onClick={() => switchPortalRole('expert')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    borderRadius: '9px',
+                    border: 'none',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    background: portalRole === 'expert' ? '#123C69' : 'transparent',
+                    color: portalRole === 'expert' ? '#FFFFFF' : '#64748B',
+                    boxShadow: portalRole === 'expert' ? '0 1px 3px rgba(18, 60, 105, 0.25)' : 'none',
+                  }}
+                >
+                  <Briefcase size={15} />
+                  <span>Expert Portal</span>
+                </button>
+              </div>
+            )}
 
-          <div style={{ maxWidth: '420px', width: '100%', margin: '0 auto' }}>
             {mode === 'signup' && (
               <div
                 style={{
@@ -567,7 +690,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               >
                 <div
                   style={{
-                    width: '40px',
+                    width: '36px',
                     height: '4px',
                     borderRadius: '9999px',
                     background: ACCENT_BORDER,
@@ -575,13 +698,42 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 />
                 <div
                   style={{
-                    width: '40px',
+                    width: '36px',
                     height: '4px',
                     borderRadius: '9999px',
-                    background: verificationStep === 'otp' ? ACCENT_BORDER : '#E2E8F0',
+                    background:
+                      verificationStep === 'otp' ||
+                      (portalRole === 'expert' && (expertSignupStep === 'expertise' || expertSignupStep === 'credentials'))
+                        ? ACCENT_BORDER
+                        : '#E2E8F0',
                     transition: 'background 0.2s',
                   }}
                 />
+                {portalRole === 'expert' && (
+                  <>
+                    <div
+                      style={{
+                        width: '36px',
+                        height: '4px',
+                        borderRadius: '9999px',
+                        background:
+                          verificationStep === 'otp' || expertSignupStep === 'credentials'
+                            ? ACCENT_BORDER
+                            : '#E2E8F0',
+                        transition: 'background 0.2s',
+                      }}
+                    />
+                    <div
+                      style={{
+                        width: '36px',
+                        height: '4px',
+                        borderRadius: '9999px',
+                        background: verificationStep === 'otp' ? ACCENT_BORDER : '#E2E8F0',
+                        transition: 'background 0.2s',
+                      }}
+                    />
+                  </>
+                )}
                 <span
                   style={{
                     fontSize: '11px',
@@ -590,9 +742,46 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     marginLeft: '4px',
                   }}
                 >
-                  {verificationStep === 'form' ? 'Step 1 of 2' : 'Step 2 of 2'}
+                  {portalRole === 'expert'
+                    ? verificationStep === 'otp'
+                      ? 'Step 4 of 4'
+                      : expertSignupStep === 'credentials'
+                        ? 'Step 3 of 4'
+                        : expertSignupStep === 'expertise'
+                          ? 'Step 2 of 4'
+                          : 'Step 1 of 4'
+                    : verificationStep === 'form'
+                      ? 'Step 1 of 2'
+                      : 'Step 2 of 2'}
                 </span>
               </div>
+            )}
+
+            {isExpertMultiStep && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setExpertSignupStep(expertSignupStep === 'credentials' ? 'expertise' : 'account');
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  color: '#475569',
+                  cursor: 'pointer',
+                  padding: '0 0 12px 0',
+                }}
+              >
+                <ArrowLeft size={14} />
+                <span>
+                  {expertSignupStep === 'credentials' ? 'Back to expertise & hourly rate' : 'Back to personal details'}
+                </span>
+              </button>
             )}
 
             {verificationStep === 'otp' && (
@@ -632,22 +821,38 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               {verificationStep === 'otp'
                 ? 'Verify your email'
                 : mode === 'signup'
-                  ? 'Create your account'
-                  : 'Welcome back'}
+                  ? portalRole === 'expert'
+                    ? expertSignupStep === 'credentials'
+                      ? 'Portfolio, Experience & CV'
+                      : expertSignupStep === 'expertise'
+                        ? 'Expertise, Bio & Hourly Wage'
+                        : 'Join as an Industry Expert'
+                    : 'Create your account'
+                  : portalRole === 'expert'
+                    ? 'Expert Portal Sign In'
+                    : 'Welcome back'}
             </h1>
             <p
               style={{
                 fontSize: '13.5px',
                 color: '#64748B',
-                margin: '0 0 20px 0',
+                margin: '0 0 22px 0',
                 lineHeight: 1.5,
               }}
             >
               {verificationStep === 'otp'
                 ? `We sent a confirmation link to ${email.trim()}. Open your inbox and click the link to activate your account.`
                 : mode === 'signup'
-                  ? 'Start your personalized career roadmap.'
-                  : 'Sign in to continue your roadmap.'}
+                  ? portalRole === 'expert'
+                    ? expertSignupStep === 'credentials'
+                      ? 'Add your portfolio links, work history, and upload your current CV.'
+                      : expertSignupStep === 'expertise'
+                        ? 'Set your mentoring categories, meeting formats, and hourly session rate.'
+                        : 'Create your expert account to mentor learners 1-on-1 and earn per hour.'
+                    : 'Start your personalized career roadmap.'
+                  : portalRole === 'expert'
+                    ? 'Sign in to manage 1-on-1 sessions, availability, and your wallet.'
+                    : 'Sign in to continue your roadmap.'}
             </p>
 
             {error && (
@@ -796,7 +1001,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 >
                   <div style={{ flex: 1, height: '1px', background: '#E2E8F0' }} />
                   <span style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 500 }}>
-                    Or enter 6-digit code if shown
+                    Or enter email verification code
                   </span>
                   <div style={{ flex: 1, height: '1px', background: '#E2E8F0' }} />
                 </div>
@@ -810,21 +1015,25 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                       }}
                       type="text"
                       inputMode="numeric"
-                      aria-label={`Verification digit ${idx + 1} of 6`}
-                      maxLength={6}
+                      aria-label={`Verification digit ${idx + 1} of ${OTP_MAX_DIGITS}`}
+                      maxLength={OTP_MAX_DIGITS}
                       value={digit}
                       onChange={(e) => handleOtpDigitChange(idx, e.target.value)}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        handleOtpDigitChange(idx, e.clipboardData.getData('text'));
+                      }}
                       onKeyDown={(e) => handleOtpKeyDown(idx, e)}
                       autoComplete={idx === 0 ? 'one-time-code' : 'off'}
                       style={{
                         width: '100%',
                         minWidth: 0,
-                        height: '52px',
-                        borderRadius: '11px',
+                        height: '46px',
+                        borderRadius: '10px',
                         border: `1.5px solid ${digit ? ACCENT_BORDER : '#CBD5E1'}`,
                         background: digit ? '#F8FAFC' : '#FFFFFF',
                         color: '#0F172A',
-                        fontSize: '21px',
+                        fontSize: '18px',
                         fontWeight: 800,
                         textAlign: 'center',
                         outline: 'none',
@@ -838,17 +1047,17 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                 {otpDigits.join('').length > 0 && (
                   <button
                     type="submit"
-                    disabled={isLoading || otpDigits.join('').length < 6}
+                    disabled={isLoading || otpDigits.join('').length < OTP_MIN_DIGITS}
                     style={{
                       width: '100%',
                       padding: '11px 18px',
                       borderRadius: '11px',
                       border: '1px solid #CBD5E1',
-                      background: otpDigits.join('').length === 6 ? '#F1F5F9' : '#F8FAFC',
-                      color: otpDigits.join('').length === 6 ? '#0F172A' : '#94A3B8',
+                      background: otpDigits.join('').length >= OTP_MIN_DIGITS ? '#F1F5F9' : '#F8FAFC',
+                      color: otpDigits.join('').length >= OTP_MIN_DIGITS ? '#0F172A' : '#94A3B8',
                       fontSize: '13.5px',
                       fontWeight: 600,
-                      cursor: isLoading || otpDigits.join('').length < 6 ? 'not-allowed' : 'pointer',
+                      cursor: isLoading || otpDigits.join('').length < OTP_MIN_DIGITS ? 'not-allowed' : 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -856,12 +1065,23 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     }}
                   >
                     <CheckCircle2 size={15} />
-                    <span>Verify 6-digit code</span>
+                    <span>Verify {otpDigits.join('').length >= OTP_MIN_DIGITS ? `${otpDigits.join('').length}-digit ` : ''}code</span>
                   </button>
                 )}
               </form>
             ) : (
-              <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {isExpertMultiStep ? (
+                  <ExpertProfileFormFields
+                    draft={expertDraft}
+                    onChange={setExpertDraft}
+                    onCvFileSelected={setExpertCvFile}
+                    compact
+                    section={expertSignupStep === 'expertise' ? 'expertise' : 'credentials'}
+                    onError={setError}
+                  />
+                ) : (
+                <>
                 {mode === 'signup' && (
                   <div className="auth-name-row">
                     <div
@@ -922,6 +1142,36 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                         }}
                       />
                     </div>
+                  </div>
+                )}
+
+                {mode === 'signup' && portalRole === 'expert' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      background: '#FFFFFF',
+                      border: '1px solid #E2E8F0',
+                      borderRadius: '11px',
+                      padding: '10px 14px',
+                    }}
+                  >
+                    <input
+                      type="tel"
+                      autoComplete="tel"
+                      placeholder="Phone number (optional)"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      style={{
+                        border: 'none',
+                        outline: 'none',
+                        fontSize: '13px',
+                        color: '#0F172A',
+                        width: '100%',
+                        background: 'transparent',
+                      }}
+                    />
                   </div>
                 )}
 
@@ -1133,6 +1383,8 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     </div>
                   </div>
                 )}
+                </>
+                )}
 
                 <button
                   type="submit"
@@ -1155,7 +1407,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
               </form>
             )}
 
-            {verificationStep !== 'otp' && (
+            {verificationStep !== 'otp' && !isExpertMultiStep && (
               <>
                 <div
                   style={{
@@ -1188,8 +1440,10 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
             <div
               style={{
                 textAlign: 'center',
-                marginTop: '20px',
-                fontSize: '12.5px',
+                marginTop: '22px',
+                paddingTop: '16px',
+                borderTop: '1px solid #F1F5F9',
+                fontSize: '13px',
                 color: '#64748B',
               }}
             >
@@ -1201,31 +1455,26 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
                     className="auth-link-btn"
                     onClick={() => switchMode('signup')}
                     style={{
-                      fontSize: '12.5px',
+                      fontSize: '13px',
                     }}
                   >
                     Create one
                   </button>
                 </>
               ) : (
-                <div
-                  className={
-                    verificationStep === 'otp' ? 'auth-mobile-signin-bottom-visible' : 'auth-mobile-signin-bottom'
-                  }
-                  style={{ display: verificationStep === 'otp' ? 'block' : 'none' }}
-                >
+                <>
                   Already have an account?{' '}
                   <button
                     type="button"
                     className="auth-link-btn"
                     onClick={() => switchMode('signin')}
                     style={{
-                      fontSize: '12.5px',
+                      fontSize: '13px',
                     }}
                   >
                     Sign in
                   </button>
-                </div>
+                </>
               )}
             </div>
           </div>

@@ -14,38 +14,29 @@ const ROLE_TEMPLATE_TTL_DAYS = 90;
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 const GEMINI_TEXT_MODELS = [
-  'gemini-3.8-flash',
-  'gemini-4-hydrogen',
-  'gemini-3.6-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-flash-lite-latest',
+  'gemini-flash-latest',
   'gemini-3-flash-preview',
   'gemini-3.1-flash-lite-preview',
-  'gemini-flash-latest',
-  'gemini-flash-lite-latest',
-  'gemma-4-31b-it',
+  'gemini-2.0-flash',
 ];
 const GEMINI_TRANSCRIBE_MODELS = [
-  'gemini-3.5-transcribe',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash',
-  'gemini-3.6-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite-preview',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
   'gemini-flash-lite-latest',
+  'gemini-flash-latest',
 ];
 const GEMINI_TTS_MODELS = [
-  'gemini-3.8-flash-lite-tts',
-  'gemini-3.8-flash-tts',
   'gemini-2.5-flash-preview-tts',
 ];
 const GEMINI_LIVE_MODELS = [
-  'gemini-3.8-live',
-  'gemini-3.1-flash-live-preview',
   'gemini-2.5-flash-native-audio-latest',
   'gemini-2.5-flash-native-audio-preview-12-2025',
 ];
 const LIVE_VOICE_OPTIONS = new Set(['Aoede', 'Kore', 'Puck', 'Charon', 'Fenrir']);
+const lastWorkingModelByMode: Partial<Record<InterviewMode, string>> = {};
 
 const CAREER_CATEGORIES = [
   'Software & Web', 'AI & Data Science', 'Cloud & DevOps', 'Cybersecurity',
@@ -267,24 +258,25 @@ function instructionsFor(feature: Feature, interviewMode: InterviewMode): string
       return '';
     }
     if (interviewMode === 'converse') {
-      return `${shared} Conduct a realistic, intelligent human mock interview for the candidate's target_role.
+      return `${shared} Conduct a realistic, role-authentic technical mock interview specifically tailored to the candidate's target_role and core skills (listed inside "rubric").
 Rules:
-- Read "stage" ("opening", "warmup", "questioning", or "debrief"), "target_role", "experience_level", "focus_mode", "candidate_name", "question", "answer", "history", and "follow_up_count".
-- Speak like an attentive, sharp human hiring manager (Maya): concise, natural spoken phrasing, zero robotic boilerplate.
-- If stage is "opening": greet the candidate warmly by candidate_name (if provided), briefly frame the focus_mode interview for target_role, and invite a quick 30-second background intro of what they built or worked on recently. Return action="start_question" with reply under 65 words.
-- If stage is "warmup": warmly reference a specific project, stack, or detail from their answer, then transition naturally into Question 1 (use or adapt the supplied "question" so it feels connected to their background). Return action="start_question" with reply under 100 words.
+- Read "stage" ("opening", "warmup", "questioning", or "debrief"), "target_role", "experience_level", "focus_mode", "candidate_name", "question", "answer", "rubric", "history", and "follow_up_count".
+- Speak like a sharp domain specialist interviewing for target_role (Devon for Technical, Elena for System Design, Maya for Behavioral/Warmup): crisp, practical, zero generic boilerplate.
+- Keep technical terms, frameworks, runtime constraints, and follow-ups grounded specifically in target_role and role_skills—never switch stacks (e.g., never mention Node.js unless Node.js is their stack).
+- If stage is "opening": greet the candidate warmly by candidate_name (if provided), briefly frame the focus_mode interview for target_role, and invite a crisp 2-sentence project intro. Return action="start_question" with reply under 55 words.
+- If stage is "warmup": briefly acknowledge what they shared in one sentence, then pivot directly into Question 1 using the supplied "question" (or tightening its wording cleanly for target_role + their project context without drifting to an unrelated generic question). Return action="start_question" with reply under 85 words.
 - If stage is "questioning":
-  - If the candidate asks a clarifying question, asks for constraints/scope, or explicitly asks for a hint/steer ("[REQUEST_STEER]"), give a helpful, realistic steer without giving away the answer and return action="clarify" (reply under 95 words).
-  - If follow_up_count is 0 and their answer is brief, surface-level, uncertain, or skips key tradeoffs/edge cases/measurable impact, ask ONE sharp, supportive follow-up probe referencing what they just said and return action="ask_followup" (reply under 95 words).
-  - Otherwise (solid detailed answer OR follow_up_count >= 1), wrap up the question conversationally with constructive coaching feedback and return action="evaluate" with:
-    - reply: warm spoken wrap-up (under 85 words)
-    - score: integer 0-100 reflecting technical depth, structure, tradeoff reasoning, and concrete impact
+  - If the candidate asks a clarifying question, asks for constraints/scope, or explicitly asks for a hint/steer ("[REQUEST_STEER]"), give a helpful, realistic domain steer without giving away the solution and return action="clarify" (reply under 75 words).
+  - If follow_up_count is 0 and their answer is brief, surface-level, uncertain, or skips concrete mechanisms/tradeoffs/verification for target_role, ask ONE sharp role-specific follow-up probe referencing what they wrote and return action="ask_followup" (reply under 75 words).
+  - Otherwise (solid detailed answer OR follow_up_count >= 1), wrap up the question cleanly and return action="evaluate" with:
+    - reply: crisp spoken wrap-up (under 65 words)
+    - score: integer 0-100 reflecting domain accuracy, technical depth, tradeoff reasoning, and concrete validation
     - signal_label: "Strong Signal" (score >= 78) | "Solid Foundation" (56-77) | "Developing" (< 56)
-    - strengths: 1-3 specific things they did well
-    - growth_tip: 1 concrete, high-leverage improvement
-    - critique: 2-3 sentence holistic hiring-manager coaching note
-- If stage is "debrief": review the entire conversation in "history" (from text, voice, or live audio call) and return action="debrief" with:
-  - reply: 2-3 sentence executive summary referencing specific moments from the interview
+    - strengths: 1-3 specific things they demonstrated
+    - growth_tip: 1 concrete, high-leverage improvement for target_role
+    - critique: 2 concise sentences of technical coaching notes
+- If stage is "debrief": review the conversation in "history" and return action="debrief" with:
+  - reply: 2-3 sentence executive summary referencing specific technical moments from the interview
   - overall_score: integer 0-100
   - readiness_label: "Strong Hire Signal" | "Solid Progress" | "Promising Foundation"
   - dimensions: 3-4 objects [{"label":"Technical Depth"|"Problem Framing & Tradeoffs"|"Communication & Clarity"|"Ownership & Impact","score":0-100,"comment":"1 crisp sentence"}]
@@ -423,14 +415,17 @@ function shapeOutput(feature: Feature, interviewMode: InterviewMode, text: strin
 
 function buildGeminiModelChain(interviewMode: InterviewMode): string[] {
   const envPrimary = Deno.env.get('GEMINI_MODEL')?.trim();
+  const cachedWorking = lastWorkingModelByMode[interviewMode];
   const baseList = interviewMode === 'transcribe'
     ? GEMINI_TRANSCRIBE_MODELS
     : interviewMode === 'tts'
       ? GEMINI_TTS_MODELS
       : GEMINI_TEXT_MODELS;
-  const list = envPrimary && interviewMode !== 'transcribe' && interviewMode !== 'tts'
-    ? [envPrimary, ...baseList]
-    : [...baseList];
+  const list = [
+    ...(cachedWorking ? [cachedWorking] : []),
+    ...(envPrimary && interviewMode !== 'transcribe' && interviewMode !== 'tts' ? [envPrimary] : []),
+    ...baseList,
+  ];
   return [...new Set(list.filter(Boolean))];
 }
 
@@ -441,10 +436,11 @@ function buildLiveModelChain(): string[] {
 }
 
 function thinkingConfigForModel(model: string): Record<string, unknown> | undefined {
-  if (/^gemini-(?:3|4)/.test(model) && !model.includes('-tts') && !model.includes('transcribe')) {
+  if (model.includes('-tts') || model.includes('transcribe')) return undefined;
+  if (/^gemini-(?:3|4)/.test(model)) {
     return { thinkingLevel: 'minimal' };
   }
-  if (/^gemini-2\.5/.test(model) && !model.includes('-tts')) {
+  if (/^gemini-2\.5/.test(model) || model === 'gemini-flash-latest' || model === 'gemini-flash-lite-latest') {
     return { thinkingBudget: 0 };
   }
   return undefined;
@@ -501,10 +497,10 @@ async function generateWithGeminiFallbacks(params: {
   const serializedInput = JSON.stringify(inputPayload);
 
   for (let i = 0; i < models.length; i += 1) {
-    if (Date.now() - startedAt > 38_000) break;
+    if (Date.now() - startedAt > 22_000) break;
     const model = models[i];
     const isGemma = model.startsWith('gemma-');
-    const timeoutMs = i === 0 ? 10_000 : i === 1 ? 9_000 : 7_500;
+    const timeoutMs = i === 0 ? 6_000 : 5_000;
 
     const parts: Array<Record<string, unknown>> = [];
     if (interviewMode === 'transcribe') {
@@ -621,6 +617,7 @@ async function generateWithGeminiFallbacks(params: {
       }
 
       const shaped = shapeOutput(feature, interviewMode, rawText);
+      lastWorkingModelByMode[interviewMode] = model;
       const tokensIn = Math.max(0, Math.round(Number(data.usageMetadata?.promptTokenCount ?? Math.ceil(serializedInput.length / 4))));
       const tokensOut = Math.max(0, Math.round(Number(data.usageMetadata?.candidatesTokenCount ?? Math.ceil(rawText.length / 4))));
       return { modelResult: shaped, modelUsed: model, tokensIn, tokensOut };
@@ -818,8 +815,11 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       return response({ error: error instanceof Error ? error.message : 'Invalid request input.' }, 400);
     }
 
-    const { data: settings, error: settingsError } = await admin
-      .from('app_settings').select('value').eq('key', 'ai_enabled').maybeSingle();
+    const [settingsRes, profileRes] = await Promise.all([
+      admin.from('app_settings').select('value').eq('key', 'ai_enabled').maybeSingle(),
+      admin.from('profiles').select('plan').eq('id', user.id).maybeSingle(),
+    ]);
+    const { data: settings, error: settingsError } = settingsRes;
     if (settingsError) return response({ error: 'Could not verify AI availability.' }, 503);
     if (settings?.value === false) return response({ error: 'AI features are temporarily disabled.' }, 503);
 
@@ -827,10 +827,9 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     const openAiKey = Deno.env.get('OPENAI_API_KEY')?.trim();
     const openAiModel = Deno.env.get('OPENAI_MODEL')?.trim();
     const openAiEndpoint = (Deno.env.get('OPENAI_API_BASE_URL') || 'https://api.openai.com/v1').replace(/\/+$/, '');
-    const primaryCacheModel = geminiKey ? buildGeminiModelChain(interviewMode)[0] : openAiModel || 'gemini-3.5-flash';
+    const primaryCacheModel = geminiKey ? buildGeminiModelChain(interviewMode)[0] : openAiModel || 'gemini-2.5-flash';
 
-    const { data: profile, error: profileError } = await admin
-      .from('profiles').select('plan').eq('id', user.id).maybeSingle();
+    const { data: profile, error: profileError } = profileRes;
     if (profileError || !profile) return response({ error: 'Could not load your account plan.' }, 503);
     const userPlan = profile.plan === 'premium' ? 'premium' : 'free';
     const featureLimit = LIMITS[userPlan][feature];
@@ -932,14 +931,14 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     const maxOutputTokens = feature === 'role'
       ? 1400
       : feature === 'coach'
-        ? 650
+        ? 450
         : interviewMode === 'transcribe'
-          ? 1000
+          ? 700
           : interviewMode === 'converse'
-            ? 1100
+            ? (cleanInput.stage === 'debrief' ? 850 : 420)
             : feature === 'interview'
-              ? 900
-              : 450;
+              ? 700
+              : 400;
 
     let roleCacheKey: string | null = null;
     let cachedRoleResult: Record<string, unknown> | null = null;

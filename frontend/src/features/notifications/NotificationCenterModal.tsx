@@ -26,6 +26,15 @@ interface Props {
   onToast: (msg: string) => void;
 }
 
+function extractNotificationError(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (err && typeof err === 'object' && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
 export const NotificationCenterModal: React.FC<Props> = ({
   isOpen,
   onClose,
@@ -58,7 +67,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
         if (active) setLoadedResult({
           key: userKey,
           notifications: [],
-          error: e instanceof Error ? e.message : 'Could not load notifications.',
+          error: extractNotificationError(e, 'Could not load notifications.'),
         });
       });
     return () => { active = false; };
@@ -85,10 +94,20 @@ export const NotificationCenterModal: React.FC<Props> = ({
     setIsTesting(true);
     try {
       const sent = await notificationService.triggerTestReminder(tasks, profile);
+      if (sent) {
+        setPushStatus('enabled');
+        setSettings((prev) => ({ ...prev, push_enabled: true }));
+      }
       setLoadedResult({ key: userKey, notifications: await notificationService.listNotifications(profile.id, Boolean(profile.is_demo)), error: '' });
-      onToast(sent ? 'Sent test push notification and recorded in history.' : 'Recorded test notification in your history.');
+      onToast(
+        sent
+          ? 'Sent test push notification and recorded in history.'
+          : notificationService.getPermission() === 'denied'
+            ? 'Recorded in history. Allow notifications in browser site settings to receive push popups.'
+            : 'Recorded test notification in your history.'
+      );
     } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Could not send test notification.');
+      onToast(extractNotificationError(e, 'Could not send test notification.'));
     } finally {
       setIsTesting(false);
     }
@@ -100,7 +119,7 @@ export const NotificationCenterModal: React.FC<Props> = ({
       setLoadedResult({ key: userKey, notifications: await notificationService.listNotifications(profile.id, Boolean(profile.is_demo)), error: '' });
       onToast('Marked all notifications as read.');
     } catch (e) {
-      onToast(e instanceof Error ? e.message : 'Could not update notifications.');
+      onToast(extractNotificationError(e, 'Could not update notifications.'));
     }
   };
 

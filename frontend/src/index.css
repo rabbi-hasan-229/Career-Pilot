@@ -205,9 +205,99 @@ body {
     gap: 24px;
   }
 
-  .mobile-bottom-nav {
+  .mobile-bottom-nav,
+  .mobile-menu-trigger-btn,
+  .mobile-section-strip {
     display: none !important;
   }
+}
+
+/* Mobile Top Menu Button & Quick Section Switcher (< 1024px) */
+.mobile-menu-trigger-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--md-outline);
+  background: var(--md-surface);
+  color: var(--md-text-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-menu-trigger-btn:hover {
+  background: var(--md-surface-variant);
+}
+
+.mobile-section-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 12px;
+  margin-bottom: 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-section-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-section-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 9999px;
+  border: 1px solid var(--md-outline);
+  background: var(--md-surface);
+  color: var(--md-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.mobile-section-pill.active {
+  background: var(--md-primary);
+  color: #FFFFFF;
+  border-color: var(--md-primary);
+}
+
+.mobile-section-pill-badge {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.22);
+  color: inherit;
+}
+
+.mobile-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  background: rgba(15, 23, 42, 0.56);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: flex-start;
+}
+
+.mobile-drawer-panel {
+  width: min(84vw, 310px);
+  height: 100%;
+  background: var(--md-surface);
+  border-right: 1px solid var(--md-outline);
+  box-shadow: 12px 0 36px rgba(15, 23, 42, 0.18);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 14px calc(18px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  flex-direction: column;
 }
 
 /* Mobile Layout (< 1024px) */
@@ -639,11 +729,29 @@ body {
 
 .career-path-window {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
 }
 
 .career-custom-role-create {
   grid-template-columns: minmax(0, 1fr) minmax(180px, 0.75fr) auto;
+}
+
+@media (max-width: 900px) {
+  .career-path-body {
+    grid-template-columns: minmax(0, 1fr) !important;
+    overflow-y: auto !important;
+  }
+
+  .career-path-directory {
+    border-right: none !important;
+    border-bottom: 1px solid var(--md-outline);
+    overflow-y: visible !important;
+    flex-shrink: 0;
+  }
+
+  .career-path-config {
+    overflow-y: visible !important;
+  }
 }
 
 .auth-brand-header,
@@ -837,8 +945,8 @@ body {
 
 .auth-otp-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
   width: 100%;
   margin: 6px 0 8px 0;
 }
@@ -855,6 +963,8 @@ body {
     flex-direction: column !important;
     width: min(460px, 100%) !important;
     max-width: 460px !important;
+    height: auto !important;
+    max-height: none !important;
     border-radius: 22px !important;
     min-height: auto !important;
     margin: auto 0;
@@ -887,7 +997,6 @@ body {
 
   /* Career Path Modal Mobile */
   .career-path-window {
-    flex-direction: column !important;
     max-width: 100% !important;
     width: 100% !important;
     height: 100dvh !important;
@@ -895,26 +1004,25 @@ body {
     border-radius: 0 !important;
   }
 
-  .career-path-left-panel {
-    display: none !important;
+  .career-modal-search-row {
+    width: 100%;
   }
 
-  .career-path-right-panel {
-    padding: 16px 14px calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+  .career-modal-search-row > div {
+    flex: 1;
+    width: auto !important;
   }
 
   .career-role-cards-grid {
     grid-template-columns: 1fr !important;
-    max-height: 240px !important;
-  }
-
-  .career-controls-row {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
   }
 
   .career-timeline-presets {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .career-modal-footer {
+    padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)) !important;
   }
 }
 
@@ -929,7 +1037,7 @@ body {
   }
 
   .auth-otp-grid {
-    gap: 6px;
+    gap: 4px;
   }
 }
 
@@ -1514,20 +1622,131 @@ body {
   }
 }
 
+/* Job Market Unlocked Responsive Layout */
+.jm-unlocked-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.92fr) minmax(0, 1.35fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.jm-skills-card,
+.jm-circulars-card {
+  padding: 18px 20px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.jm-achieved-pill {
+  background: var(--md-surface-variant);
+  border: 1px solid var(--md-outline);
+  color: var(--md-text-primary);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1.25;
+}
+
+.jm-upcoming-row {
+  background: var(--md-surface-variant);
+  border: 1px solid var(--md-outline);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .jm-unlocked-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .jm-skills-card,
+  .jm-circulars-card {
+    padding: 14px;
+    gap: 12px;
+  }
+}
+
 /* ==========================================================================
    Skill Gap Job Search Form (Desktop & Mobile Responsive Grid)
    ========================================================================== */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .job-search-form {
   display: grid;
-  grid-template-columns: 122px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(154px, auto) minmax(0, 1fr) auto;
   gap: 8px;
-  margin-bottom: 10px;
-  align-items: stretch;
+  margin-bottom: 4px;
+  align-items: center;
+}
+
+.job-search-form.has-location {
+  grid-template-columns: minmax(154px, auto) minmax(0, 1fr) auto;
 }
 
 .job-search-field {
+  position: relative;
   min-width: 0;
   display: block;
+}
+
+.job-search-control {
+  width: 100%;
+  height: 40px;
+  box-sizing: border-box;
+  border: 1px solid var(--md-outline);
+  border-radius: 10px;
+  background: var(--md-surface);
+  color: var(--md-text-primary);
+  font-family: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.job-search-control:focus {
+  outline: none;
+  border-color: var(--md-primary);
+  box-shadow: 0 0 0 3px rgba(18, 60, 105, 0.12);
+}
+
+.job-search-select {
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.job-search-input-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--md-text-muted);
+  pointer-events: none;
+}
+
+.job-search-input-with-icon {
+  padding: 0 12px 0 36px;
 }
 
 .job-search-form.has-location .job-search-role-field {
@@ -1539,19 +1758,20 @@ body {
 }
 
 .job-search-submit-btn {
-  min-width: 104px;
-  min-height: 40px;
+  height: 40px;
+  min-width: 100px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: none;
-  border-radius: 8px;
-  padding: 0 14px;
+  border-radius: 10px;
+  padding: 0 16px;
   background: var(--md-primary);
   color: #ffffff;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
   transition: opacity 0.15s ease, background-color 0.15s ease;
 }
@@ -1565,32 +1785,69 @@ body {
   cursor: wait;
 }
 
-@media (max-width: 520px) {
+@media (max-width: 600px) {
   .job-search-form,
   .job-search-form.has-location {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
-  .job-search-form:not(.has-location) .job-search-type-field {
-    grid-column: 1 / -1;
-  }
-
+  .job-search-form:not(.has-location) .job-search-type-field,
   .job-search-form .job-search-role-field,
-  .job-search-form.has-location .job-search-role-field {
-    grid-column: 1 / -1;
-  }
-
-  .job-search-form.has-location .job-search-type-field {
-    grid-column: 1 / 2;
-  }
-
+  .job-search-form.has-location .job-search-role-field,
+  .job-search-form.has-location .job-search-type-field,
   .job-search-form.has-location .job-search-location-field {
-    grid-column: 2 / 3;
+    grid-column: 1 / -1;
   }
 
   .job-search-submit-btn {
     grid-column: 1 / -1;
     width: 100%;
+  }
+}
+
+/* ==========================================================================
+   Session Chat Inbox & Composer (Learner Drawer + Expert Dashboard Inbox)
+   ========================================================================== */
+.session-chat-inbox {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+}
+
+.session-chat-inbox-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--md-outline);
+  background: var(--md-surface);
+}
+
+.session-chat-inbox-thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.session-chat-composer:focus-within {
+  border-color: var(--md-primary) !important;
+  box-shadow: 0 0 0 3px rgba(18, 60, 105, 0.1);
+}
+
+@media (max-width: 780px) {
+  .session-chat-inbox {
+    grid-template-columns: 1fr;
+  }
+
+  .session-chat-inbox.showing-thread .session-chat-inbox-list {
+    display: none;
+  }
+
+  .session-chat-inbox:not(.showing-thread) .session-chat-inbox-thread {
+    display: none;
+  }
+
+  .session-chat-inbox-list {
+    border-right: none;
   }
 }
 
@@ -1904,9 +2161,8 @@ body {
     white-space: normal !important;
     overflow: visible !important;
     text-overflow: clip !important;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+    display: block !important;
+    line-height: 1.38 !important;
   }
 
   .ws-mobile-inline-detail {
@@ -1942,6 +2198,28 @@ body {
     justify-content: center;
   }
 }
+
+/* ============================================================================
+   Expert Marketplace, Booking & Wallet System
+   ============================================================================ */
+.expert-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+
+.wallet-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
+}
+
+.slot-pill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+}
+
 
 
 

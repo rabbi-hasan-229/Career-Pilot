@@ -2,9 +2,11 @@ import { lazy, Suspense, useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { BottomNav } from './components/BottomNav';
 import { DesktopSidebar } from './components/DesktopSidebar';
+import { LEARNER_CORE_NAV_ITEMS, LEARNER_TOOL_NAV_ITEMS } from './components/learnerNavItems';
+import { MobileNavDrawer, MobileSectionStrip } from './components/MobileNavDrawer';
 import { AppScreenSkeleton, WorkspaceSkeleton } from './components/SkeletonScreen';
 import { authService } from './features/auth/authService';
-import { addResourceTask, addSkillTask, completeTask, createRoadmap, loadActiveRoadmap, saveCareerPlan } from './features/roadmap/roadmapRepository';
+import { addResourceTask, addSkillTask, applyPlannerAction, completeTask, createRoadmap, loadActiveRoadmap, saveCareerPlan } from './features/roadmap/roadmapRepository';
 import { notificationService } from './features/notifications/notificationService';
 import { loadAIQuotaSummary, requestAI } from './features/ai/aiGateway';
 import type { AIQuotaSummary } from './features/ai/aiGateway';
@@ -12,8 +14,9 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { daysBetweenDateOnly, getLocalDateOnly } from './lib/dateOnly';
 import { getInitialTheme, applyTheme } from './lib/theme';
 import type { ThemeMode } from './lib/theme';
-import type { ActiveNavTab, Task, AICoachMessage, Profile, Milestone } from './types';
+import type { ActiveNavTab, Task, AICoachMessage, Profile, Milestone, ExpertProfile } from './types';
 import type { RolePlanOutline } from './features/roadmap/careerCatalog';
+import { expertRepository } from './features/experts/expertRepository';
 
 const RoadmapView = lazy(() => import('./features/roadmap/RoadmapView').then((module) => ({ default: module.RoadmapView })));
 const WeeklyScheduleView = lazy(() => import('./features/roadmap/WeeklyScheduleView').then((module) => ({ default: module.WeeklyScheduleView })));
@@ -24,6 +27,9 @@ const AICoachView = lazy(() => import('./features/coach/AICoachView').then((modu
 const InterviewSimulatorView = lazy(() => import('./components/InterviewSimulatorView').then((module) => ({ default: module.InterviewSimulatorView })));
 const CVBuilderView = lazy(() => import('./components/CVBuilderView').then((module) => ({ default: module.CVBuilderView })));
 const SkillGapView = lazy(() => import('./components/SkillGapView').then((module) => ({ default: module.SkillGapView })));
+const ExpertsMarketplaceView = lazy(() => import('./components/ExpertsMarketplaceView').then((module) => ({ default: module.ExpertsMarketplaceView })));
+const ExpertDashboardShell = lazy(() => import('./components/ExpertDashboardShell').then((module) => ({ default: module.ExpertDashboardShell })));
+const ExpertOnboardingView = lazy(() => import('./features/experts/ExpertOnboardingView').then((module) => ({ default: module.ExpertOnboardingView })));
 const CheckpointQuizModal = lazy(() => import('./features/roadmap/CheckpointQuizModal').then((module) => ({ default: module.CheckpointQuizModal })));
 const RoleQuestSelectorModal = lazy(() => import('./components/RoleQuestSelectorModal').then((module) => ({ default: module.RoleQuestSelectorModal })));
 const OnboardingGoalModal = lazy(() => import('./features/onboarding/OnboardingGoalModal').then((module) => ({ default: module.OnboardingGoalModal })));
@@ -34,7 +40,7 @@ const QuickActionSheetModal = lazy(() => import('./components/QuickActionSheetMo
 const ProfileSettingsModal = lazy(() => import('./components/ProfileSettingsModal').then((module) => ({ default: module.ProfileSettingsModal })));
 const SignOutModal = lazy(() => import('./components/SignOutModal').then((module) => ({ default: module.SignOutModal })));
 
-const APP_TABS: ActiveNavTab[] = ['home', 'plan', 'overview', 'coach', 'interview', 'cv', 'skills', 'profile'];
+const APP_TABS: ActiveNavTab[] = ['home', 'plan', 'overview', 'coach', 'interview', 'cv', 'skills', 'experts', 'profile'];
 
 function getTabFromUrl(): ActiveNavTab {
   const requestedTab = new URLSearchParams(window.location.search).get('view');
@@ -56,6 +62,7 @@ export function App() {
   const [isCoachSending, setIsCoachSending] = useState(false);
   const [aiQuota, setAIQuota] = useState<AIQuotaSummary | null>(null);
   const [earnedAchievements, setEarnedAchievements] = useState<Record<string, string>>({});
+  const [expertProfile, setExpertProfile] = useState<ExpertProfile | null | undefined>(undefined);
 
   // Modals & Sheets
   const [activeQuizTask, setActiveQuizTask] = useState<Task | null>(null);
@@ -63,6 +70,7 @@ export function App() {
   const [isQuickActionSheetOpen, setIsQuickActionSheetOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -129,6 +137,35 @@ export function App() {
 
   const syncWorkspace = async (userProfile: Profile): Promise<boolean> => {
     const requestId = ++workspaceRequestId.current;
+    if (userProfile.account_role === 'expert') {
+      setIsWorkspaceLoading(true);
+      setWorkspaceError(null);
+      try {
+        if (!userProfile.is_demo) {
+          const { data: authData } = await supabase.auth.getUser().catch(() => ({ data: { user: null } }));
+          await expertRepository
+            .completePendingRegistration(userProfile.id, userProfile.avatar_url, authData?.user?.user_metadata)
+            .catch(() => null);
+        }
+        const loadedExpert = await expertRepository.loadMyExpertProfile(userProfile.id);
+        if (requestId === workspaceRequestId.current) {
+          setExpertProfile(loadedExpert);
+          setMilestones([]);
+          setTasks([]);
+        }
+        return true;
+      } catch (err) {
+        console.error('Could not load expert profile:', err);
+        if (requestId === workspaceRequestId.current) {
+          setExpertProfile(null);
+        }
+        return true;
+      } finally {
+        if (requestId === workspaceRequestId.current) setIsWorkspaceLoading(false);
+      }
+    }
+
+    setExpertProfile(undefined);
     if (!userProfile.is_demo) {
       const { data, error } = await supabase
         .from('ai_coach_messages')
@@ -181,7 +218,12 @@ export function App() {
         );
         if (import.meta.env.DEV && userProfile.is_demo) {
           const { attachDemoCheckpointQuizzes } = await import('./features/roadmap/demoCheckpointQuizzes');
-          generatedTasks = attachDemoCheckpointQuizzes(generatedTasks);
+          generatedTasks = attachDemoCheckpointQuizzes(
+            generatedTasks,
+            generated,
+            userProfile.target_role,
+            userProfile.target_role_category
+          );
         }
         if (requestId === workspaceRequestId.current) {
           setMilestones(generated);
@@ -319,6 +361,7 @@ export function App() {
         activeUserIdRef.current = null;
         workspaceRequestId.current += 1;
         setProfile(null);
+        setExpertProfile(undefined);
         setEarnedAchievements({});
         setMilestones([]);
         setTasks([]);
@@ -403,15 +446,23 @@ export function App() {
         (payload) => {
           const row = payload.new as any;
           if (row?.id && row?.message) {
+            const incomingSender: 'user' | 'ai' = row.sender === 'user' ? 'user' : 'ai';
+            const mappedRow: AICoachMessage = {
+              id: row.id,
+              sender: incomingSender,
+              text: row.message,
+              timestamp: row.created_at || new Date().toISOString(),
+              proposal: row.proposal ?? undefined,
+            };
             setCoachMessages((prev) => {
               if (prev.some((m) => m.id === row.id)) return prev;
-              return [...prev, {
-                id: row.id,
-                sender: row.sender || 'assistant',
-                text: row.message,
-                timestamp: row.created_at || new Date().toISOString(),
-                proposal: row.proposal ?? undefined,
-              }];
+              const matchingOptimisticIndex = prev.findIndex(
+                (m) => m.id.startsWith('local-') && m.sender === incomingSender && m.text === row.message
+              );
+              if (matchingOptimisticIndex !== -1) {
+                return prev.map((m, idx) => (idx === matchingOptimisticIndex ? mappedRow : m));
+              }
+              return [...prev, mappedRow];
             });
           }
         }
@@ -450,6 +501,7 @@ export function App() {
     activeUserIdRef.current = null;
     await authService.signOut();
     setProfile(null);
+    setExpertProfile(undefined);
     setEarnedAchievements({});
     showToast('Signed out. Sign in to continue.');
   };
@@ -499,7 +551,12 @@ export function App() {
     }
   };
 
-  const reflectTaskCompletion = (taskId: string, doneAt: string): Milestone | null => {
+  const reflectTaskCompletion = (
+    taskId: string,
+    doneAt: string
+  ): { completedMilestone: Milestone | null; prevTasks: Task[]; prevMilestones: Milestone[] } => {
+    const prevTasks = tasks;
+    const prevMilestones = milestones;
     const updatedTasks = tasks.map((task) => task.id === taskId
       ? { ...task, done_at: doneAt, progress_pct: 100 }
       : task);
@@ -508,15 +565,17 @@ export function App() {
     const milestoneIndex = completedTask
       ? milestones.findIndex((milestone) => milestone.id === completedTask.milestone_id)
       : -1;
-    if (milestoneIndex < 0) return null;
+    if (milestoneIndex < 0) return { completedMilestone: null, prevTasks, prevMilestones };
     const milestoneTasks = updatedTasks.filter((task) => task.milestone_id === milestones[milestoneIndex].id);
-    if (milestoneTasks.length === 0 || milestoneTasks.some((task) => !task.done_at)) return null;
+    if (milestoneTasks.length === 0 || milestoneTasks.some((task) => !task.done_at)) {
+      return { completedMilestone: null, prevTasks, prevMilestones };
+    }
     setMilestones((previous) => previous.map((milestone, index) => {
       if (index === milestoneIndex) return { ...milestone, status: 'done' };
       if (index === milestoneIndex + 1 && milestone.status !== 'done') return { ...milestone, status: 'doing' };
       return milestone;
     }));
-    return milestones[milestoneIndex];
+    return { completedMilestone: milestones[milestoneIndex], prevTasks, prevMilestones };
   };
 
   const notifyMilestoneCompletion = (milestone: Milestone | null) => {
@@ -532,7 +591,9 @@ export function App() {
     });
   };
 
-  // Checkpoint Quiz Passing handler
+  const completingTaskIdsRef = useRef<Set<string>>(new Set());
+
+  // Checkpoint Quiz Passing handler (optimistic instant UI update)
   const handlePassCheckpoint = async (
     taskId: string,
     completion?: { persisted: boolean; currentStreak?: number }
@@ -540,25 +601,40 @@ export function App() {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !profile) return;
     const doneAt = new Date().toISOString();
+    const { completedMilestone, prevTasks, prevMilestones } = reflectTaskCompletion(taskId, doneAt);
+    notifyMilestoneCompletion(completedMilestone);
+    if (completion?.currentStreak !== undefined) {
+      setProfile((previous) => previous ? { ...previous, streak_days: completion.currentStreak! } : previous);
+    }
+    setActiveQuizTask(null);
+
+    if (profile.is_demo) {
+      showToast('Checkpoint completed.');
+      return;
+    }
+
+    completingTaskIdsRef.current.add(taskId);
     try {
       let currentStreak = completion?.currentStreak;
-      if (!profile.is_demo && !completion?.persisted) {
+      if (!completion?.persisted) {
         const saved = await completeTask(task.id);
         currentStreak = saved.current_streak ?? currentStreak;
       }
-      notifyMilestoneCompletion(reflectTaskCompletion(taskId, doneAt));
       if (currentStreak !== undefined) {
         setProfile((previous) => previous ? { ...previous, streak_days: currentStreak! } : previous);
       }
-      if (!profile.is_demo) await refreshEarnedAchievements(profile);
-      showToast('✨ Task marked complete.');
-      setActiveQuizTask(null);
+      void refreshEarnedAchievements(profile);
+      showToast('Checkpoint completed.');
     } catch {
+      setTasks(prevTasks);
+      setMilestones(prevMilestones);
       showToast('Could not save task progress. Please try again.');
+    } finally {
+      completingTaskIdsRef.current.delete(taskId);
     }
   };
 
-  // Direct Task Toggle
+  // Direct Task Toggle (instant optimistic update + background sync)
   const handleToggleTaskComplete = async (taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !profile) return;
@@ -566,72 +642,118 @@ export function App() {
       showToast('Completed tasks stay recorded in your progress history.');
       return;
     }
-    if (task.quiz && !task.done_at) {
-      setActiveQuizTask(task);
-      return;
-    }
-    if (task.type === 'Checkpoint' || /checkpoint/i.test(task.title)) {
-      const milestoneIndex = Math.max(0, milestones.findIndex((milestone) => milestone.id === task.milestone_id));
+    if (completingTaskIdsRef.current.has(taskId)) return;
+
+    const milestoneIndex = Math.max(0, milestones.findIndex((milestone) => milestone.id === task.milestone_id));
+    const currentMilestone = milestones[milestoneIndex];
+    const siblingTasks = tasks.filter((entry) => entry.milestone_id === task.milestone_id);
+
+    if (task.quiz || task.type === 'Checkpoint' || /checkpoint/i.test(task.title)) {
       const { createFallbackCheckpointQuiz } = await import('./features/roadmap/demoCheckpointQuizzes');
-      const fallbackQuiz = createFallbackCheckpointQuiz(
+      const smartQuiz = createFallbackCheckpointQuiz(
         task.id,
         task.title,
         profile.target_role,
         milestoneIndex,
         milestones.length,
         profile.target_role_category,
-        task.quiz_template_id
+        task.quiz_template_id,
+        currentMilestone,
+        siblingTasks,
+        task
       );
-      setActiveQuizTask({ ...task, quiz: fallbackQuiz });
+      setActiveQuizTask({ ...task, quiz: smartQuiz });
       return;
     }
+
     const doneAt = new Date().toISOString();
+    const { completedMilestone, prevTasks, prevMilestones } = reflectTaskCompletion(taskId, doneAt);
+    notifyMilestoneCompletion(completedMilestone);
+
+    if (profile.is_demo) return;
+
+    completingTaskIdsRef.current.add(taskId);
     try {
-      let currentStreak: number | null = null;
-      if (!profile.is_demo) {
-        const result = await completeTask(task.id);
-        currentStreak = result.current_streak;
+      const result = await completeTask(task.id);
+      if (result.current_streak !== null) {
+        setProfile((previous) => previous ? { ...previous, streak_days: result.current_streak! } : previous);
       }
-      notifyMilestoneCompletion(reflectTaskCompletion(taskId, doneAt));
-      if (currentStreak !== null) setProfile((previous) => previous ? { ...previous, streak_days: currentStreak! } : previous);
-      if (!profile.is_demo) await refreshEarnedAchievements(profile);
-      showToast('Task completed and progress saved.');
+      void refreshEarnedAchievements(profile);
     } catch {
+      setTasks(prevTasks);
+      setMilestones(prevMilestones);
       showToast('Could not save task progress. Please try again.');
+    } finally {
+      completingTaskIdsRef.current.delete(taskId);
     }
   };
 
+  const getErrorMessage = (error: unknown, fallback: string): string => {
+    if (error instanceof Error && error.message.trim()) return error.message;
+    if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+      const msg = (error as { message: string }).message.trim();
+      if (msg) return msg;
+    }
+    return fallback;
+  };
+
   // Re-planning Action handler
-  const handleApplyPlannerAction = async (action: 'behind' | 'early' | 'pause') => {
-    if (!profile) return;
+  const handleApplyPlannerAction = async (action: 'behind' | 'early' | 'pause'): Promise<boolean> => {
+    if (!profile) return false;
     if (profile.is_demo) {
       const { applyQuickPlannerAction } = await import('./features/roadmap/plannerEngine');
       const result = applyQuickPlannerAction(milestones, tasks, action);
       setMilestones(result.updatedMilestones);
       setTasks(result.updatedTasks);
       showToast(`Planner updated: ${result.message}`);
-      return;
+      return true;
     }
+
+    const previousMilestones = milestones;
+    const previousTasks = tasks;
+    const previousTargetDate = profile.target_completion_date;
+
     try {
-      const { data, error } = await supabase.rpc('apply_user_roadmap_action', { p_action_type: action });
-      if (error) throw error;
-      const { data: { user } } = await supabase.auth.getUser();
-      const refreshedProfile = user ? await authService.loadProfile(user) : null;
-      if (!refreshedProfile) throw new Error('Could not reload your updated career goal.');
-      setProfile(refreshedProfile);
-      if (!(await syncWorkspace(refreshedProfile))) throw new Error('Could not reload your updated roadmap.');
-      showToast(`Planner updated: ${(data as { message?: string })?.message || 'Schedule dates saved.'}`);
+      const { applyQuickPlannerAction } = await import('./features/roadmap/plannerEngine');
+      const preview = applyQuickPlannerAction(previousMilestones, previousTasks, action);
+      setMilestones(preview.updatedMilestones);
+      setTasks(preview.updatedTasks);
+
+      const outcome = await applyPlannerAction(profile.id, action, previousMilestones, previousTasks);
+      setMilestones(outcome.updatedMilestones);
+      setTasks(outcome.updatedTasks);
+      if (outcome.targetDate) {
+        setProfile((prev) => (prev ? { ...prev, target_completion_date: outcome.targetDate! } : prev));
+      }
+      showToast(`Planner updated: ${outcome.message || 'Schedule dates saved.'}`);
+      return true;
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not save the schedule change. Please try again.');
+      setMilestones(previousMilestones);
+      setTasks(previousTasks);
+      if (previousTargetDate) {
+        setProfile((prev) => (prev ? { ...prev, target_completion_date: previousTargetDate } : prev));
+      }
+      showToast(getErrorMessage(error, 'Could not save the schedule change. Please try again.'));
+      return false;
     }
+  };
+
+  const replaceOptimisticCoachMessage = (localId: string, saved: AICoachMessage) => {
+    setCoachMessages((previous) => {
+      if (previous.some((message) => message.id === saved.id)) {
+        return previous.filter((message) => message.id !== localId);
+      }
+      return previous.map((message) => (message.id === localId ? saved : message));
+    });
   };
 
   // Coach Send Message handler
   const handleSendCoachMessage = async (text: string) => {
     if (!profile || isCoachSending) return;
     setIsCoachSending(true);
-    let userMessage: AICoachMessage = {
-      id: `local-user-${crypto.randomUUID()}`,
+    const localUserId = `local-user-${crypto.randomUUID()}`;
+    const userMessage: AICoachMessage = {
+      id: localUserId,
       sender: 'user',
       text,
       timestamp: new Date().toISOString(),
@@ -654,38 +776,42 @@ export function App() {
       return;
     }
 
-    let canPersistCoachHistory = true;
-    try {
-      const savedUserMessage = await supabase
-        .from('ai_coach_messages')
-        .insert({ user_id: profile.id, sender: 'user', message: text })
-        .select('id,sender,message,proposal,created_at')
-        .single();
-      if (savedUserMessage.error) {
-        canPersistCoachHistory = false;
-      } else if (savedUserMessage.data) {
-        userMessage = {
+    const recentMessages = [...coachMessages.slice(-4), userMessage].map((message) => ({
+      sender: message.sender,
+      text: message.text.slice(0, 240),
+    }));
+
+    // Append the user's message immediately so it appears above the Thinking indicator.
+    setCoachMessages((previous) => [...previous, userMessage]);
+
+    const persistUserPromise = (async (): Promise<boolean> => {
+      try {
+        const savedUserMessage = await supabase
+          .from('ai_coach_messages')
+          .insert({ user_id: profile.id, sender: 'user', message: text })
+          .select('id,sender,message,proposal,created_at')
+          .single();
+        if (savedUserMessage.error || !savedUserMessage.data) {
+          return false;
+        }
+        replaceOptimisticCoachMessage(localUserId, {
           id: savedUserMessage.data.id,
-          sender: savedUserMessage.data.sender,
+          sender: savedUserMessage.data.sender === 'user' ? 'user' : 'ai',
           text: savedUserMessage.data.message,
           timestamp: savedUserMessage.data.created_at,
           proposal: undefined,
-        };
+        });
+        return true;
+      } catch {
+        return false;
       }
-    } catch {
-      canPersistCoachHistory = false;
-    }
-    setCoachMessages((previous) => [...previous, userMessage]);
+    })();
 
     try {
       const nextTasks = tasks.filter((task) => !task.done_at).slice(0, 5).map((task) => ({
         title: task.title,
         due_date: task.due_date,
         estimated_minutes: task.est_minutes,
-      }));
-      const recentMessages = [...coachMessages.slice(-5), userMessage].map((message) => ({
-        sender: message.sender,
-        text: message.text.slice(0, 400),
       }));
       const result = await requestAI<{ reply: string; proposal?: AICoachMessage['proposal'] | null }>('coach', {
         text,
@@ -707,26 +833,28 @@ export function App() {
         timestamp: new Date().toISOString(),
         proposal: result.response.proposal ?? undefined,
       }]);
+      const canPersistCoachHistory = await persistUserPromise;
       if (canPersistCoachHistory) {
         const { data: savedAIMessage, error: saveAIError } = await supabase
           .from('ai_coach_messages')
           .insert({ user_id: profile.id, sender: 'ai', message: aiText, proposal: result.response.proposal ?? null })
           .select('id,sender,message,proposal,created_at')
           .single();
-        if (saveAIError) {
+        if (saveAIError || !savedAIMessage) {
           showToast('Coach reply generated, but it could not be saved to your history.');
           return;
         }
-        setCoachMessages((previous) => previous.map((message) => message.id === localReplyId ? {
+        replaceOptimisticCoachMessage(localReplyId, {
           id: savedAIMessage.id,
           sender: 'ai',
           text: savedAIMessage.message,
           timestamp: savedAIMessage.created_at,
           proposal: savedAIMessage.proposal ?? undefined,
-        } : message));
+        });
       }
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'AI service unavailable.';
+      await persistUserPromise;
+      const detail = getErrorMessage(error, 'AI service unavailable.');
       setCoachMessages((previous) => [...previous, {
         id: `local-err-${crypto.randomUUID()}`,
         sender: 'ai',
@@ -831,6 +959,103 @@ export function App() {
   }
 
   // =========================================================================
+  // EXPERT PORTAL ROUTING
+  // Dedicated Expert Onboarding & Expert Dashboard System
+  // =========================================================================
+  if (profile.account_role === 'expert') {
+    const toastBanner = toastMessage ? (
+      <div
+        style={{
+          position: 'fixed',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 3000,
+          background: 'var(--md-surface, #FFFFFF)',
+          color: 'var(--md-text-primary, #1E293B)',
+          padding: '10px 22px',
+          borderRadius: '9999px',
+          fontSize: '13px',
+          fontWeight: 700,
+          boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+          border: '1px solid var(--md-outline, #E2E8F0)',
+          whiteSpace: 'nowrap',
+          animation: 'fadeIn 0.2s ease-out',
+        }}
+      >
+        {toastMessage}
+      </div>
+    ) : null;
+
+    if (!expertProfile || expertProfile.status === 'draft') {
+      return (
+        <>
+          {toastBanner}
+          <Suspense fallback={<AppScreenSkeleton variant="onboarding" label="Loading expert setup…" />}>
+            <ExpertOnboardingView
+              profile={profile}
+              onComplete={(saved) => setExpertProfile(saved)}
+              onSignOut={handleRequestSignOut}
+              onToast={showToast}
+            />
+          </Suspense>
+          <Suspense fallback={null}>
+            {isSignOutModalOpen && (
+              <SignOutModal
+                isOpen
+                onClose={() => setIsSignOutModalOpen(false)}
+                onConfirmSignOut={handleConfirmSignOut}
+              />
+            )}
+          </Suspense>
+        </>
+      );
+    }
+
+    return (
+      <>
+        {toastBanner}
+        <Suspense fallback={<AppScreenSkeleton variant="workspace" label="Loading Expert Dashboard…" />}>
+          <ExpertDashboardShell
+            profile={profile}
+            expertProfile={expertProfile}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            onExpertProfileUpdated={(updated) => {
+              setExpertProfile(updated);
+              if (updated.avatar_url && updated.avatar_url !== profile.avatar_url) {
+                void authService
+                  .updateProfile(profile, { avatar_url: updated.avatar_url })
+                  .then((saved) => setProfile(saved))
+                  .catch(() => undefined);
+              }
+            }}
+            onSignOut={handleRequestSignOut}
+            onDeleteAccount={async () => {
+              if (profile.is_demo) throw new Error('Development demo accounts cannot be deleted.');
+              activeUserIdRef.current = null;
+              await authService.deleteAccount();
+              setProfile(null);
+              setExpertProfile(undefined);
+              showToast('Your expert account and associated data were deleted.');
+            }}
+            onToast={showToast}
+          />
+        </Suspense>
+        <Suspense fallback={null}>
+          {isSignOutModalOpen && (
+            <SignOutModal
+              isOpen
+              onClose={() => setIsSignOutModalOpen(false)}
+              onConfirmSignOut={handleConfirmSignOut}
+            />
+          )}
+        </Suspense>
+      </>
+    );
+  }
+
+  // =========================================================================
   // POST-SIGNUP ONBOARDING WIZARD
   // User must set their career goal, timeline to achieve it, and daily pace.
   // =========================================================================
@@ -901,7 +1126,16 @@ export function App() {
             onOpenProfile={() => navigateToTab('profile')}
             onOpenNotifications={() => setIsNotificationsOpen(true)}
             onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+            onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
             onSignOut={handleRequestSignOut}
+          />
+
+          {/* Mobile Section Switcher (visible < 1024px so all pages are 1-tap reachable) */}
+          <MobileSectionStrip
+            items={[...LEARNER_CORE_NAV_ITEMS, ...LEARNER_TOOL_NAV_ITEMS]}
+            activeId={activeTab}
+            onSelect={(id) => navigateToTab(id as ActiveNavTab)}
+            ariaLabel="Mobile page sections"
           />
 
           <Suspense fallback={<WorkspaceSkeleton variant={activeTab} />}>
@@ -985,12 +1219,16 @@ export function App() {
               />
             )}
 
-            {/* VIEW: Skill-Gap & Vacancies Match */}
+            {/* VIEW: Job Market & Progression-Matched Global Circulars */}
             {activeTab === 'skills' && (
               <SkillGapView
+                key={profile.target_role}
                 userId={profile.id}
                 targetRole={profile.target_role}
                 targetRoleCategory={profile.target_role_category}
+                milestones={milestones}
+                tasks={tasks}
+                onNavigateToRoadmap={() => navigateToTab('home')}
                 onToast={showToast}
                 onAddSkillToRoadmap={async (skill) => {
                   await addSkillTask(profile.id, skill);
@@ -1001,6 +1239,15 @@ export function App() {
                   if (added) await syncWorkspace(profile);
                   return added;
                 }}
+              />
+            )}
+
+            {/* VIEW: Industry Experts Marketplace & 1-on-1 Sessions */}
+            {activeTab === 'experts' && (
+              <ExpertsMarketplaceView
+                profile={profile}
+                onOpenGoalSettings={() => setIsRoleModalOpen(true)}
+                onToast={showToast}
               />
             )}
 
@@ -1042,6 +1289,22 @@ export function App() {
         activeTab={activeTab}
         onChangeTab={navigateToTab}
         onOpenQuickAction={() => setIsQuickActionSheetOpen(true)}
+      />
+
+      <MobileNavDrawer
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        title="Career Pilot"
+        subtitle="Workspace"
+        activeId={activeTab}
+        onSelect={(id) => navigateToTab(id as ActiveNavTab)}
+        groups={[
+          { title: 'Navigation', items: LEARNER_CORE_NAV_ITEMS },
+          { title: 'Tools & Career Pages', items: LEARNER_TOOL_NAV_ITEMS },
+        ]}
+        roleLabel={profile.target_role}
+        onChangeRole={() => setIsRoleModalOpen(true)}
+        onSignOut={handleRequestSignOut}
       />
 
       <Suspense fallback={null}>
@@ -1099,7 +1362,7 @@ export function App() {
                 );
                 if (import.meta.env.DEV && profile.is_demo) {
                   const { attachDemoCheckpointQuizzes } = await import('./features/roadmap/demoCheckpointQuizzes');
-                  newTasks = attachDemoCheckpointQuizzes(newTasks);
+                  newTasks = attachDemoCheckpointQuizzes(newTasks, newMilestones, roleTitle, roleCategory);
                 }
                 let saved: { milestones: Milestone[]; tasks: Task[] };
                 if (profile.is_demo) {

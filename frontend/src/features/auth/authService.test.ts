@@ -519,6 +519,42 @@ describe('authService.verifySignUpOtp & resendVerificationEmail', () => {
     expect(result.success).toBe(true);
   });
 
+  it('verifies 8-digit signup OTP issued by Supabase Auth', async () => {
+    setupSupabaseTableMocks({
+      profileRow: createProfileRow({ id: 'user-2', email: 'eight@example.com', full_name: 'Alan Turing' }),
+    });
+
+    mockVerifyOtp.mockResolvedValue({
+      data: {
+        user: { id: 'user-2', email: 'eight@example.com', user_metadata: { full_name: 'Alan Turing' } },
+        session: { access_token: 'tok' },
+      },
+      error: null,
+    });
+
+    const result = await authService.verifySignUpOtp({
+      email: 'eight@example.com',
+      otp: '12345678',
+      fullName: 'Alan Turing',
+      legalConsentAccepted: true,
+    });
+
+    expect(mockVerifyOtp).toHaveBeenCalledWith({
+      email: 'eight@example.com',
+      token: '12345678',
+      type: 'signup',
+    });
+    expect(result.success).toBe(true);
+
+    const tooShort = await authService.verifySignUpOtp({
+      email: 'eight@example.com',
+      otp: '12345',
+      legalConsentAccepted: true,
+    });
+    expect(tooShort.success).toBe(false);
+    expect(tooShort.error).toContain('6 to 8-digit');
+  });
+
   it('calls supabase.auth.resend with type signup and emailRedirectTo', async () => {
     mockResend.mockResolvedValue({ data: {}, error: null });
 

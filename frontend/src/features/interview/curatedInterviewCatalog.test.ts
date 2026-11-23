@@ -133,6 +133,18 @@ describe('curatedInterviewCatalog', () => {
       const hint = getQuestionCoachingHint(feQuestions[0], 'Frontend Engineer');
       expect(hint.trim().length).toBeGreaterThan(20);
     });
+
+    it('prioritizes Python-specific questions when targetRole is Python Software Engineer with role skills', () => {
+      const pyQuestions = getRoleTailoredInterviewQuestions(
+        'Software & Web',
+        'Python Software Engineer',
+        undefined,
+        ['Python 3.12', 'FastAPI', 'Django', 'SQLAlchemy', 'PyTest', 'Asyncio']
+      );
+
+      expect(pyQuestions[0].id).toMatch(/^spec-py-/);
+      expect(pyQuestions.slice(0, 4).every((q) => q.id.startsWith('spec-py-'))).toBe(true);
+    });
   });
 });
 
