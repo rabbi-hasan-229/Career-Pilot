@@ -5,6 +5,7 @@ import type { CareerCategory } from './careerCatalog';
 import type { CareerOption } from './careerCatalog';
 import type { RolePlanOutline } from './careerCatalog';
 import { getCheckpointQuizTemplateId } from './checkpointQuizCatalog';
+import { sortRoadmapTasks } from './stageTaskOrder';
 
 export interface PlanCalculationResult {
   totalEffortHours: number;
@@ -1217,7 +1218,7 @@ export function generateTasksForMilestones(
     });
   });
 
-  return tasks;
+  return sortRoadmapTasks(tasks, milestones);
 }
 
 export interface PlannerActionResult {

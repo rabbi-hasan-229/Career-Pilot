@@ -2,6 +2,8 @@ import { supabase } from '../../lib/supabase';
 import { getLocalDateOnly } from '../../lib/dateOnly';
 import { authService } from '../auth/authService';
 import type { Milestone, Profile, Task, TaskQuiz } from '../../types';
+import { applyQuickPlannerAction } from './plannerEngine';
+import { sortRoadmapTasks } from './stageTaskOrder';
 
 type DatabaseMilestone = {
   id: string;
@@ -284,11 +286,13 @@ export async function loadActiveRoadmap(
     }
   }
 
+  const mappedTasks = dbTasks.map((task) =>
+    toTask(task, positionByMilestoneId.get(task.milestone_id) ?? 0, metaCache, quizByTask.get(task.id))
+  );
+
   return {
     milestones,
-    tasks: dbTasks.map((task) =>
-      toTask(task, positionByMilestoneId.get(task.milestone_id) ?? 0, metaCache, quizByTask.get(task.id))
-    ),
+    tasks: sortRoadmapTasks(mappedTasks, milestones, { normalizeWorkflow: true }),
     targetDate: roadmap.target_date,
   };
 }
@@ -637,4 +641,98 @@ export async function addResourceTask(
   }
   if (error) throw error;
   return true;
+}
+
+export interface ApplyPlannerActionOutcome {
+  updatedMilestones: Milestone[];
+  updatedTasks: Task[];
+  targetDate?: string;
+  message: string;
+}
+
+export async function applyPlannerAction(
+  userId: string,
+  action: 'behind' | 'early' | 'pause',
+  milestones: Milestone[],
+  tasks: Task[]
+): Promise<ApplyPlannerActionOutcome> {
+  const planned = applyQuickPlannerAction(milestones, tasks, action);
+  const { data, error } = await supabase.rpc('apply_user_roadmap_action', { p_action_type: action });
+
+  if (!error) {
+    const rpcPayload = (data ?? {}) as { day_shift?: number; target_date?: string; message?: string };
+    const noShiftApplied = rpcPayload.day_shift === 0;
+    return {
+      updatedMilestones: noShiftApplied ? milestones : planned.updatedMilestones,
+      updatedTasks: noShiftApplied ? tasks : planned.updatedTasks,
+      targetDate: rpcPayload.target_date,
+      message: rpcPayload.message || planned.message,
+    };
+  }
+
+  const shouldFallbackToTables =
+    isSchemaMismatchError(error) || /no active roadmap/i.test(error.message || '');
+  if (!shouldFallbackToTables) {
+    throw error;
+  }
+
+  const previousMilestonesById = new Map(milestones.map((milestone) => [milestone.id, milestone]));
+  const changedMilestones = planned.updatedMilestones.filter((milestone) => {
+    const prev = previousMilestonesById.get(milestone.id);
+    return !prev || prev.start_date !== milestone.start_date || prev.end_date !== milestone.end_date;
+  });
+
+  for (const milestone of changedMilestones) {
+    const { error: milestoneError } = await supabase
+      .from('milestones')
+      .update({ start_date: milestone.start_date, end_date: milestone.end_date })
+      .eq('id', milestone.id)
+      .eq('user_id', userId);
+    if (milestoneError) throw milestoneError;
+  }
+
+  const previousTasksById = new Map(tasks.map((task) => [task.id, task]));
+  const changedTasks = planned.updatedTasks.filter((task) => {
+    const prev = previousTasksById.get(task.id);
+    return !prev || prev.due_date !== task.due_date;
+  });
+
+  for (const task of changedTasks) {
+    const { error: taskError } = await supabase
+      .from('tasks')
+      .update({ due_date: task.due_date })
+      .eq('id', task.id)
+      .eq('user_id', userId);
+    if (taskError) throw taskError;
+  }
+
+  const nextTargetDate = planned.updatedMilestones.reduce<string | undefined>(
+    (latest, milestone) => (!latest || milestone.end_date > latest ? milestone.end_date : latest),
+    undefined
+  );
+
+  if (nextTargetDate) {
+    const roadmapId = planned.updatedMilestones[0]?.roadmap_id;
+    if (roadmapId) {
+      const { error: roadmapError } = await supabase
+        .from('user_roadmaps')
+        .update({ target_date: nextTargetDate })
+        .eq('id', roadmapId)
+        .eq('user_id', userId);
+      if (roadmapError && !isSchemaMismatchError(roadmapError)) throw roadmapError;
+    }
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .update({ target_completion_date: nextTargetDate })
+      .eq('id', userId);
+    if (profileError && !isSchemaMismatchError(profileError)) throw profileError;
+  }
+
+  return {
+    updatedMilestones: planned.updatedMilestones,
+    updatedTasks: planned.updatedTasks,
+    targetDate: nextTargetDate,
+    message: planned.message,
+  };
 }

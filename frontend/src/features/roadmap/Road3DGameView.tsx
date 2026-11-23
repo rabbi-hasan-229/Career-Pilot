@@ -1,8 +1,15 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import confetti from 'canvas-confetti';
-import { Bell, Compass, Send } from 'lucide-react';
+import { Award, Bell, Compass, Send, Sparkles, X } from 'lucide-react';
 import type { Milestone, Task, Profile } from '../../types';
 import { notificationService } from '../notifications/notificationService';
+import {
+  computeRoadmapProgressPct,
+  getJourneyCheckpointMap,
+  JOURNEY_CHECKPOINTS,
+  type JourneyCheckpointPercent,
+} from './roadmapProgressMilestones';
+import { sortStageTasks } from './stageTaskOrder';
 
 // ─── Props ─────────────────────────────────────────────────────────────────────
 interface Props {
@@ -313,6 +320,39 @@ function StepIcon({ name }: { name: IconName }) {
   );
 }
 
+// ─── Final Stage Checkered Race Flag Pole ──────────────────────────────────────
+function FinishRaceFlagPole({ compact = false }: { compact?: boolean }) {
+  return (
+    <span
+      className={`rp-finish-pole-wrap ${compact ? 'compact' : ''}`}
+      aria-hidden="true"
+    >
+      <svg
+        viewBox="0 0 40 38"
+        className="rp-finish-flag-svg"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        {/* Pole shaft in bright metallic-mint */}
+        <rect x="6" y="4" width="3.2" height="33" rx="1.6" fill="#F8FAFC" stroke="#16A34A" strokeWidth="1" />
+        {/* Golden top finial */}
+        <circle cx="7.6" cy="4" r="2.6" fill="#F59E0B" stroke="#FFFFFF" strokeWidth="1" />
+        {/* Checkered racing flag */}
+        <g transform="translate(9, 5)">
+          <rect x="0" y="0" width="26" height="17" rx="2.5" fill="#FFFFFF" stroke="#0F172A" strokeWidth="1.2" />
+          {/* 4x3 checkered squares */}
+          <rect x="1" y="1" width="6" height="5" fill="#0F172A" />
+          <rect x="13" y="1" width="6" height="5" fill="#0F172A" />
+          <rect x="7" y="6" width="6" height="5" fill="#0F172A" />
+          <rect x="19" y="6" width="6" height="5" fill="#0F172A" />
+          <rect x="1" y="11" width="6" height="5" fill="#0F172A" />
+          <rect x="13" y="11" width="6" height="5" fill="#0F172A" />
+        </g>
+      </svg>
+    </span>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -327,6 +367,9 @@ export const Road3DGameView: React.FC<Props> = ({
 }) => {
   const [announcement, setAnnouncement] = useState('');
   const [expandedMilestones, setExpandedMilestones] = useState<Record<string, boolean>>({});
+  const [celebrationPopup, setCelebrationPopup] = useState<JourneyCheckpointPercent | null>(null);
+
+  const checkpointMap = useMemo(() => getJourneyCheckpointMap(milestones.length), [milestones.length]);
 
   const showAnnouncement = useCallback((msg: string) => {
     setAnnouncement(msg);
@@ -334,12 +377,12 @@ export const Road3DGameView: React.FC<Props> = ({
   }, []);
 
   const getTasksForMilestone = useCallback((milestoneId: string): Task[] => {
-    return tasks.filter((t) => t.milestone_id === milestoneId);
+    return sortStageTasks(tasks.filter((t) => t.milestone_id === milestoneId));
   }, [tasks]);
 
   const totalTaskCount = tasks.length;
   const completedCount = tasks.filter((t) => t.done_at != null).length;
-  const overallPct = totalTaskCount > 0 ? Math.round((completedCount / totalTaskCount) * 100) : 0;
+  const overallPct = useMemo(() => computeRoadmapProgressPct(milestones, tasks), [milestones, tasks]);
 
   const roleName = profile?.target_role || 'Career';
 
@@ -360,7 +403,7 @@ export const Road3DGameView: React.FC<Props> = ({
 
   const handleTaskClick = useCallback((task: Task, e: React.MouseEvent) => {
     const wasDone = task.done_at != null;
-    const requiresQuiz = task.type === 'Checkpoint' || Boolean(task.quiz);
+    const requiresQuiz = task.type === 'Checkpoint' || /checkpoint/i.test(task.title) || Boolean(task.quiz);
     onToggleTaskComplete(task.id);
     if (!wasDone && !requiresQuiz) {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -469,6 +512,58 @@ export const Road3DGameView: React.FC<Props> = ({
       prevStoppageRef.current = activeStoppageIndex;
     }
   }, [activeStoppageIndex, showAnnouncement]);
+
+  // ── 20 / 50 / 80 / 100% Milestone Stage Completion Celebrations ─────────────
+  const getCompletedCheckpointsSnapshot = useCallback((): JourneyCheckpointPercent[] => {
+    const done: JourneyCheckpointPercent[] = [];
+    milestones.forEach((m, idx) => {
+      const cp = checkpointMap.get(idx);
+      if (!cp) return;
+      const mTasks = tasks.filter((t) => t.milestone_id === m.id);
+      if (mTasks.length > 0 && mTasks.every((t) => t.done_at != null)) {
+        done.push(cp);
+      }
+    });
+    return done;
+  }, [milestones, tasks, checkpointMap]);
+
+  const seenCheckpointsRef = useRef<{ signature: string; tiers: Set<JourneyCheckpointPercent> }>({
+    signature: '',
+    tiers: new Set(),
+  });
+
+  useEffect(() => {
+    const signature = milestones.map((m) => m.id).join('|');
+    const currentlyDone = getCompletedCheckpointsSnapshot();
+
+    // Initialize baseline silently when mounting or switching roadmap role
+    if (seenCheckpointsRef.current.signature !== signature) {
+      seenCheckpointsRef.current = {
+        signature,
+        tiers: new Set(currentlyDone),
+      };
+      return;
+    }
+
+    const newlyCompleted = currentlyDone.filter((pct) => !seenCheckpointsRef.current.tiers.has(pct));
+    if (newlyCompleted.length === 0) return;
+
+    for (const pct of newlyCompleted) {
+      seenCheckpointsRef.current.tiers.add(pct);
+    }
+
+    const highestNew = Math.max(...newlyCompleted) as JourneyCheckpointPercent;
+    const timer = window.setTimeout(() => {
+      setCelebrationPopup(highestNew);
+      confetti({
+        particleCount: highestNew === 100 ? 95 : 65,
+        spread: highestNew === 100 ? 90 : 72,
+        origin: { x: 0.5, y: 0.42 },
+        colors: ['#10B981', '#3B82F6', '#F59E0B', '#14B8A6', '#FFFFFF'],
+      });
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [milestones, getCompletedCheckpointsSnapshot]);
 
   // ── Road Bézier Segments & Car Progression Along the Asphalt ─────────────
   const isAllComplete = useMemo(() => {
@@ -750,6 +845,9 @@ export const Road3DGameView: React.FC<Props> = ({
             const isCompleted = milestoneTasks.length > 0 && doneCount === milestoneTasks.length;
             const isCurrentStoppage = index === activeStoppageIndex && !isAllComplete;
             const isTargetStop = isAllComplete ? index === milestones.length - 1 : isCurrentStoppage;
+            const isFinalStage = index === milestones.length - 1;
+            const checkpointPct = checkpointMap.get(index);
+            const stagePct = milestones.length > 0 ? Math.round(((index + 1) / milestones.length) * 100) : 0;
 
             return (
               <div
@@ -758,12 +856,26 @@ export const Road3DGameView: React.FC<Props> = ({
                 className="rp-mobile-stage-row"
               >
                 <div className="rp-mobile-track-col">
+                {isFinalStage ? (
                   <div
-                    className={`rp-mobile-pin ${index % 2 === 0 ? 'blue' : 'purple'} ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
-                    aria-label={`Stage ${String(index + 1).padStart(2, '0')}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
+                    className={`rp-mobile-finish-node ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                    aria-label={`Final Stage: Finish Line Flag${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
+                  >
+                    <FinishRaceFlagPole compact />
+                  </div>
+                ) : (
+                  <div
+                    className={`rp-mobile-pin ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                    aria-label={`Stage ${String(index + 1).padStart(2, '0')}${checkpointPct ? ` (${checkpointPct}% Milestone)` : ''}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
                   >
                     <span>{String(index + 1).padStart(2, '0')}</span>
                   </div>
+                )}
+                  {checkpointPct && (
+                    <span className={`rp-mobile-pct-chip tier-${checkpointPct}`}>
+                      {checkpointPct}%
+                    </span>
+                  )}
                   {isTargetStop && (
                     <button
                       type="button"
@@ -781,12 +893,19 @@ export const Road3DGameView: React.FC<Props> = ({
                 </div>
 
                 <article
-                  className={`rp-mobile-stage-card ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                  className={`rp-mobile-stage-card ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''} ${isFinalStage ? 'is-finish' : ''}`}
                 >
                   <div className="rp-card-header">
                     <div className="rp-card-title-group">
                       <div className="rp-mobile-kicker-row">
-                        <span className="rp-card-step-kicker">Stage {String(index + 1).padStart(2, '0')}</span>
+                        <span className="rp-card-step-kicker">
+                          Stage {String(index + 1).padStart(2, '0')} · {stagePct}%
+                        </span>
+                        {checkpointPct && (
+                          <span className={`rp-stage-checkpoint-pill tier-${checkpointPct}`}>
+                            {JOURNEY_CHECKPOINTS[checkpointPct].stageLabel}
+                          </span>
+                        )}
                         {isCurrentStoppage && (
                           <span className="rp-mobile-status-pill current">CURRENT STOP</span>
                         )}
@@ -797,7 +916,7 @@ export const Road3DGameView: React.FC<Props> = ({
                       <h2>{milestone.title}</h2>
                     </div>
                     <div className="rp-card-icon-badge">
-                      <StepIcon name={iconName} />
+                      <StepIcon name={isFinalStage ? 'flag' : iconName} />
                     </div>
                   </div>
 
@@ -916,6 +1035,9 @@ export const Road3DGameView: React.FC<Props> = ({
             const isCompleted = milestoneTasks.length > 0 && doneCount === milestoneTasks.length;
             const isCurrentStoppage = index === activeStoppageIndex && !isAllComplete;
             const isTargetStop = isAllComplete ? index === milestones.length - 1 : isCurrentStoppage;
+            const isFinalStage = index === milestones.length - 1;
+            const checkpointPct = checkpointMap.get(index);
+            const stagePct = milestones.length > 0 ? Math.round(((index + 1) / milestones.length) * 100) : 0;
 
             const cardStyle: CSSProperties = {
               left: toPctX(cardX),
@@ -926,46 +1048,119 @@ export const Road3DGameView: React.FC<Props> = ({
 
             return (
               <div className="rp-goal-layer" key={`${index}-${milestone.id}`}>
-                {/* Milestone Pin on the road apex */}
-                <div
-                  ref={isTargetStop ? currentStopRef : null}
-                  className={`rp-milestone ${index % 2 === 0 ? 'blue' : 'purple'} ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
-                  style={{
-                    left: toPctX(pinX),
-                    top: toPctY(pinY),
-                  }}
-                  aria-label={`Stage ${String(index + 1).padStart(2, '0')}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
-                >
-                  <span className="rp-milestone-num">{String(index + 1).padStart(2, '0')}</span>
+                {/* Milestone Pin OR Standalone Final Race Flag Pole on the road apex */}
+                {isFinalStage ? (
+                  <div
+                    ref={isTargetStop ? currentStopRef : null}
+                    className={`rp-finish-flag-node ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                    style={{
+                      left: toPctX(pinX),
+                      top: toPctY(pinY),
+                    }}
+                    aria-label={`Final Stage Finish Flag (100%)${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
+                  >
+                    <svg
+                      viewBox="0 0 64 78"
+                      className="rp-finish-flag-hero-svg"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      aria-hidden="true"
+                    >
+                      {/* Checkered race ground pad on the road */}
+                      <ellipse cx="22" cy="70" rx="14" ry="5" fill="#16A34A" fillOpacity="0.28" stroke="#22C55E" strokeWidth="1.5" />
+                      {/* Tall sleek flag pole */}
+                      <rect x="20" y="10" width="4" height="60" rx="2" fill="#F8FAFC" stroke="#1E293B" strokeWidth="1.2" />
+                      <circle cx="22" cy="8.5" r="3.6" fill="#F59E0B" stroke="#FFFFFF" strokeWidth="1.2" />
+                      {/* Waving 4x3 Checkered Racing Flag */}
+                      <g transform="translate(24, 12)">
+                        <path
+                          d="M0 1 C9 -2 19 4 36 1 V25 C19 28 9 22 0 25 Z"
+                          fill="#FFFFFF"
+                          stroke="#0F172A"
+                          strokeWidth="1.4"
+                        />
+                        <rect x="1.5" y="2.5" width="8.5" height="6.8" fill="#0F172A" />
+                        <rect x="18.5" y="2.5" width="8.5" height="6.8" fill="#0F172A" />
+                        <rect x="10" y="9.3" width="8.5" height="6.8" fill="#0F172A" />
+                        <rect x="27" y="9.3" width="7.5" height="6.8" fill="#0F172A" />
+                        <rect x="1.5" y="16.1" width="8.5" height="6.8" fill="#0F172A" />
+                        <rect x="18.5" y="16.1" width="8.5" height="6.8" fill="#0F172A" />
+                      </g>
+                    </svg>
 
-                  {/* Completed Checkmark Badge */}
-                  {isCompleted && (
-                    <span className="rp-milestone-completed-badge" aria-label="Completed" title="Completed Stage">
-                      <svg viewBox="0 0 16 16" fill="none" className="rp-badge-check-svg">
-                        <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                    {isCompleted && (
+                      <span className="rp-milestone-completed-badge" aria-label="Completed" title="Completed Final Stage">
+                        <svg viewBox="0 0 16 16" fill="none" className="rp-badge-check-svg">
+                          <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    )}
+
+                    <span className={`rp-stoppage-pill ${isCompleted ? 'completed' : 'finish'}`}>
+                      {isCompleted ? 'COMPLETED · 100%' : '100% FINISH'}
                     </span>
-                  )}
+                  </div>
+                ) : (
+                  <div
+                    ref={isTargetStop ? currentStopRef : null}
+                    className={`rp-milestone ${isCurrentStoppage ? 'current-stoppage' : ''} ${isCompleted ? 'completed' : ''}`}
+                    style={{
+                      left: toPctX(pinX),
+                      top: toPctY(pinY),
+                    }}
+                    aria-label={`Stage ${String(index + 1).padStart(2, '0')}${checkpointPct ? ` (${checkpointPct}% Milestone)` : ''}${isCompleted ? ' - Completed' : isCurrentStoppage ? ' - Current Stoppage' : ''}`}
+                  >
+                    <span className="rp-milestone-num">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
 
-                  {/* Stoppage Pill */}
-                  {isCurrentStoppage ? (
-                    <span className="rp-stoppage-pill">CURRENT STOP</span>
-                  ) : isCompleted ? (
-                    <span className="rp-stoppage-pill completed">COMPLETED</span>
-                  ) : null}
+                    {checkpointPct && (
+                      <span
+                        className={`rp-pin-pct-badge tier-${checkpointPct}`}
+                        title={`${checkpointPct}% Roadmap Progression Checkpoint`}
+                      >
+                        {checkpointPct}%
+                      </span>
+                    )}
 
-                  <i className="rp-milestone-stem" />
-                </div>
+                    {/* Completed Checkmark Badge */}
+                    {isCompleted && (
+                      <span className="rp-milestone-completed-badge" aria-label="Completed" title="Completed Stage">
+                        <svg viewBox="0 0 16 16" fill="none" className="rp-badge-check-svg">
+                          <path d="M3.5 8.5L6.5 11.5L12.5 4.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    )}
+
+                    {/* Stoppage Pill */}
+                    {isCurrentStoppage ? (
+                      <span className="rp-stoppage-pill">CURRENT STOP</span>
+                    ) : isCompleted ? (
+                      <span className="rp-stoppage-pill completed">COMPLETED</span>
+                    ) : null}
+
+                    <i className="rp-milestone-stem" />
+                  </div>
+                )}
 
                 {/* Goal Info Card */}
-                <article className={`rp-goal-copy ${rightSide ? 'right' : 'left'} ${isCompleted ? 'completed' : ''}`} style={cardStyle}>
+                <article className={`rp-goal-copy ${rightSide ? 'right' : 'left'} ${isCompleted ? 'completed' : ''} ${isFinalStage ? 'is-finish' : ''}`} style={cardStyle}>
                   <div className="rp-card-header">
                     <div className="rp-card-title-group">
-                      <span className="rp-card-step-kicker">Stage {String(index + 1).padStart(2, '0')}</span>
+                      <div className="rp-card-kicker-row">
+                        <span className="rp-card-step-kicker">
+                          Stage {String(index + 1).padStart(2, '0')} · {stagePct}%
+                        </span>
+                        {checkpointPct && (
+                          <span className={`rp-stage-checkpoint-pill tier-${checkpointPct}`}>
+                            {JOURNEY_CHECKPOINTS[checkpointPct].stageLabel}
+                          </span>
+                        )}
+                      </div>
                       <h2>{milestone.title}</h2>
                     </div>
                     <div className="rp-card-icon-badge">
-                      <StepIcon name={iconName} />
+                      <StepIcon name={isFinalStage ? 'flag' : iconName} />
                     </div>
                   </div>
 
@@ -1021,6 +1216,57 @@ export const Road3DGameView: React.FC<Props> = ({
         <p className="rp-live-message" aria-live="polite">{announcement}</p>
       </section>
 
+      {/* Compact Colored Checkpoint Celebration Popup */}
+      {celebrationPopup && (() => {
+        const meta = JOURNEY_CHECKPOINTS[celebrationPopup];
+        return (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${meta.percent}% Roadmap Journey Milestone`}
+            className="rp-celebration-backdrop"
+            onClick={() => setCelebrationPopup(null)}
+          >
+            <div
+              className="rp-celebration-card"
+              style={{ background: meta.gradient }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="rp-celebration-close"
+                aria-label="Close celebration popup"
+                onClick={() => setCelebrationPopup(null)}
+              >
+                <X size={16} />
+              </button>
+
+              <div className="rp-celebration-badge-row">
+                <span className="rp-celebration-pill">
+                  <Sparkles size={13} /> {meta.stageLabel}
+                </span>
+              </div>
+
+              <div className="rp-celebration-pct-ring">
+                <Award size={26} />
+                <span>{meta.percent}%</span>
+              </div>
+
+              <h3 className="rp-celebration-title">{meta.popupTitle}</h3>
+              <p className="rp-celebration-quote">{meta.quote}</p>
+
+              <button
+                type="button"
+                className="rp-celebration-btn"
+                onClick={() => setCelebrationPopup(null)}
+              >
+                {meta.percent === 100 ? 'Celebrate & Review' : 'Keep Moving Forward'}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       <style>{roadmapStyles}</style>
     </div>
   );
@@ -1069,12 +1315,12 @@ const roadmapStyles = String.raw`
   --rp-desc: #475569;
   --rp-desc-strong: #123C69;
 
-  /* Goal Layers & Milestones */
+  /* Goal Layers & Milestones — Crisp Neutral Round Pins + Green Poles */
   --rp-pin-bg: #FFFFFF;
   --rp-pin-text: #0F172A;
-  --rp-pin-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+  --rp-pin-shadow: 0 0 0 3px rgba(255, 255, 255, 0.94), 0 4px 14px rgba(15, 23, 42, 0.22);
   --rp-pin-blue: #123C69;
-  --rp-pin-purple: #255A96;
+  --rp-pin-purple: #1E293B;
   --rp-icon-color: #64748B;
 
   /* Goal Info & Checklist */
@@ -1171,12 +1417,12 @@ body.dark .rp-page,
   --rp-desc: #94A3B8;
   --rp-desc-strong: #93C5FD;
 
-  /* Goal Layers & Milestones */
+  /* Goal Layers & Milestones — Crisp Navy/White Round Pins + Green Poles */
   --rp-pin-bg: #0F172A;
   --rp-pin-text: #F8FAFC;
-  --rp-pin-shadow: 0 4px 18px rgba(0, 0, 0, 0.7), 0 0 14px rgba(96, 165, 250, 0.35);
+  --rp-pin-shadow: 0 0 0 2.5px rgba(226, 232, 240, 0.3), 0 4px 18px rgba(0, 0, 0, 0.7);
   --rp-pin-blue: #60A5FA;
-  --rp-pin-purple: #A78BFA;
+  --rp-pin-purple: #93C5FD;
   --rp-icon-color: #94A3B8;
 
   /* Goal Info & Checklist */
@@ -1336,14 +1582,15 @@ body.dark .rp-page,
   border-color: #0D2E52;
 }
 .rp-remind-bar {
-  height: 34px;
+  min-height: 34px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   background: var(--rp-remind-bg);
   border: 1px solid var(--rp-remind-border);
   border-radius: 9px;
-  padding: 0 4px 0 10px;
+  padding: 3px 6px 3px 10px;
+  white-space: nowrap;
 }
 .rp-remind-label {
   font-size: 11px;
@@ -1357,10 +1604,10 @@ body.dark .rp-page,
   background: var(--rp-skill-bg);
   border-radius: 6px;
   padding: 2px;
-  gap: 1px;
+  gap: 2px;
 }
 .rp-remind-chip {
-  height: 22px;
+  height: 24px;
   padding: 0 7px;
   border-radius: 5px;
   border: none;
@@ -1376,7 +1623,7 @@ body.dark .rp-page,
   color: #FFFFFF;
 }
 .rp-remind-test-btn {
-  height: 26px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1384,9 +1631,10 @@ body.dark .rp-page,
   color: var(--rp-header-accent);
   border: none;
   border-left: 1px solid var(--rp-remind-border);
-  padding: 0 9px;
+  padding: 0 4px 0 9px;
   font-size: 11px;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
   transition: opacity 0.14s ease;
 }
@@ -1700,21 +1948,21 @@ body.dark .rp-page,
   letter-spacing: -0.02em;
 }
 
-/* Completed Stoppage Pin Styling */
+/* Completed Stoppage Pin Styling — Keep round circle clean neutral, green checkmark corner badge */
 .rp-milestone.completed {
-  border-color: #10B981 !important;
-  color: #047857;
-  background: #F0FDF4;
-  box-shadow: 0 0 16px rgba(16, 185, 129, 0.45), 0 4px 12px rgba(16, 185, 129, 0.2);
+  border-color: var(--rp-pin-blue);
+  color: var(--rp-pin-text);
+  background: var(--rp-pin-bg);
+  box-shadow: var(--rp-pin-shadow);
 }
 :root.dark .rp-milestone.completed,
 [data-theme='dark'] .rp-milestone.completed,
 body.dark .rp-milestone.completed,
 .dark .rp-milestone.completed {
-  border-color: #10B981 !important;
-  color: #6EE7B7;
-  background: #064E3B;
-  box-shadow: 0 0 18px rgba(16, 185, 129, 0.55), 0 4px 14px rgba(0, 0, 0, 0.7);
+  border-color: var(--rp-pin-blue);
+  color: var(--rp-pin-text);
+  background: var(--rp-pin-bg);
+  box-shadow: var(--rp-pin-shadow);
 }
 
 .rp-milestone-completed-badge {
@@ -1806,27 +2054,27 @@ body.dark .rp-milestone.completed,
   z-index: -1;
   top: calc(100% - 2px);
   left: 50%;
-  width: 4px;
-  height: 32px;
+  width: 5px;
+  height: 36px;
   transform: translateX(-50%);
-  background: linear-gradient(180deg, currentColor 20%, transparent 100%);
-  opacity: .8;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #4ADE80 10%, #BBF7D0 75%, transparent 100%);
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.55);
 }
 @media (max-width: 680px) {
   .rp-milestone-stem {
-    width: 3px;
-    height: 22px;
+    width: 3.5px;
+    height: 24px;
   }
 }
-.rp-milestone.blue .rp-milestone-stem {
-  color: var(--rp-pin-blue);
-}
-.rp-milestone.purple .rp-milestone-stem {
-  color: var(--rp-pin-purple);
-}
 .rp-milestone.completed .rp-milestone-stem {
-  color: #10B981 !important;
-  background: linear-gradient(180deg, #10B981 30%, transparent 100%) !important;
+  background: linear-gradient(180deg, #10B981 25%, #6EE7B7 85%, transparent 100%) !important;
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.6);
+}
+.rp-milestone-stem.finish {
+  width: 6px;
+  height: 40px;
+  background: linear-gradient(180deg, #E2E8F0 0%, #22C55E 45%, #BBF7D0 90%, transparent 100%) !important;
 }
 
 /* ── GOAL COPY CARDS ── */
@@ -2260,35 +2508,39 @@ body.dark .rp-goal-copy.completed,
 }
 
 .rp-mobile-pin {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  background: var(--rp-card-bg);
-  border: 3px solid #2563EB;
-  color: #1D4ED8;
+  background: #FFFFFF;
+  border: 3px solid #123C69;
+  color: #0F172A;
   font-size: 11px;
   font-weight: 900;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.22);
-}
-
-.rp-mobile-pin.purple {
-  border-color: #7C3AED;
-  color: #6D28D9;
+  box-shadow: 0 0 0 2.5px rgba(255, 255, 255, 0.92), 0 3px 10px rgba(15, 23, 42, 0.22);
 }
 
 .rp-mobile-pin.current-stoppage {
   border-color: #F59E0B;
   color: #B45309;
+  background: #FFFBEB;
   box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.24), 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 
 .rp-mobile-pin.completed {
-  border-color: #10B981;
-  background: #10B981;
-  color: #FFFFFF;
+  border-color: #123C69;
+  background: #FFFFFF;
+  color: #0F172A;
+}
+
+.rp-mobile-finish-node {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .rp-mobile-car-btn {
@@ -2370,7 +2622,7 @@ body.dark .rp-goal-copy.completed,
 
   .rp-toolbar-row {
     width: 100%;
-    gap: 6px;
+    gap: 8px;
   }
 
   .rp-btn-career,
@@ -2378,13 +2630,17 @@ body.dark .rp-goal-copy.completed,
     height: 36px;
     padding: 0 12px;
     font-size: 12px;
+    flex: 1 1 auto;
+    justify-content: center;
   }
 
   .rp-remind-bar {
     width: 100%;
     justify-content: space-between;
-    height: 36px;
-    padding: 0 6px 0 10px;
+    min-height: 38px;
+    padding: 4px 8px 4px 10px;
+    gap: 8px;
+    box-sizing: border-box;
   }
 
   .rp-mobile-stage-card .rp-card-header h2 {
@@ -2408,5 +2664,244 @@ body.dark .rp-goal-copy.completed,
   .rp-mobile-stage-card .rp-task-title {
     font-size: 12.5px;
   }
+}
+
+/* ── 20 / 50 / 80 / 100% PROGRESSION MARKERS, FINISH FLAG & POPUP ── */
+.rp-milestone {
+  border: 3.5px solid var(--rp-pin-blue);
+}
+
+.rp-finish-flag-node {
+  position: absolute;
+  z-index: 8;
+  transform: translate(-50%, -74%);
+  width: 64px;
+  height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  filter: drop-shadow(0 6px 14px rgba(15, 23, 42, 0.28));
+}
+
+.rp-finish-flag-hero-svg {
+  width: 64px;
+  height: 78px;
+  display: block;
+}
+
+.rp-finish-flag-node .rp-stoppage-pill {
+  bottom: -10px;
+}
+
+.rp-finish-flag-node .rp-milestone-completed-badge {
+  top: 4px;
+  right: 2px;
+}
+
+.rp-finish-pole-wrap {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-34%);
+  width: 38px;
+  height: 36px;
+  pointer-events: none;
+  z-index: 6;
+  filter: drop-shadow(0 3px 6px rgba(15, 23, 42, 0.25));
+}
+.rp-finish-pole-wrap.compact {
+  position: static;
+  transform: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rp-finish-flag-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.rp-pin-pct-badge {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1.5px 6px;
+  border-radius: 9999px;
+  white-space: nowrap;
+  border: 1.5px solid #FFFFFF;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.22);
+  z-index: 7;
+}
+.rp-milestone.is-finish .rp-pin-pct-badge {
+  top: auto;
+  bottom: -24px;
+}
+.rp-pin-pct-badge.tier-20,
+.rp-mobile-pct-chip.tier-20,
+.rp-stage-checkpoint-pill.tier-20 {
+  background: #D1FAE5;
+  color: #065F46;
+}
+.rp-pin-pct-badge.tier-50,
+.rp-mobile-pct-chip.tier-50,
+.rp-stage-checkpoint-pill.tier-50 {
+  background: #DBEAFE;
+  color: #1E40AF;
+}
+.rp-pin-pct-badge.tier-80,
+.rp-mobile-pct-chip.tier-80,
+.rp-stage-checkpoint-pill.tier-80 {
+  background: #FFEDD5;
+  color: #9A3412;
+}
+.rp-pin-pct-badge.tier-100,
+.rp-mobile-pct-chip.tier-100,
+.rp-stage-checkpoint-pill.tier-100 {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.rp-mobile-pct-chip {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 9999px;
+}
+
+.rp-card-kicker-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.rp-stage-checkpoint-pill {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 9999px;
+}
+
+.rp-stoppage-pill.finish {
+  background: #16A34A;
+  color: #FFFFFF;
+}
+
+/* ── COMPACT COLORED MILESTONE CELEBRATION POPUP ── */
+.rp-celebration-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.rp-celebration-card {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+  border-radius: 22px;
+  padding: 24px 22px 20px;
+  color: #FFFFFF;
+  box-shadow: 0 24px 50px rgba(15, 23, 42, 0.38);
+  text-align: center;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  animation: rpBadgePop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.rp-celebration-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.16);
+  color: #FFFFFF;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.rp-celebration-badge-row {
+  display: flex;
+  justify-content: center;
+}
+
+.rp-celebration-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rp-celebration-pct-ring {
+  width: 78px;
+  height: 78px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+  border: 2.5px solid rgba(255, 255, 255, 0.65);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.rp-celebration-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.3;
+  color: #FFFFFF;
+}
+
+.rp-celebration-quote {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.22);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.94);
+  font-style: italic;
+}
+
+.rp-celebration-btn {
+  width: 100%;
+  padding: 10px 16px;
+  border-radius: 12px;
+  border: none;
+  background: #FFFFFF;
+  color: #0F172A;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
 }
 `;

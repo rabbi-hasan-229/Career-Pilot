@@ -18,6 +18,8 @@ import {
 import confetti from 'canvas-confetti';
 import { notificationService } from '../notifications/notificationService';
 import type { Task, Milestone, Profile } from '../../types';
+import { computeRoadmapProgressPct } from './roadmapProgressMilestones';
+import { sortStageTasks } from './stageTaskOrder';
 
 interface Props {
   milestones: Milestone[];
@@ -58,7 +60,7 @@ export const RoadHighwayView: React.FC<Props> = ({
   // Calculate overall stats
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter((t) => t.done_at != null).length;
-  const overallPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const overallPct = computeRoadmapProgressPct(milestones, tasks);
 
   // Active milestone (first milestone that is not fully done)
   const activeMilestone =
@@ -67,8 +69,8 @@ export const RoadHighwayView: React.FC<Props> = ({
       return mTasks.some((t) => t.done_at == null);
     }) || milestones[milestones.length - 1];
 
-  const activeMilestoneTasks = tasks.filter(
-    (t) => t.milestone_id === (activeMilestone?.id || '')
+  const activeMilestoneTasks = sortStageTasks(
+    tasks.filter((t) => t.milestone_id === (activeMilestone?.id || ''))
   );
   const unfinishedActiveTasksCount = activeMilestoneTasks.filter((t) => t.done_at == null).length;
 
@@ -736,7 +738,7 @@ export const RoadHighwayView: React.FC<Props> = ({
         <div className="highway-milestone-nodes-wrap">
           {nodes.map((node, idx) => {
             const m = node.milestone;
-            const mTasks = tasks.filter((t) => t.milestone_id === m.id);
+            const mTasks = sortStageTasks(tasks.filter((t) => t.milestone_id === m.id));
             const mCompletedCount = mTasks.filter((t) => t.done_at != null).length;
             const isAllDone = mTasks.length > 0 && mCompletedCount === mTasks.length;
             const isCurrent = m.id === activeMilestone?.id;

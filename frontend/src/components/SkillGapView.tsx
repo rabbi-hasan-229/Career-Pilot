@@ -1,26 +1,37 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CheckCircle2,
-  ExternalLink,
-  LoaderCircle,
-  Search,
-  TrendingUp,
-  MapPin,
-  DollarSign,
-  PlusCircle,
+  ArrowRight,
   BookOpen,
+  Briefcase,
+  CheckCircle2,
+  DollarSign,
+  ExternalLink,
+  Globe,
+  LoaderCircle,
+  Lock,
+  MapPin,
+  PlusCircle,
+  Search,
 } from 'lucide-react';
-import type { Skill, Vacancy } from '../types';
+import type { Milestone, Skill, Task, Vacancy } from '../types';
 import { supabase } from '../lib/supabase';
 import { createCustomCareerBlueprint, findCuratedCareerBlueprint } from '../features/roadmap/careerCatalog';
 import type { CareerCategory } from '../features/roadmap/careerCatalog';
 import { LearningResourcesPanel } from '../features/resources/LearningResourcesPanel';
-import { CardGridSkeleton, ListSkeleton } from './SkeletonScreen';
+import {
+  buildProgressionSkillsList,
+  computeRoadmapJobMarketProgression,
+  MINIMUM_JOB_MARKET_PROGRESS_PCT,
+} from '../features/roadmap/jobMarketProgress';
+import { CardGridSkeleton } from './SkeletonScreen';
 
 interface Props {
   userId: string;
   targetRole: string;
   targetRoleCategory?: CareerCategory;
+  milestones?: Milestone[];
+  tasks?: Task[];
+  onNavigateToRoadmap?: () => void;
   onAddSkillToRoadmap?: (skillName: string) => Promise<void> | void;
   onAddResourceToRoadmap?: (resource: { id: string; title: string; category: CareerCategory | null }) => Promise<boolean>;
   onToast: (msg: string) => void;
@@ -44,6 +55,14 @@ interface RemoteJobsResponse {
 
 type LiveSearchMode = 'remote' | 'regional' | 'hybrid';
 
+const GLOBAL_MARKET_REGIONS = [
+  { id: 'worldwide', label: 'Worldwide Remote', mode: 'remote' as LiveSearchMode, location: '' },
+  { id: 'europe', label: 'Europe', mode: 'regional' as LiveSearchMode, location: 'Europe' },
+  { id: 'north_america', label: 'North America', mode: 'regional' as LiveSearchMode, location: 'United States' },
+  { id: 'asia_pacific', label: 'Asia-Pacific', mode: 'regional' as LiveSearchMode, location: 'Singapore' },
+  { id: 'bangladesh', label: 'Bangladesh', mode: 'regional' as LiveSearchMode, location: 'Dhaka, Bangladesh' },
+] as const;
+
 function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/<[^>]*>/g, ' ').replace(/&[^;]+;/g, ' ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -56,121 +75,93 @@ function skillIsMentioned(searchableText: string, skillName: string): boolean {
   return [skill, withoutVersion].filter((phrase) => phrase.length >= 2).some((phrase) => ` ${normalized} `.includes(` ${phrase} `));
 }
 
-function localSkillsStorageKey(userId: string): string {
-  return `career_pilot_local_skills_${userId}`;
-}
+function buildGlobalCircularFallback(
+  roleTitle: string,
+  achievedSkills: string[],
+  upcomingSkills: string[],
+  locationFilter: string
+): Vacancy[] {
+  const cleanLocation = locationFilter.trim();
+  const topAchieved = achievedSkills.slice(0, 4);
+  const queryTerms = [roleTitle, ...achievedSkills.slice(0, 2)].filter(Boolean).join(' ');
+  const encodedQuery = encodeURIComponent(queryTerms);
+  const encodedRole = encodeURIComponent(roleTitle);
+  const encodedLoc = encodeURIComponent(cleanLocation || 'Remote');
 
-function loadLocalAcquiredSkills(userId: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(localSkillsStorageKey(userId));
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? new Set(parsed.filter((item): item is string => typeof item === 'string')) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function saveLocalAcquiredSkills(userId: string, namesOrIds: Set<string>): void {
-  try {
-    localStorage.setItem(localSkillsStorageKey(userId), JSON.stringify([...namesOrIds]));
-  } catch {
-    // Ignore storage quota issues cleanly
-  }
-}
-
-function buildFallbackSkillsFromBlueprint(
-  role: ReturnType<typeof createCustomCareerBlueprint>,
-  acquiredKeys: Set<string>,
-): Skill[] {
-  const orderedNames = [...new Set([...role.skills, ...role.stages.flatMap((stage) => stage.skills)])]
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 14);
-  return orderedNames.map((name, idx) => {
-    const id = `curated_${role.slug}_${idx}`;
-    return {
-      id,
-      name,
-      category: role.category,
-      is_acquired: acquiredKeys.has(id) || acquiredKeys.has(name.toLowerCase()),
-    };
-  });
-}
-
-function buildFallbackRoleVacancies(roleTitle: string, skillsList: Skill[]): Vacancy[] {
-  const names = skillsList.map((s) => s.name);
-  const acquiredSet = new Set(skillsList.filter((s) => s.is_acquired).map((s) => s.name));
-  const specs = [
+  const sampleCards: Array<{
+    id: string;
+    title: string;
+    company: string;
+    location: string;
+    salary: string;
+    required: string[];
+    url: string;
+  }> = [
     {
-      id: 'benchmark-mid',
-      title: roleTitle,
-      company: 'Cloud-Native Product Teams',
-      location: 'Remote · Full-Time',
-      salary_range: 'Market Benchmark · Mid-Level',
-      slice: names.slice(0, Math.min(6, names.length)),
+      id: 'global-remote-match',
+      title: `${roleTitle} (Skills-Matched)`,
+      company: 'LinkedIn Global Jobs',
+      location: cleanLocation || 'Worldwide · Remote / Distributed',
+      salary: 'Market Rate · Global',
+      required: [...topAchieved, ...upcomingSkills.slice(0, 1)].filter(Boolean),
+      url: `https://www.linkedin.com/jobs/search/?keywords=${encodedQuery}&location=${encodedLoc}`,
     },
     {
-      id: 'benchmark-senior',
-      title: `Senior ${roleTitle}`,
-      company: 'Distributed Platform Engineering',
-      location: 'Remote / Hybrid',
-      salary_range: 'Market Benchmark · Senior',
-      slice: names.slice(Math.max(0, Math.min(3, names.length - 5)), Math.min(9, names.length)),
+      id: 'global-hub-europe-us',
+      title: `${roleTitle} · International Circulars`,
+      company: 'Remote OK Global Feed',
+      location: cleanLocation || 'Americas / EMEA · Remote',
+      salary: 'USD / EUR Benchmark',
+      required: [...topAchieved.slice(0, 3), ...upcomingSkills.slice(0, 2)].filter(Boolean),
+      url: `https://remoteok.com/remote-${encodedRole.toLowerCase().replace(/%20+/g, '-')}-jobs`,
     },
     {
-      id: 'benchmark-associate',
-      title: `Associate ${roleTitle}`,
-      company: 'Growth-Stage Engineering Org',
-      location: 'Remote Friendly',
-      salary_range: 'Market Benchmark · Entry / Junior',
-      slice: names.slice(0, Math.min(4, names.length)),
+      id: 'global-associate-junior',
+      title: `Junior / Mid ${roleTitle}`,
+      company: 'Indeed Worldwide Circulars',
+      location: cleanLocation || 'Asia-Pacific & Global Hybrid',
+      salary: 'Entry to Mid Range',
+      required: [...topAchieved.slice(0, 2)].filter(Boolean),
+      url: `https://www.indeed.com/jobs?q=${encodedQuery}&l=${encodedLoc}`,
     },
   ];
-  return specs
-    .filter((spec) => spec.slice.length > 0)
-    .map((spec) => {
-      const missing = spec.slice.filter((skill) => !acquiredSet.has(skill));
+
+  const achievedLower = new Set(achievedSkills.map((s) => s.toLowerCase()));
+  return sampleCards
+    .filter((card) => card.required.length > 0)
+    .map((card) => {
+      const missing = card.required.filter((skill) => !achievedLower.has(skill.toLowerCase()));
+      const matchPct = Math.round(((card.required.length - missing.length) / card.required.length) * 100);
       return {
-        id: spec.id,
-        title: spec.title,
-        company: spec.company,
-        location: spec.location,
-        salary_range: spec.salary_range,
-        match_pct: Math.round(((spec.slice.length - missing.length) / spec.slice.length) * 100),
-        required_skills: spec.slice,
+        id: card.id,
+        title: card.title,
+        company: card.company,
+        location: card.location,
+        salary_range: card.salary,
+        match_pct: matchPct,
+        required_skills: card.required,
         missing_skills: missing,
         source_type: 'sample' as const,
+        source_url: card.url,
       };
     });
-}
-
-function recomputeVacancyMatches(list: Vacancy[], updatedSkills: Skill[]): Vacancy[] {
-  const acquiredNames = new Set(
-    updatedSkills.filter((skill) => skill.is_acquired).map((skill) => skill.name.toLowerCase())
-  );
-  return list.map((vacancy) => {
-    if (vacancy.required_skills.length === 0) return vacancy;
-    const missing = vacancy.required_skills.filter((req) => !acquiredNames.has(req.toLowerCase()));
-    return {
-      ...vacancy,
-      missing_skills: missing,
-      match_pct: Math.round(
-        ((vacancy.required_skills.length - missing.length) / vacancy.required_skills.length) * 100
-      ),
-    };
-  });
 }
 
 async function findRemoteJobs(
   query: string,
   category: CareerCategory,
-  requirements: Skill[],
+  progressionSkills: Skill[],
   mode: LiveSearchMode = 'remote',
   location = '',
 ): Promise<{ response: RemoteJobsResponse; vacancies: Vacancy[] }> {
   const result = await supabase.functions.invoke('search-remote-jobs', {
-    body: { query, category, skills: requirements.map((skill) => skill.name).slice(0, 20), mode, location },
+    body: {
+      query,
+      category,
+      skills: progressionSkills.map((skill) => skill.name).slice(0, 20),
+      mode,
+      location,
+    },
   });
   if (result.error) {
     const context = (result.error as Error & { context?: unknown }).context;
@@ -183,26 +174,34 @@ async function findRemoteJobs(
       } catch { /* Use the Supabase SDK error if the response is not JSON. */ }
       if (message) throw new Error(message);
     }
-    throw new Error(result.error.message || 'Remote search failed.');
+    throw new Error(result.error.message || 'Global job search failed.');
   }
-  if (!result.data || typeof result.data !== 'object') throw new Error('The remote job source returned an invalid response.');
+  if (!result.data || typeof result.data !== 'object') {
+    throw new Error('The global job feed returned an invalid response.');
+  }
   const payload = result.data as Partial<RemoteJobsResponse> & { error?: string };
   if (payload.error) throw new Error(payload.error);
-  if (!Array.isArray(payload.jobs) || typeof payload.fetched_at !== 'string' || typeof payload.source !== 'string') throw new Error('The live job source returned incomplete data.');
+  if (!Array.isArray(payload.jobs) || typeof payload.fetched_at !== 'string' || typeof payload.source !== 'string') {
+    throw new Error('The live job source returned incomplete data.');
+  }
   const sourceName = payload.source || 'Remote OK';
 
   const vacancies = payload.jobs.map((job) => {
     const searchable = `${job.title} ${job.tags.join(' ')} ${job.description}`;
-    const required = requirements.filter((skill) => skillIsMentioned(searchable, skill.name));
+    const required = progressionSkills.filter((skill) => skillIsMentioned(searchable, skill.name));
     const acquired = required.filter((skill) => skill.is_acquired);
     const missing = required.filter((skill) => !skill.is_acquired);
+    const matchPct = required.length
+      ? Math.round((acquired.length / required.length) * 100)
+      : null;
+
     return {
       id: `${sourceName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${job.id}`,
       title: job.title,
       company: job.company,
-      location: job.location || 'Remote (eligibility varies)',
+      location: job.location || 'Worldwide · Remote',
       salary_range: job.salary_range || 'Salary not provided',
-      match_pct: required.length ? Math.round((acquired.length / required.length) * 100) : null,
+      match_pct: matchPct,
       required_skills: required.map((skill) => skill.name),
       missing_skills: missing.map((skill) => skill.name),
       source_type: sourceName === 'Jooble' ? 'jooble' as const : 'remoteok' as const,
@@ -210,169 +209,136 @@ async function findRemoteJobs(
       published_at: job.published_at,
     };
   });
+
+  // Sort highest achieved-skill match first, then newest date
+  vacancies.sort((a, b) => {
+    const scoreA = a.match_pct ?? -1;
+    const scoreB = b.match_pct ?? -1;
+    if (scoreB !== scoreA) return scoreB - scoreA;
+    return Date.parse(b.published_at || '') - Date.parse(a.published_at || '');
+  });
+
   return { response: payload as RemoteJobsResponse, vacancies };
 }
 
 export const SkillGapView: React.FC<Props> = ({
-  userId,
   targetRole,
   targetRoleCategory,
+  milestones = [],
+  tasks = [],
+  onNavigateToRoadmap,
   onAddSkillToRoadmap,
   onAddResourceToRoadmap,
   onToast,
 }) => {
-  const [workspaceTab, setWorkspaceTab] = useState<'skills' | 'resources'>('skills');
-  const [filterMode, setFilterMode] = useState<'all' | 'high_match'>('all');
-  const [skills, setSkills] = useState<Skill[]>([]);
-  const [vacancies, setVacancies] = useState<Vacancy[]>([]);
+  const [workspaceTab, setWorkspaceTab] = useState<'market' | 'resources'>('market');
+  const [filterMode, setFilterMode] = useState<'all' | 'strong_match'>('all');
   const [liveVacancies, setLiveVacancies] = useState<Vacancy[]>([]);
   const [liveQuery, setLiveQuery] = useState(targetRole);
   const [liveSearchMode, setLiveSearchMode] = useState<LiveSearchMode>('remote');
   const [liveLocation, setLiveLocation] = useState('');
-  const [liveLoading, setLiveLoading] = useState(true);
+  const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState('');
   const [liveFetchedAt, setLiveFetchedAt] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [savingSkill, setSavingSkill] = useState<string | null>(null);
-  const [error, setError] = useState('');
-  const [usesCategoryBaseline, setUsesCategoryBaseline] = useState(false);
-  const [resolvedRoleCategory, setResolvedRoleCategory] = useState<CareerCategory | undefined>(targetRoleCategory);
+  const [showAllUpcomingSkills, setShowAllUpcomingSkills] = useState(false);
   const liveSearchRequest = useRef(0);
 
+  const curatedRole = useMemo(() => findCuratedCareerBlueprint(targetRole), [targetRole]);
+  const roleBlueprint = useMemo(
+    () => curatedRole || createCustomCareerBlueprint(targetRole, targetRoleCategory),
+    [curatedRole, targetRole, targetRoleCategory]
+  );
+
+  const progression = useMemo(
+    () => computeRoadmapJobMarketProgression(milestones, tasks, targetRole, targetRoleCategory),
+    [milestones, tasks, targetRole, targetRoleCategory]
+  );
+
+  const progressionSkills = useMemo(
+    () => buildProgressionSkillsList(progression),
+    [progression]
+  );
+
+  // Fetch global job circulars automatically only once >=20% roadmap progression is complete
   useEffect(() => {
     let active = true;
-    if (workspaceTab !== 'skills') {
+    if (workspaceTab !== 'market' || !progression.isUnlocked) {
       liveSearchRequest.current += 1;
-      return () => { active = false; };
+      return () => {
+        active = false;
+      };
     }
+
     const requestId = ++liveSearchRequest.current;
-    const curatedRole = findCuratedCareerBlueprint(targetRole);
-    const role = curatedRole || createCustomCareerBlueprint(targetRole, targetRoleCategory);
-    const categoryBaseline = !curatedRole;
-    const load = async () => {
-      setLoading(true);
-      setError('');
-      setLiveLoading(true);
-      setLiveError('');
-      setLiveVacancies([]);
-      setLiveFetchedAt('');
-      setUsesCategoryBaseline(categoryBaseline);
-      setResolvedRoleCategory(role.category);
-      setSkills([]);
-      setVacancies([]);
-      const requirementsRequest = categoryBaseline
-        ? supabase
-          .from('career_category_skill_requirements')
-          .select('importance,skills(id,name,category)')
-          .eq('career_category', role.category)
-          .order('importance', { ascending: false })
-        : supabase
-          .from('role_skill_requirements')
-          .select('importance,skills(id,name,category)')
-          .eq('role_slug', role.slug)
-          .order('importance', { ascending: false });
-      const [requirementsResult, userSkillsResult, vacanciesResult] = await Promise.all([
-        requirementsRequest,
-        supabase.from('user_skills').select('skill_id').eq('user_id', userId),
-        supabase
-          .from('vacancies')
-          .select('id,title,company,location,salary_range,vacancy_skills(skill_id,skills(id,name))')
-          .eq('role_slug', role.slug)
-          .order('created_at', { ascending: false }),
-      ]);
+    void Promise.resolve().then(async () => {
       if (!active || requestId !== liveSearchRequest.current) return;
-
-      const localAcquired = loadLocalAcquiredSkills(userId);
-      const dbAcquired = userSkillsResult.error
-        ? new Set<string>()
-        : new Set((userSkillsResult.data ?? []).map((row: any) => String(row.skill_id)));
-
-      let loadedSkills: Skill[] = [];
-      if (!requirementsResult.error) {
-        loadedSkills = (requirementsResult.data ?? []).flatMap((row: any) => {
-          const skill = Array.isArray(row.skills) ? row.skills[0] : row.skills;
-          return skill ? [{
-            id: skill.id,
-            name: skill.name,
-            category: skill.category,
-            is_acquired: dbAcquired.has(skill.id) || localAcquired.has(skill.id) || localAcquired.has(skill.name.toLowerCase()),
-          }] : [];
-        }) as Skill[];
-      }
-
-      if (loadedSkills.length === 0) {
-        loadedSkills = buildFallbackSkillsFromBlueprint(role, localAcquired);
-      }
-
-      const loadedVacancies = !vacanciesResult.error
-        ? (vacanciesResult.data ?? []).map((row: any) => {
-            const requirements = (row.vacancy_skills ?? []).filter((entry: any) => entry.skills?.name);
-            const required = requirements.map((entry: any) => entry.skills.name) as string[];
-            const missing = requirements
-              .filter((entry: any) => !dbAcquired.has(entry.skill_id) && !localAcquired.has(entry.skills.name.toLowerCase()))
-              .map((entry: any) => entry.skills.name) as string[];
-            return {
-              id: row.id,
-              title: row.title,
-              company: row.company,
-              location: row.location,
-              salary_range: row.salary_range ?? 'Salary not provided',
-              match_pct: required.length ? Math.round(((required.length - missing.length) / required.length) * 100) : null,
-              required_skills: required,
-              missing_skills: missing,
-              source_type: 'sample' as const,
-            } as Vacancy;
-          })
-        : [];
-
-      setSkills(loadedSkills);
-      setVacancies(loadedVacancies.length > 0 ? loadedVacancies : buildFallbackRoleVacancies(role.title, loadedSkills));
-      setLoading(false);
-      setLiveQuery(targetRole);
       setLiveLoading(true);
       setLiveError('');
       try {
-        const remote = await findRemoteJobs(targetRole, role.category, loadedSkills);
+        const remote = await findRemoteJobs(
+          targetRole,
+          roleBlueprint.category,
+          progressionSkills,
+          'remote',
+          ''
+        );
         if (!active || requestId !== liveSearchRequest.current) return;
         setLiveVacancies(remote.vacancies);
         setLiveFetchedAt(remote.response.fetched_at);
       } catch {
         if (!active || requestId !== liveSearchRequest.current) return;
         setLiveVacancies([]);
-        setLiveError('Live remote search is offline — showing role benchmark expectations below.');
+        setLiveError('Live remote search is offline — showing global job search portals matched to your achieved skills.');
       } finally {
         if (active && requestId === liveSearchRequest.current) setLiveLoading(false);
       }
+    });
+
+    return () => {
+      active = false;
     };
-    void load();
-    return () => { active = false; };
-  }, [userId, targetRole, targetRoleCategory, workspaceTab]);
+  }, [workspaceTab, progression.isUnlocked, targetRole, roleBlueprint.category, progressionSkills]);
 
-  const acquiredCount = skills.filter((s) => s.is_acquired).length;
-  const totalTargetCount = skills.length;
-  const hasPublishedRequirements = totalTargetCount > 0;
-  const readinessPct = totalTargetCount ? Math.round((acquiredCount / totalTargetCount) * 100) : 0;
+  const fallbackPortals = useMemo(
+    () =>
+      progression.isUnlocked
+        ? buildGlobalCircularFallback(
+            liveQuery.trim() || targetRole,
+            progression.achievedSkills,
+            progression.upcomingSkills,
+            liveLocation
+          )
+        : [],
+    [progression.isUnlocked, liveQuery, targetRole, progression.achievedSkills, progression.upcomingSkills, liveLocation]
+  );
 
-  const allVacancies = useMemo(() => [...liveVacancies, ...vacancies], [liveVacancies, vacancies]);
-  const displayedVacancies = useMemo(() =>
-    filterMode === 'high_match'
-      ? allVacancies.filter((v) => v.match_pct !== null && v.match_pct >= 75)
-      : allVacancies, [allVacancies, filterMode]);
+  const combinedCirculars = useMemo(() => {
+    if (liveVacancies.length > 0) return liveVacancies;
+    return fallbackPortals;
+  }, [liveVacancies, fallbackPortals]);
+
+  const displayedCirculars = useMemo(
+    () =>
+      filterMode === 'strong_match'
+        ? combinedCirculars.filter((v) => v.match_pct !== null && v.match_pct >= 50)
+        : combinedCirculars,
+    [combinedCirculars, filterMode]
+  );
 
   const executeLiveSearch = async (
     mode: LiveSearchMode,
     queryText: string,
-    locationText: string,
-    skillsSnapshot: Skill[]
+    locationText: string
   ) => {
+    if (!progression.isUnlocked) return;
     const cleanQuery = queryText.trim();
     const cleanLocation = locationText.trim();
     if (cleanQuery.length < 2) {
-      setLiveError('Enter at least 2 characters for the role title.');
+      setLiveError('Enter at least 2 characters for the job title.');
       return;
     }
     if (mode !== 'remote' && cleanLocation.length < 2) {
-      setLiveError('Enter a city, region, or country (at least 2 characters) to search.');
+      setLiveError('Enter a city, country, or region (e.g. Europe, London, Dhaka) to search.');
       return;
     }
 
@@ -382,8 +348,8 @@ export const SkillGapView: React.FC<Props> = ({
     try {
       const remote = await findRemoteJobs(
         cleanQuery,
-        resolvedRoleCategory || 'Software & Web',
-        skillsSnapshot,
+        roleBlueprint.category,
+        progressionSkills,
         mode,
         cleanLocation
       );
@@ -394,31 +360,27 @@ export const SkillGapView: React.FC<Props> = ({
       if (requestId !== liveSearchRequest.current) return;
       setLiveVacancies([]);
       setLiveError(
-        remoteError instanceof Error ? remoteError.message : 'Live job search is temporarily unavailable.'
+        remoteError instanceof Error
+          ? `${remoteError.message} Showing matched global job search links below.`
+          : 'Live global search is temporarily unavailable.'
       );
     } finally {
       if (requestId === liveSearchRequest.current) setLiveLoading(false);
     }
   };
 
-  const searchRemoteListings = async (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSearchSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (liveLoading) return;
-    await executeLiveSearch(liveSearchMode, liveQuery, liveLocation, skills);
+    await executeLiveSearch(liveSearchMode, liveQuery, liveLocation);
   };
 
-  const handleSearchModeChange = (nextMode: LiveSearchMode) => {
-    liveSearchRequest.current += 1;
-    setLiveSearchMode(nextMode);
-    setLiveVacancies([]);
-    setLiveFetchedAt('');
+  const handleRegionPreset = (region: (typeof GLOBAL_MARKET_REGIONS)[number]) => {
+    setLiveSearchMode(region.mode);
+    setLiveLocation(region.location);
     setLiveError('');
-    setLiveLoading(false);
-
-    if (nextMode === 'remote' && liveQuery.trim().length >= 2) {
-      void executeLiveSearch('remote', liveQuery, '', skills);
-    } else if (nextMode !== 'remote' && liveQuery.trim().length >= 2 && liveLocation.trim().length >= 2) {
-      void executeLiveSearch(nextMode, liveQuery, liveLocation, skills);
+    if (progression.isUnlocked) {
+      void executeLiveSearch(region.mode, liveQuery || targetRole, region.location);
     }
   };
 
@@ -442,55 +404,28 @@ export const SkillGapView: React.FC<Props> = ({
     }
   };
 
-  const toggleSkill = async (skill: Skill) => {
-    if (savingSkill) return;
-    setSavingSkill(skill.id);
-    setError('');
-    try {
-      const nextAcquired = !skill.is_acquired;
-      const localSet = loadLocalAcquiredSkills(userId);
-      if (nextAcquired) {
-        localSet.add(skill.id);
-        localSet.add(skill.name.toLowerCase());
-      } else {
-        localSet.delete(skill.id);
-        localSet.delete(skill.name.toLowerCase());
-      }
-      saveLocalAcquiredSkills(userId, localSet);
-
-      if (!skill.id.startsWith('curated_')) {
-        const result = skill.is_acquired
-          ? await supabase.from('user_skills').delete().eq('user_id', userId).eq('skill_id', skill.id)
-          : await supabase.from('user_skills').upsert({ user_id: userId, skill_id: skill.id, level: 'proficient' }, { onConflict: 'user_id,skill_id' });
-        if (result.error && !/schema cache|does not exist|relation/i.test(result.error.message)) {
-          setError(result.error.message);
-          return;
-        }
-      }
-
-      const nextSkills = skills.map((item) => (item.id === skill.id ? { ...item, is_acquired: nextAcquired } : item));
-      setSkills(nextSkills);
-      // Keep benchmark and live job vacancy match percentages synced live when skills change
-      setVacancies((prev) => recomputeVacancyMatches(prev, nextSkills));
-      setLiveVacancies((prev) => recomputeVacancyMatches(prev, nextSkills));
-    } catch (skillError) {
-      setError(skillError instanceof Error ? skillError.message : 'Could not update your saved skill.');
-    } finally {
-      setSavingSkill(null);
-    }
-  };
-
   return (
-    <div style={{ maxWidth: '1160px', margin: '0 auto', paddingBottom: '40px' }}>
-      <div role="group" aria-label="Career skills workspace" style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid var(--md-outline)', paddingBottom: '12px' }}>
+    <div style={{ maxWidth: '1160px', margin: '0 auto', paddingBottom: '48px' }}>
+      {/* Workspace Tabs */}
+      <div
+        role="group"
+        aria-label="Job Market workspace"
+        style={{
+          display: 'flex',
+          gap: '8px',
+          marginBottom: '20px',
+          borderBottom: '1px solid var(--md-outline)',
+          paddingBottom: '12px',
+        }}
+      >
         <button
           type="button"
-          aria-pressed={workspaceTab === 'skills'}
-          onClick={() => setWorkspaceTab('skills')}
-          className={`m3-tab-pill ${workspaceTab === 'skills' ? 'active' : ''}`}
+          aria-pressed={workspaceTab === 'market'}
+          onClick={() => setWorkspaceTab('market')}
+          className={`m3-tab-pill ${workspaceTab === 'market' ? 'active' : ''}`}
           style={{ padding: '8px 14px', fontSize: '13px' }}
         >
-          <TrendingUp size={15} aria-hidden="true" /> Skills &amp; jobs
+          <Briefcase size={15} aria-hidden="true" /> Job Market
         </button>
         <button
           type="button"
@@ -499,9 +434,10 @@ export const SkillGapView: React.FC<Props> = ({
           className={`m3-tab-pill ${workspaceTab === 'resources' ? 'active' : ''}`}
           style={{ padding: '8px 14px', fontSize: '13px' }}
         >
-          <BookOpen size={15} aria-hidden="true" /> Learning resources
+          <BookOpen size={15} aria-hidden="true" /> Learning Resources
         </button>
       </div>
+
       {workspaceTab === 'resources' ? (
         <LearningResourcesPanel
           key={`${targetRole}:${targetRoleCategory || ''}`}
@@ -511,523 +447,588 @@ export const SkillGapView: React.FC<Props> = ({
         />
       ) : (
         <>
-      {/* Header Summary */}
-      <div className="m3-surface-card" style={{ marginBottom: '20px', padding: '20px 24px' }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: '16px',
-          }}
-        >
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span
-                style={{
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  background: 'var(--md-primary-container)',
-                  color: 'var(--md-on-primary-container)',
-                  padding: '2px 9px',
-                  borderRadius: '9999px',
-                }}
-              >
-                {usesCategoryBaseline ? 'Category baseline' : 'Role profile'}
-              </span>
-            </div>
-            <h2
+          {/* Header Banner */}
+          <div className="m3-surface-card" style={{ marginBottom: '20px', padding: '20px 24px' }}>
+            <div
               style={{
-                fontSize: '20px',
-                fontWeight: 700,
-                color: 'var(--md-text-primary)',
-                margin: '4px 0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '16px',
               }}
             >
-              Skills &amp; Market Fit
-            </h2>
-            <p style={{ fontSize: '13px', color: 'var(--md-text-secondary)', margin: 0 }}>
-              {usesCategoryBaseline
-                ? `Category baseline for ${resolvedRoleCategory || 'career'} roles.`
-                : 'Compare your acquired skills with role requirements and live roles.'}
-            </p>
-          </div>
-
-          {/* Quiet Readiness Card */}
-          <div
-            style={{
-              background: 'var(--md-surface-variant)',
-              border: '1px solid var(--md-outline)',
-              borderRadius: '14px',
-              padding: '12px 18px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '16px',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)', textTransform: 'uppercase' }}>
-                {targetRole}
-              </div>
-              <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
-                {hasPublishedRequirements ? `${readinessPct}%` : '—'}
-              </div>
-              <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                {hasPublishedRequirements
-                  ? `${acquiredCount} / ${totalTargetCount} skills`
-                  : 'No skill profile'}
-              </div>
-            </div>
-
-            {hasPublishedRequirements && <div style={{ position: 'relative', width: '48px', height: '48px' }}>
-              <svg width="48" height="48" viewBox="0 0 36 36">
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="var(--md-outline)"
-                  strokeWidth="3.8"
-                />
-                <path
-                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                  fill="none"
-                  stroke="var(--md-primary)"
-                  strokeWidth="3.8"
-                  strokeDasharray={`${readinessPct}, 100`}
-                  strokeLinecap="round"
-                />
-              </svg>
-            </div>}
-          </div>
-        </div>
-      </div>
-
-      {/* 2-Column Grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
-          gap: '20px',
-        }}
-      >
-        {/* LEFT COLUMN: Skill Matrix */}
-        <div className="m3-surface-card" style={{ padding: '20px 24px' }}>
-          <h3
-            style={{
-              fontSize: '16px',
-              fontWeight: 700,
-              color: 'var(--md-text-primary)',
-              margin: '0 0 4px 0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <TrendingUp size={16} color="var(--md-primary)" />
-            Required Skills
-          </h3>
-          <p style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', margin: '0 0 18px 0' }}>
-            Mark skills you have or queue gaps into your roadmap.
-          </p>
-
-          {loading && <ListSkeleton rows={4} compact label="Loading required skills" />}
-          {!loading && !error && skills.length === 0 && (
-            <p role="status" style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)' }}>
-              {usesCategoryBaseline
-                ? `No category baseline published for ${resolvedRoleCategory || 'this career'} yet.`
-                : 'No role skill requirements published yet.'}
-            </p>
-          )}
-
-          {/* Acquired Skills */}
-          <div style={{ marginBottom: '20px' }}>
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: 'var(--md-success)',
-                textTransform: 'uppercase',
-                display: 'block',
-                marginBottom: '8px',
-              }}
-            >
-              Acquired ({acquiredCount})
-            </span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {skills
-                .filter((s) => s.is_acquired)
-                .map((skill) => (
-                  <button
-                    key={skill.id}
-                    type="button"
-                    onClick={() => void toggleSkill(skill)}
-                    disabled={savingSkill === skill.id}
-                    title="Click to unmark"
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                  <span
                     style={{
-                      background: 'var(--md-success-bg)',
-                      border: '1px solid rgba(16, 185, 129, 0.3)',
-                      color: 'var(--md-success)',
-                      borderRadius: '9999px',
-                      padding: '5px 12px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <CheckCircle2 size={13} />
-                    {skill.name}
-                  </button>
-                ))}
-            </div>
-          </div>
-
-          {/* Missing Skills */}
-          <div>
-            <span
-              style={{
-                fontSize: '11px',
-                fontWeight: 700,
-                color: 'var(--md-text-secondary)',
-                textTransform: 'uppercase',
-                display: 'block',
-                marginBottom: '8px',
-              }}
-            >
-              Gaps ({totalTargetCount - acquiredCount})
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {skills
-                .filter((s) => !s.is_acquired)
-                .map((skill) => (
-                  <div
-                    key={skill.id}
-                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
                       background: 'var(--md-surface-variant)',
                       border: '1px solid var(--md-outline)',
-                      borderRadius: '10px',
-                      padding: '10px 14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: '10px',
+                      color: 'var(--md-text-secondary)',
+                      padding: '2px 9px',
+                      borderRadius: '9999px',
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <strong style={{ fontSize: '13px', fontWeight: 600, color: 'var(--md-text-primary)', display: 'block' }}>
-                        {skill.name}
-                      </strong>
-                      <span style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>
-                        {skill.category}
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                      <button
-                        type="button"
-                        onClick={() => void toggleSkill(skill)}
-                        disabled={savingSkill === skill.id}
-                        style={{
-                          background: 'var(--md-surface)',
-                          border: '1px solid var(--md-outline)',
-                          color: 'var(--md-text-secondary)',
-                          borderRadius: '8px',
-                          padding: '6px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {savingSkill === skill.id ? 'Saving…' : 'Acquired'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleQueueSkill(skill.name)}
-                        style={{
-                          background: 'var(--md-primary-container)',
-                          border: '1px solid transparent',
-                          color: 'var(--md-on-primary-container)',
-                          borderRadius: '8px',
-                          padding: '6px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                        }}
-                      >
-                        <PlusCircle size={13} />
-                        Queue
-                      </button>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: Job Listings */}
-        <div className="m3-surface-card" style={{ padding: '20px 24px' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: '10px',
-              marginBottom: '14px',
-            }}
-          >
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--md-text-primary)', margin: 0 }}>
-                Job Listings
-              </h3>
-              <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>
-                Skill overlap signal
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button
-                type="button"
-                onClick={() => setFilterMode('all')}
-                aria-pressed={filterMode === 'all'}
-                className={`m3-tab-pill ${filterMode === 'all' ? 'active' : ''}`}
-              >
-                All ({allVacancies.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('high_match')}
-                aria-pressed={filterMode === 'high_match'}
-                className={`m3-tab-pill ${filterMode === 'high_match' ? 'active' : ''}`}
-              >
-                ≥75% match
-              </button>
-            </div>
-          </div>
-          <form
-            onSubmit={(event) => void searchRemoteListings(event)}
-            noValidate
-            className={`job-search-form${liveSearchMode !== 'remote' ? ' has-location' : ''}`}
-          >
-            <label className="job-search-field job-search-type-field">
-              <span className="sr-only">Search type</span>
-              <select
-                aria-label="Search type"
-                value={liveSearchMode}
-                onChange={(event) => handleSearchModeChange(event.target.value as LiveSearchMode)}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  minHeight: '40px',
-                  border: '1px solid var(--md-outline)',
-                  borderRadius: '8px',
-                  background: 'var(--md-surface)',
-                  color: 'var(--md-text-primary)',
-                  padding: '0 10px',
-                  fontSize: '12.5px',
-                  fontWeight: 600,
-                }}
-              >
-                <option value="remote">Remote</option>
-                <option value="regional">Regional</option>
-                <option value="hybrid">Hybrid</option>
-              </select>
-            </label>
-            <label className="job-search-field job-search-role-field" style={{ position: 'relative' }}>
-              <Search size={15} aria-hidden="true" style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: 'var(--md-text-muted)', pointerEvents: 'none' }} />
-              <input
-                aria-label="Search live jobs by role"
-                value={liveQuery}
-                onChange={(event) => {
-                  setLiveQuery(event.target.value);
-                  if (liveError) setLiveError('');
-                }}
-                maxLength={120}
-                placeholder="Search role..."
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  minHeight: '40px',
-                  border: '1px solid var(--md-outline)',
-                  borderRadius: '8px',
-                  background: 'var(--md-surface)',
-                  color: 'var(--md-text-primary)',
-                  padding: '0 12px 0 34px',
-                  fontSize: '13px',
-                }}
-              />
-            </label>
-            {liveSearchMode !== 'remote' && (
-              <label className="job-search-field job-search-location-field">
-                <span className="sr-only">City, region, or country</span>
-                <input
-                  aria-label="City, region, or country"
-                  value={liveLocation}
-                  onChange={(event) => {
-                    setLiveLocation(event.target.value);
-                    if (liveError) setLiveError('');
-                  }}
-                  maxLength={100}
-                  placeholder="City, region, or country"
+                    {roleBlueprint.category}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      background: progression.isUnlocked ? 'var(--md-success-bg)' : 'var(--md-warning-bg)',
+                      color: progression.isUnlocked ? 'var(--md-success)' : 'var(--md-warning)',
+                      padding: '2px 9px',
+                      borderRadius: '9999px',
+                    }}
+                  >
+                    {progression.isUnlocked ? 'Job Market Unlocked' : `Unlocks at ${MINIMUM_JOB_MARKET_PROGRESS_PCT}% Roadmap`}
+                  </span>
+                </div>
+                <h2
                   style={{
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    minHeight: '40px',
-                    border: '1px solid var(--md-outline)',
-                    borderRadius: '8px',
-                    background: 'var(--md-surface)',
+                    fontSize: '20px',
+                    fontWeight: 800,
                     color: 'var(--md-text-primary)',
-                    padding: '0 12px',
-                    fontSize: '13px',
-                  }}
-                />
-              </label>
-            )}
-            <button
-              type="submit"
-              disabled={liveLoading}
-              className="job-search-submit-btn"
-            >
-              {liveLoading ? <LoaderCircle size={14} className="spin-animation" aria-hidden="true" /> : <Search size={14} aria-hidden="true" />}
-              {liveLoading ? 'Searching' : 'Search'}
-            </button>
-          </form>
-          <p style={{ fontSize: '11px', color: 'var(--md-text-muted)', margin: '0 0 14px' }}>
-            {liveSearchMode === 'remote'
-              ? <>Live listings via <a href="https://remoteok.com" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Remote OK</a>.</>
-              : liveLocation.trim().length < 2 && liveVacancies.length === 0 && !liveLoading && !liveError
-                ? <>Enter a city, region, or country and select <strong>Search</strong> for regional listings via <a href="https://jooble.org/api/about" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Jooble</a>.</>
-                : <>Regional listings via <a href="https://jooble.org/api/about" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', fontWeight: 600 }}>Jooble</a>.</>}
-            {liveFetchedAt && <span> Updated {new Date(liveFetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</span>}
-          </p>
-
-          {/* Vacancies List */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {(loading || liveLoading) && <CardGridSkeleton count={3} label="Loading matching roles and vacancies" />}
-            {!loading && error && <p role="alert" style={{ color: 'var(--md-error)', fontSize: '13px' }}>{error}</p>}
-            {!loading && liveError && <p role="status" style={{ color: 'var(--md-text-secondary)', fontSize: '12.5px', margin: 0 }}>{liveError}</p>}
-            {!loading && !liveLoading && !liveError && allVacancies.length === 0 && <p style={{ color: 'var(--md-text-secondary)', fontSize: '12.5px' }}>No listings matched. Try a broader term.</p>}
-            {!loading && !liveLoading && allVacancies.length > 0 && displayedVacancies.length === 0 && <p style={{ color: 'var(--md-text-secondary)', fontSize: '12.5px' }}>No listings meet this filter.</p>}
-            {displayedVacancies.map((vac) => {
-              return (
-                <div
-                  key={vac.id}
-                  style={{
-                    border: '1px solid var(--md-outline)',
-                    background: 'var(--md-surface)',
-                    borderRadius: '12px',
-                    padding: '14px 16px',
+                    margin: '4px 0',
                   }}
                 >
+                  Global Job Market · {targetRole}
+                </h2>
+                <p style={{ fontSize: '13px', color: 'var(--md-text-secondary)', margin: 0 }}>
+                  Current job circulars around the world matched automatically to skills unlocked by your completed roadmap stages.
+                </p>
+              </div>
+
+              {/* Progression Status Card */}
+              <div
+                style={{
+                  background: 'var(--md-surface-variant)',
+                  border: '1px solid var(--md-outline)',
+                  borderRadius: '14px',
+                  padding: '12px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '16px',
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-secondary)', textTransform: 'uppercase' }}>
+                    Roadmap Progress
+                  </div>
+                  <div style={{ fontSize: '22px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
+                    {progression.progressPct}%
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
+                    {progression.completedStagesCount}/{progression.totalStagesCount} stages · {progression.achievedSkills.length} skills earned
+                  </div>
+                </div>
+
+                <div style={{ position: 'relative', width: '48px', height: '48px' }}>
+                  <svg width="48" height="48" viewBox="0 0 36 36" aria-hidden="true">
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke="var(--md-outline)"
+                      strokeWidth="3.8"
+                    />
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke={progression.isUnlocked ? '#10B981' : 'var(--md-primary)'}
+                      strokeWidth="3.8"
+                      strokeDasharray={`${progression.progressPct}, 100`}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {!progression.isUnlocked ? (
+            /* Minimum 20% Roadmap Unlock Gate */
+            <section
+              className="m3-surface-card"
+              style={{
+                padding: '32px 24px',
+                display: 'grid',
+                gap: '18px',
+                textAlign: 'center',
+                justifyItems: 'center',
+              }}
+            >
+              <div
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: '16px',
+                  background: 'var(--md-surface-variant)',
+                  border: '1px solid var(--md-outline)',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: 'var(--md-primary)',
+                }}
+              >
+                <Lock size={24} />
+              </div>
+
+              <div style={{ maxWidth: '520px' }}>
+                <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
+                  Reach {MINIMUM_JOB_MARKET_PROGRESS_PCT}% on Your Roadmap to Unlock Global Job Circulars
+                </h3>
+                <p style={{ margin: 0, fontSize: '13.5px', lineHeight: 1.6, color: 'var(--md-text-secondary)' }}>
+                  Global job circulars open once you achieve your first foundation skills by completing at least{' '}
+                  <strong>{MINIMUM_JOB_MARKET_PROGRESS_PCT}%</strong> of your <strong>{targetRole}</strong> roadmap.
+                  {progression.tasksNeededToUnlock > 0
+                    ? ` Complete ${progression.tasksNeededToUnlock} more task${progression.tasksNeededToUnlock === 1 ? '' : 's'} to unlock.`
+                    : ''}
+                </p>
+              </div>
+
+              <div style={{ width: '100%', maxWidth: '420px', display: 'grid', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
+                  <span>Current Progression: {progression.progressPct}%</span>
+                  <span>Target: {MINIMUM_JOB_MARKET_PROGRESS_PCT}% ({progression.completedTasks}/{progression.totalTasks} tasks)</span>
+                </div>
+                <div style={{ height: '8px', borderRadius: '9999px', background: 'var(--md-surface-variant)', border: '1px solid var(--md-outline)', overflow: 'hidden' }}>
                   <div
                     style={{
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      justifyContent: 'space-between',
-                      gap: '10px',
+                      width: `${Math.min(100, Math.round((progression.progressPct / MINIMUM_JOB_MARKET_PROGRESS_PCT) * 100))}%`,
+                      height: '100%',
+                      borderRadius: '9999px',
+                      background: 'var(--md-primary)',
+                      transition: 'width 0.3s ease',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {progression.upcomingSkills.length > 0 && (
+                <div style={{ maxWidth: '540px' }}>
+                  <div style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-muted)', marginBottom: '8px', textTransform: 'uppercase' }}>
+                    Skills you will unlock for job matching
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'center' }}>
+                    {progression.upcomingSkills.slice(0, 8).map((skill) => (
+                      <span
+                        key={skill}
+                        style={{
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          padding: '4px 10px',
+                          borderRadius: '9999px',
+                          background: 'var(--md-surface-variant)',
+                          border: '1px solid var(--md-outline)',
+                          color: 'var(--md-text-secondary)',
+                        }}
+                      >
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {onNavigateToRoadmap && (
+                <button
+                  type="button"
+                  className="btn-m3-primary"
+                  onClick={onNavigateToRoadmap}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '11px 20px' }}
+                >
+                  <span>Go to Roadmap &amp; Complete Tasks</span>
+                  <ArrowRight size={15} />
+                </button>
+              )}
+            </section>
+          ) : (
+            /* Unlocked 2-Column Layout: Roadmap Skills Matrix + Worldwide Job Circulars */
+            <div className="jm-unlocked-grid">
+              {/* LEFT COLUMN: Roadmap-Earned Skills */}
+              <div className="m3-surface-card jm-skills-card">
+                <div>
+                  <h3 style={{ margin: '0 0 4px', fontSize: '15px', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <CheckCircle2 size={16} color="var(--md-primary)" />
+                    Skills Achieved from Roadmap
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '12px', color: 'var(--md-text-secondary)' }}>
+                    Automatically unlocked as you finish stages on your career roadmap.
+                  </p>
+                </div>
+
+                <div>
+                  <span
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      color: 'var(--md-text-secondary)',
+                      letterSpacing: '0.04em',
+                      textTransform: 'uppercase',
+                      display: 'block',
                       marginBottom: '8px',
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <h4
-                        style={{
-                          fontSize: '14px',
-                          fontWeight: 700,
-                          color: 'var(--md-text-primary)',
-                          margin: '0 0 2px 0',
-                        }}
-                      >
-                        {vac.source_url ? (
-                          <a href={vac.source_url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
-                            {vac.title}<ExternalLink size={12} aria-hidden="true" style={{ marginLeft: '5px', verticalAlign: 'middle' }} />
-                          </a>
-                        ) : vac.title}
-                      </h4>
-                      <div style={{ fontSize: '12.5px', color: 'var(--md-primary)', fontWeight: 600 }}>
-                        {vac.company}
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--md-text-muted)', marginTop: '2px' }}>
-                        {vac.source_type === 'remoteok' ? 'Remote OK' : vac.source_type === 'jooble' ? 'Jooble' : 'Role Benchmark'}
-                        {vac.published_at && ` · ${new Date(vac.published_at).toLocaleDateString()}`}
-                      </div>
+                    Achieved ({progression.achievedSkills.length})
+                  </span>
+                  {progression.achievedSkills.length === 0 ? (
+                    <div style={{ fontSize: '12px', color: 'var(--md-text-muted)' }}>
+                      Complete all tasks inside your first stage on the Roadmap to formally mark its stage skills as achieved!
                     </div>
-
-                    {/* Match Badge */}
-                    <div
-                      style={{
-                        background:
-                          vac.match_pct !== null && vac.match_pct >= 75
-                            ? 'var(--md-success-bg)'
-                            : 'var(--md-surface-variant)',
-                        color:
-                          vac.match_pct !== null && vac.match_pct >= 75
-                            ? 'var(--md-success)'
-                            : 'var(--md-text-secondary)',
-                        border: '1px solid var(--md-outline)',
-                        padding: '3px 9px',
-                        borderRadius: '9999px',
-                        fontSize: '11px',
-                        fontWeight: 700,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {vac.match_pct === null ? 'No tag match' : `${vac.match_pct}% skills`}
-                    </div>
-                  </div>
-
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '14px',
-                      fontSize: '12px',
-                      color: 'var(--md-text-secondary)',
-                      marginBottom: vac.required_skills.length ? '10px' : 0,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <MapPin size={12} /> {vac.location}
-                    </span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                      <DollarSign size={12} /> {vac.salary_range}
-                    </span>
-                  </div>
-
-                  {vac.required_skills.length > 0 && (
+                  ) : (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                      {vac.required_skills.map((skill) => {
-                        const isAcquired = !vac.missing_skills.includes(skill);
-                        return (
+                      {progression.skillItems
+                        .filter((item) => item.isUnlocked)
+                        .map((item) => (
                           <span
-                            key={skill}
-                            style={{
-                              fontSize: '11px',
-                              fontWeight: 600,
-                              padding: '2px 8px',
-                              borderRadius: '6px',
-                              background: isAcquired ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
-                              color: isAcquired ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
-                              border: '1px solid var(--md-outline)',
-                            }}
+                            key={item.name}
+                            title={`Unlocked at Stage ${item.stagePosition}: ${item.stageTitle}`}
+                            className="jm-achieved-pill"
                           >
-                            {isAcquired ? '✓ ' : ''}{skill}
+                            <CheckCircle2 size={12} color="#059669" style={{ flexShrink: 0 }} />
+                            <span>{item.name}</span>
                           </span>
-                        );
-                      })}
+                        ))}
                     </div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+
+                {progression.upcomingSkills.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', gap: '8px' }}>
+                      <span
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          color: 'var(--md-text-secondary)',
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Unlocking in Next Stages ({progression.upcomingSkills.length})
+                      </span>
+                      {progression.upcomingSkills.length > 3 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllUpcomingSkills((prev) => !prev)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            color: 'var(--md-primary)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {showAllUpcomingSkills ? 'Show less' : `View all (${progression.upcomingSkills.length})`}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gap: '6px' }}>
+                      {progression.skillItems
+                        .filter((item) => !item.isUnlocked)
+                        .slice(0, showAllUpcomingSkills ? 8 : 3)
+                        .map((item) => {
+                          const shortStage = item.stageTitle.split('·')[0].replace(/^Phase\s+\d+:\s*/i, '').trim();
+                          return (
+                            <div
+                              key={item.name}
+                              className="jm-upcoming-row"
+                            >
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <strong style={{ fontSize: '12.5px', fontWeight: 700, color: 'var(--md-text-primary)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {item.name}
+                                </strong>
+                                <span style={{ fontSize: '11px', color: 'var(--md-text-muted)', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  Stage {String(item.stagePosition).padStart(2, '0')} · {shortStage}
+                                </span>
+                              </div>
+                              {onAddSkillToRoadmap && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleQueueSkill(item.name)}
+                                  style={{
+                                    background: 'var(--md-surface)',
+                                    border: '1px solid var(--md-outline)',
+                                    color: 'var(--md-text-secondary)',
+                                    borderRadius: '8px',
+                                    padding: '5px 8px',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  <PlusCircle size={12} /> Queue
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {onNavigateToRoadmap && progression.progressPct < 100 && (
+                  <button
+                    type="button"
+                    className="btn-m3-white"
+                    onClick={onNavigateToRoadmap}
+                    style={{ width: '100%', padding: '9px 12px', fontSize: '12.5px', fontWeight: 700 }}
+                  >
+                    Advance Roadmap Progress ({progression.progressPct}%)
+                  </button>
+                )}
+              </div>
+
+              {/* RIGHT COLUMN: Global Job Circulars */}
+              <div className="m3-surface-card jm-circulars-card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '16px', fontWeight: 800, color: 'var(--md-text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '7px' }}>
+                      <Globe size={16} color="var(--md-primary)" />
+                      Global Job Circulars Around the World
+                    </h3>
+                    <span style={{ fontSize: '12px', color: 'var(--md-text-secondary)' }}>
+                      Ranked by your {progression.achievedSkills.length} achieved skill{progression.achievedSkills.length === 1 ? '' : 's'} · {targetRole}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setFilterMode('all')}
+                      aria-pressed={filterMode === 'all'}
+                      className={`m3-tab-pill ${filterMode === 'all' ? 'active' : ''}`}
+                    >
+                      All ({combinedCirculars.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterMode('strong_match')}
+                      aria-pressed={filterMode === 'strong_match'}
+                      className={`m3-tab-pill ${filterMode === 'strong_match' ? 'active' : ''}`}
+                    >
+                      ≥50% Match
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Global Region Chips */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {GLOBAL_MARKET_REGIONS.map((region) => {
+                    const active = liveSearchMode === region.mode && liveLocation.toLowerCase() === region.location.toLowerCase();
+                    return (
+                      <button
+                        key={region.id}
+                        type="button"
+                        onClick={() => handleRegionPreset(region)}
+                        style={{
+                          padding: '5px 11px',
+                          borderRadius: '9999px',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          border: `1px solid ${active ? 'var(--md-primary)' : 'var(--md-outline)'}`,
+                          background: active ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
+                          color: active ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {region.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Global Search Form */}
+                <form
+                  onSubmit={(event) => void handleSearchSubmit(event)}
+                  noValidate
+                  className={`job-search-form${liveSearchMode !== 'remote' ? ' has-location' : ''}`}
+                >
+                  <label className="job-search-field job-search-type-field">
+                    <span className="sr-only">Search scope</span>
+                    <select
+                      aria-label="Search scope"
+                      value={liveSearchMode}
+                      onChange={(event) => setLiveSearchMode(event.target.value as LiveSearchMode)}
+                      className="job-search-control job-search-select"
+                    >
+                      <option value="remote">Worldwide Remote</option>
+                      <option value="regional">Country / City</option>
+                      <option value="hybrid">Global Hybrid</option>
+                    </select>
+                  </label>
+                  <label className="job-search-field job-search-role-field">
+                    <span className="sr-only">Search global job circulars by role</span>
+                    <Search size={15} aria-hidden="true" className="job-search-input-icon" />
+                    <input
+                      aria-label="Search global job circulars by role"
+                      value={liveQuery}
+                      onChange={(event) => {
+                        setLiveQuery(event.target.value);
+                        if (liveError) setLiveError('');
+                      }}
+                      maxLength={120}
+                      placeholder="Role or skill..."
+                      className="job-search-control job-search-input-with-icon"
+                    />
+                  </label>
+                  {liveSearchMode !== 'remote' && (
+                    <label className="job-search-field job-search-location-field">
+                      <span className="sr-only">Country, city, or region</span>
+                      <MapPin size={15} aria-hidden="true" className="job-search-input-icon" />
+                      <input
+                        aria-label="Country, city, or region"
+                        value={liveLocation}
+                        onChange={(event) => {
+                          setLiveLocation(event.target.value);
+                          if (liveError) setLiveError('');
+                        }}
+                        maxLength={100}
+                        placeholder="e.g. Germany, Canada, Dhaka"
+                        className="job-search-control job-search-input-with-icon"
+                      />
+                    </label>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={liveLoading}
+                    className="job-search-submit-btn"
+                  >
+                    {liveLoading ? <LoaderCircle size={14} className="spin-animation" aria-hidden="true" /> : <Search size={14} aria-hidden="true" />}
+                    <span>{liveLoading ? 'Searching…' : 'Search'}</span>
+                  </button>
+                </form>
+
+                {liveFetchedAt && (
+                  <div style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>
+                    Live circular feed synced {new Date(liveFetchedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.
+                  </div>
+                )}
+                {liveError && (
+                  <p role="status" style={{ color: 'var(--md-text-secondary)', fontSize: '12px', margin: 0 }}>
+                    {liveError}
+                  </p>
+                )}
+
+                {/* Job Circular Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {liveLoading && <CardGridSkeleton count={3} label="Searching global job circulars" />}
+
+                  {!liveLoading && displayedCirculars.length === 0 && (
+                    <p style={{ color: 'var(--md-text-secondary)', fontSize: '12.5px', margin: 0 }}>
+                      No circulars matched this strict filter yet — try switching to &ldquo;All&rdquo; or advancing another stage on your Roadmap.
+                    </p>
+                  )}
+
+                  {!liveLoading &&
+                    displayedCirculars.map((vac) => (
+                      <div
+                        key={vac.id}
+                        style={{
+                          border: '1px solid var(--md-outline)',
+                          background: 'var(--md-surface)',
+                          borderRadius: '12px',
+                          padding: '14px 16px',
+                          display: 'grid',
+                          gap: '8px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <h4 style={{ fontSize: '14.5px', fontWeight: 700, color: 'var(--md-text-primary)', margin: '0 0 2px' }}>
+                              {vac.source_url ? (
+                                <a
+                                  href={vac.source_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: 'inherit', textDecoration: 'none' }}
+                                >
+                                  {vac.title} <ExternalLink size={12} aria-hidden="true" style={{ verticalAlign: 'middle' }} />
+                                </a>
+                              ) : (
+                                vac.title
+                              )}
+                            </h4>
+                            <div style={{ fontSize: '12.5px', color: 'var(--md-primary)', fontWeight: 600 }}>
+                              {vac.company}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--md-text-muted)', marginTop: '2px' }}>
+                              {vac.source_type === 'remoteok'
+                                ? 'Live Circular · Remote OK'
+                                : vac.source_type === 'jooble'
+                                  ? 'Live Circular · Jooble'
+                                  : 'Global Circular Search Portal'}
+                              {vac.published_at && ` · ${new Date(vac.published_at).toLocaleDateString()}`}
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              background:
+                                vac.match_pct !== null && vac.match_pct >= 50
+                                  ? 'var(--md-success-bg)'
+                                  : 'var(--md-surface-variant)',
+                              color:
+                                vac.match_pct !== null && vac.match_pct >= 50
+                                  ? 'var(--md-success)'
+                                  : 'var(--md-text-secondary)',
+                              border: '1px solid var(--md-outline)',
+                              padding: '3px 9px',
+                              borderRadius: '9999px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                            }}
+                          >
+                            {vac.match_pct === null ? 'Role Match' : `${vac.match_pct}% skill match`}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: 'var(--md-text-secondary)', flexWrap: 'wrap' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <MapPin size={12} /> {vac.location}
+                          </span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <DollarSign size={12} /> {vac.salary_range}
+                          </span>
+                        </div>
+
+                        {vac.required_skills.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                            {vac.required_skills.map((skill) => {
+                              const isAchieved = !vac.missing_skills.includes(skill);
+                              return (
+                                <span
+                                  key={skill}
+                                  style={{
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    background: isAchieved ? 'var(--md-primary-container)' : 'var(--md-surface-variant)',
+                                    color: isAchieved ? 'var(--md-on-primary-container)' : 'var(--md-text-secondary)',
+                                    border: '1px solid var(--md-outline)',
+                                  }}
+                                >
+                                  {isAchieved ? '✓ ' : ''}{skill}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

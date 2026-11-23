@@ -1,20 +1,13 @@
 import {
-  Home,
-  Calendar,
-  PieChart,
-  Bot,
   Compass,
-  Mic2,
-  FileText,
-  TrendingUp,
   Moon,
   Sun,
   LogOut,
-  User,
 } from 'lucide-react';
 import type { ActiveNavTab, Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
 import type { AIQuotaSummary } from '../features/ai/aiGateway';
+import { LEARNER_CORE_NAV_ITEMS, LEARNER_TOOL_NAV_ITEMS } from './learnerNavItems';
 
 interface Props {
   activeTab: ActiveNavTab;
@@ -39,19 +32,8 @@ export const DesktopSidebar: React.FC<Props> = ({
   onOpenSettings: _onOpenSettings,
   onSignOut,
 }) => {
-  const coreNavItems = [
-    { id: 'home' as ActiveNavTab, label: 'Roadmap', icon: Home },
-    { id: 'plan' as ActiveNavTab, label: 'Schedule', icon: Calendar },
-    { id: 'overview' as ActiveNavTab, label: 'Analytics', icon: PieChart },
-    { id: 'coach' as ActiveNavTab, label: 'AI Coach', icon: Bot },
-  ];
-
-  const careerAccelerators = [
-    { id: 'interview' as ActiveNavTab, label: 'Interviews', icon: Mic2 },
-    { id: 'cv' as ActiveNavTab, label: 'Resume', icon: FileText },
-    { id: 'skills' as ActiveNavTab, label: 'Skills', icon: TrendingUp },
-    { id: 'profile' as ActiveNavTab, label: 'Account', icon: User },
-  ];
+  const coreNavItems = LEARNER_CORE_NAV_ITEMS;
+  const careerAccelerators = LEARNER_TOOL_NAV_ITEMS;
 
   return (
     <aside className="desktop-sidebar">

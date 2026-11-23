@@ -1,7 +1,8 @@
-import type { Task, TaskQuiz } from '../../types';
+import type { Milestone, Task, TaskQuiz } from '../../types';
 import { findCuratedCareerBlueprint, type CareerCategory } from './careerCatalog';
 import { getCheckpointQuizTemplateId, type CheckpointQuizTemplateId } from './checkpointQuizCatalog';
 import { domainQuizTemplates } from './domainCheckpointQuizTemplates';
+import { buildShuffledOptions, buildSmartCheckpointQuiz } from './smartQuizEngine';
 
 // Development-only mirror of private.checkpoint_quiz_templates. Keep IDs and
 // question content in sync; production builds do not include this module.
@@ -368,27 +369,88 @@ function createQuizFromTemplate(
   prefix: 'demo_quiz_' | 'local_quiz_'
 ): TaskQuiz {
   const template = demoQuizTemplates[templateId];
+  const correctOpt = template.options.find((opt) => opt.id === template.correct) || template.options[0];
+  const distractorTexts = template.options
+    .filter((opt) => opt.id !== template.correct)
+    .map((opt) => opt.text);
+  const shuffledOptions = buildShuffledOptions(
+    {
+      question: template.question,
+      correctText: correctOpt.text,
+      distractors: [
+        distractorTexts[0] || 'Skip validation',
+        distractorTexts[1] || 'Assume success without checks',
+        distractorTexts[2] || 'Ignore error cases',
+      ],
+      explanation: template.explanation,
+    },
+    `${taskId}:${templateId}`
+  );
   return {
     id: `${prefix}${taskId}`,
     task_id: taskId,
     question: template.question.replace('{checkpoint}', title),
-    options: template.options.map((option) => ({ ...option, is_correct: option.id === template.correct })),
+    options: shuffledOptions,
     explanation: template.explanation,
   };
 }
 
-export function attachDemoCheckpointQuizzes(tasks: Task[]): Task[] {
+export function attachDemoCheckpointQuizzes(
+  tasks: Task[],
+  milestones: Milestone[] = [],
+  roleTitle = 'Career Pilot',
+  category: CareerCategory = 'Software & Web'
+): Task[] {
+  const milestoneById = new Map(milestones.map((m, idx) => [m.id, { milestone: m, index: idx }]));
   return tasks.map((task) => {
-    if (task.type !== 'Checkpoint' || !task.quiz_template_id) return task;
+    if (task.type !== 'Checkpoint') return task;
+    const mInfo = milestoneById.get(task.milestone_id);
+    const stageTasks = tasks.filter((t) => t.milestone_id === task.milestone_id);
+    if (mInfo) {
+      const smart = buildSmartCheckpointQuiz({
+        task,
+        milestone: mInfo.milestone,
+        stageTasks,
+        roleTitle,
+        category,
+        stageIndex: mInfo.index,
+        totalStages: Math.max(1, milestones.length),
+      });
+      return {
+        ...task,
+        quiz: {
+          ...smart,
+          id: `demo_quiz_${task.id}`,
+        },
+      };
+    }
+    if (!task.quiz_template_id) return task;
+    const fallbackBase = createQuizFromTemplate(
+      task.quiz_template_id as CheckpointQuizTemplateId,
+      task.id,
+      task.title,
+      'demo_quiz_'
+    );
+    const smartFallback = buildSmartCheckpointQuiz({
+      task: { ...task, quiz: { ...fallbackBase, id: `demo_quiz_${task.id}` } },
+      roleTitle,
+      category,
+      stageIndex: 0,
+      totalStages: 4,
+    });
     return {
       ...task,
-      quiz: createQuizFromTemplate(task.quiz_template_id as CheckpointQuizTemplateId, task.id, task.title, 'demo_quiz_'),
+      quiz: {
+        ...fallbackBase,
+        questions: smartFallback.questions,
+      },
     };
   });
 }
 
 /**
- * Resolve a fallback checkpoint quiz when no server-side quiz row exists yet.
+ * Resolve a multi-question smart checkpoint quiz tailored to the stage's tasks & skills,
+ * preserving any server-backed `task_quizzes` question for DB verification.
  */
 export function createFallbackCheckpointQuiz(
   taskId: string,
@@ -397,7 +459,10 @@ export function createFallbackCheckpointQuiz(
   milestoneIndex: number,
   totalMilestones: number,
   category?: CareerCategory,
-  explicitTemplateId?: string
+  explicitTemplateId?: string,
+  milestone?: Milestone,
+  stageTasks?: Task[],
+  existingTask?: Task
 ): TaskQuiz {
   const curated = findCuratedCareerBlueprint(roleTitle);
   const resolvedSlug = curated?.slug || roleTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -412,6 +477,30 @@ export function createFallbackCheckpointQuiz(
     explicitTemplateId && Object.prototype.hasOwnProperty.call(demoQuizTemplates, explicitTemplateId)
       ? (explicitTemplateId as CheckpointQuizTemplateId)
       : defaultTemplateId;
+
+  const baseTask: Task = existingTask ?? {
+    id: taskId,
+    milestone_id: milestone?.id || '',
+    user_id: '',
+    title,
+    subject: milestone?.title || title,
+    type: 'Checkpoint',
+    due_date: '',
+    est_minutes: 45,
+    progress_pct: 0,
+  };
+
+  if (milestone || (stageTasks && stageTasks.length > 0) || existingTask?.quiz) {
+    return buildSmartCheckpointQuiz({
+      task: baseTask,
+      milestone,
+      stageTasks,
+      roleTitle,
+      category: resolvedCategory,
+      stageIndex: Math.max(0, milestoneIndex),
+      totalStages: Math.max(1, totalMilestones),
+    });
+  }
 
   return createQuizFromTemplate(templateId, taskId, title, 'local_quiz_');
 }

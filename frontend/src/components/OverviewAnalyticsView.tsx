@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { ArrowLeft, ChevronRight, Sliders } from 'lucide-react';
 import type { Milestone, Task, Profile, ActiveNavTab, TaskActionType } from '../types';
+import { computeRoadmapProgressPct } from '../features/roadmap/roadmapProgressMilestones';
 
 interface Props {
   milestones?: Milestone[];
@@ -58,7 +59,7 @@ export const OverviewAnalyticsView: React.FC<Props> = ({
   const totalTasks = tasks.length;
   const completedTasks = useMemo(() => tasks.filter((t) => t.done_at != null), [tasks]);
   const completedCount = completedTasks.length;
-  const progressPct = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
+  const progressPct = useMemo(() => computeRoadmapProgressPct(milestones, tasks), [milestones, tasks]);
 
   // Execution Hours
   const totalPlannedMinutes = useMemo(() => {
@@ -189,10 +190,17 @@ export const OverviewAnalyticsView: React.FC<Props> = ({
 
   // ── 3. Domain Competencies Breakdown (Skill Clusters) ──────────────────────
   const domainSkills = useMemo(() => {
+    const milestoneById = new Map(milestones.map((m) => [m.id, m]));
     const map = new Map<string, { total: number; done: number; taskCount: number }>();
 
     tasks.forEach((t) => {
-      const subject = t.subject || 'Core Architecture';
+      const m = milestoneById.get(t.milestone_id);
+      const rawSubject = (t.subject || '').trim();
+      const conciseFromMilestone = m?.skills_covered?.[0]?.trim();
+      let subject = rawSubject || conciseFromMilestone || 'Core Skills';
+      if (subject.includes('·') || subject.length > 36 || /^(phase|stage|week)\s+\d+/i.test(subject)) {
+        subject = conciseFromMilestone || subject.split('·')[0].replace(/^Phase\s+\d+:\s*/i, '').trim() || 'Core Skills';
+      }
       const existing = map.get(subject) || { total: 0, done: 0, taskCount: 0 };
       const mins = t.est_minutes ?? 0;
       existing.total += mins;
@@ -219,7 +227,7 @@ export const OverviewAnalyticsView: React.FC<Props> = ({
       })
       .sort((a, b) => b.totalHours - a.totalHours)
       .slice(0, 5);
-  }, [tasks]);
+  }, [tasks, milestones]);
 
   // ── 4. Burn-Up Chart Geometry & Trajectory Simulation ───────────────────────
   const chartPoints = useMemo(() => {
@@ -508,7 +516,7 @@ export const OverviewAnalyticsView: React.FC<Props> = ({
           <div className="ps-kpi-bar">
             <div
               className="ps-kpi-bar-fill"
-              style={{ width: `${totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0}%` }}
+              style={{ width: `${Math.min(100, progressPct)}%` }}
             />
           </div>
         </div>
@@ -1139,6 +1147,7 @@ const analyticsStyles = `
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
 }
 
 .ps-card-header {
@@ -1450,14 +1459,16 @@ const analyticsStyles = `
   gap: 16px;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1023px) {
   .ps-breakdown-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 }
 
 .ps-mini-card {
   gap: 14px;
+  min-width: 0;
 }
 
 /* 7-Day Effort Bars */
@@ -1534,6 +1545,7 @@ const analyticsStyles = `
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
 }
 
 .ps-domain-head {
@@ -1542,6 +1554,7 @@ const analyticsStyles = `
   justify-content: space-between;
   gap: 8px;
   font-size: 0.74rem;
+  min-width: 0;
 }
 
 .ps-domain-name {
@@ -1550,6 +1563,8 @@ const analyticsStyles = `
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 
 .ps-domain-stats {
@@ -1645,8 +1660,13 @@ const analyticsStyles = `
 }
 
 @media (max-width: 640px) {
-  .ps-page {
-    padding: 0 2px 24px;
+  .ps-root {
+    padding: 0 0 28px;
+    gap: 12px;
+  }
+
+  .ps-breakdown-grid {
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
 

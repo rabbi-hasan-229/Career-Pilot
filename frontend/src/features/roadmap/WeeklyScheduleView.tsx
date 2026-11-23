@@ -28,6 +28,8 @@ import {
   type DetailedNotificationSettings,
 } from '../notifications/notificationService';
 import { TaskResourceLink } from './TaskResourceLink';
+import { computeRoadmapProgressPct } from './roadmapProgressMilestones';
+import { sortStageTasks } from './stageTaskOrder';
 
 interface Props {
   milestones: Milestone[];
@@ -268,12 +270,12 @@ export const WeeklyScheduleView: React.FC<Props> = ({
 
   const currentTasks = useMemo(() => {
     if (!currentMilestone) return [];
-    return tasks.filter((t) => t.milestone_id === currentMilestone.id);
+    return sortStageTasks(tasks.filter((t) => t.milestone_id === currentMilestone.id));
   }, [currentMilestone, tasks]);
 
   const totalTasks = tasks.length;
   const completedTasks = useMemo(() => tasks.filter((t) => t.done_at != null).length, [tasks]);
-  const overallPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+  const overallPct = useMemo(() => computeRoadmapProgressPct(milestones, tasks), [milestones, tasks]);
 
   const currentStageDone = useMemo(() => currentTasks.filter((t) => t.done_at != null).length, [currentTasks]);
   const currentStagePct = currentTasks.length > 0 ? Math.round((currentStageDone / currentTasks.length) * 100) : 0;

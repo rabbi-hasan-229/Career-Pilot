@@ -235,6 +235,18 @@ export const WorkspaceSkeleton: React.FC<{ variant: ActiveNavTab }> = ({ variant
     );
   }
 
+  if (variant === 'experts') {
+    return (
+      <div role="status" aria-busy="true" aria-label="Loading industry experts" className="skeleton-workspace-pad">
+        <div className="skeleton-card skeleton-header-row">
+          <SkeletonBlock width="min(240px, 64%)" height={20} />
+          <SkeletonBlock width={140} height={32} radius={999} />
+        </div>
+        <CardGridSkeleton count={3} label="Loading expert profiles" />
+      </div>
+    );
+  }
+
   if (variant === 'plan') {
     return (
       <div role="status" aria-busy="true" aria-label="Loading weekly schedule" className="skeleton-workspace-pad">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, CalendarDays, Plus, PieChart, Bot } from 'lucide-react';
+import { Home, CalendarDays, LayoutGrid, PieChart, Bot } from 'lucide-react';
 import type { ActiveNavTab } from '../types';
 
 interface Props {
@@ -10,7 +10,7 @@ interface Props {
 
 export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuickAction }) => {
   const isToolsActive =
-    activeTab === 'interview' || activeTab === 'cv' || activeTab === 'skills' || activeTab === 'profile';
+    activeTab === 'interview' || activeTab === 'cv' || activeTab === 'skills' || activeTab === 'experts' || activeTab === 'profile';
 
   return (
     <nav className="mobile-bottom-nav" aria-label="Workspace navigation">
@@ -21,7 +21,7 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuick
         aria-current={activeTab === 'home' ? 'page' : undefined}
         onClick={() => onChangeTab('home')}
       >
-        <Home size={20} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
+        <Home size={19} strokeWidth={activeTab === 'home' ? 2.5 : 2} />
         <span>Roadmap</span>
       </button>
 
@@ -32,19 +32,20 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuick
         aria-current={activeTab === 'plan' ? 'page' : undefined}
         onClick={() => onChangeTab('plan')}
       >
-        <CalendarDays size={20} strokeWidth={activeTab === 'plan' ? 2.5 : 2} />
+        <CalendarDays size={19} strokeWidth={activeTab === 'plan' ? 2.5 : 2} />
         <span>Schedule</span>
       </button>
 
-      {/* 3. Center Action Button */}
+      {/* 3. Tools & All Feature Pages */}
       <button
         type="button"
-        className={`mobile-fab-center ${isToolsActive ? 'is-tools-active' : ''}`}
+        className={`mobile-nav-btn mobile-nav-tools-btn ${isToolsActive ? 'active' : ''}`}
         onClick={onOpenQuickAction}
-        title="Quick Actions & Career Tools"
-        aria-label="Open quick actions and career tools"
+        title="Open Career Tools & Feature Pages"
+        aria-label="Open career tools and feature pages"
       >
-        <Plus size={24} strokeWidth={2.8} />
+        <LayoutGrid size={19} strokeWidth={isToolsActive ? 2.5 : 2} />
+        <span>Tools</span>
       </button>
 
       {/* 4. Stats */}
@@ -54,8 +55,8 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuick
         aria-current={activeTab === 'overview' ? 'page' : undefined}
         onClick={() => onChangeTab('overview')}
       >
-        <PieChart size={20} strokeWidth={activeTab === 'overview' ? 2.5 : 2} />
-        <span>Pacing</span>
+        <PieChart size={19} strokeWidth={activeTab === 'overview' ? 2.5 : 2} />
+        <span>Analytics</span>
       </button>
 
       {/* 5. Coach */}
@@ -65,8 +66,8 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, onOpenQuick
         aria-current={activeTab === 'coach' ? 'page' : undefined}
         onClick={() => onChangeTab('coach')}
       >
-        <Bot size={20} strokeWidth={activeTab === 'coach' ? 2.5 : 2} />
-        <span>Coach</span>
+        <Bot size={19} strokeWidth={activeTab === 'coach' ? 2.5 : 2} />
+        <span>AI Coach</span>
       </button>
     </nav>
   );

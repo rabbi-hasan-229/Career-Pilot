@@ -21,7 +21,7 @@ vi.mock('../../lib/supabase', () => ({
   setRememberMePreference: vi.fn(),
 }));
 
-import { completeTask, loadActiveRoadmap, saveCareerPlan } from './roadmapRepository';
+import { applyPlannerAction, completeTask, loadActiveRoadmap, saveCareerPlan } from './roadmapRepository';
 
 const storageBacking = new Map<string, string>();
 const mockLocalStorage = {
@@ -318,5 +318,245 @@ describe('roadmapRepository Phase 1 schema fallbacks', () => {
       xp_awarded: 35,
       current_streak: null,
     });
+  });
+
+  it('orders loaded stage tasks as Learn -> Build -> Practice -> Checkpoint when DB due dates tie', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'user_roadmaps') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: () => ({
+                  limit: () => ({
+                    maybeSingle: async () => ({
+                      data: { id: 'roadmap-db-1', target_date: '2027-05-15' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      if (table === 'milestones') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                order: async () => ({
+                  data: [
+                    {
+                      id: 'milestone-db-1',
+                      roadmap_id: 'roadmap-db-1',
+                      user_id: 'user-1',
+                      title: 'Foundations',
+                      position: 1,
+                      start_date: '2026-11-15',
+                      end_date: '2026-11-22',
+                      status: 'doing',
+                      skills_covered: ['SQL'],
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      if (table === 'tasks') {
+        return {
+          select: () => ({
+            in: () => ({
+              eq: () => ({
+                order: async () => ({
+                  data: [
+                    {
+                      id: 't-practice',
+                      milestone_id: 'milestone-db-1',
+                      user_id: 'user-1',
+                      title: 'Practice SQL queries',
+                      task_type: 'Practice',
+                      due_date: '2026-11-22',
+                      est_minutes: 45,
+                      done_at: null,
+                      resource_id: null,
+                    },
+                    {
+                      id: 't-checkpoint',
+                      milestone_id: 'milestone-db-1',
+                      user_id: 'user-1',
+                      title: 'Week 1 Checkpoint: Verify schema benchmarks',
+                      task_type: 'Checkpoint',
+                      due_date: '2026-11-22',
+                      est_minutes: 60,
+                      done_at: null,
+                      resource_id: null,
+                    },
+                    {
+                      id: 't-learn',
+                      milestone_id: 'milestone-db-1',
+                      user_id: 'user-1',
+                      title: 'Study SQL indexing',
+                      task_type: 'Learn',
+                      due_date: '2026-11-22',
+                      est_minutes: 60,
+                      done_at: null,
+                      resource_id: null,
+                    },
+                    {
+                      id: 't-build',
+                      milestone_id: 'milestone-db-1',
+                      user_id: 'user-1',
+                      title: 'Build composite index migration',
+                      task_type: 'Build',
+                      due_date: '2026-11-22',
+                      est_minutes: 90,
+                      done_at: null,
+                      resource_id: null,
+                    },
+                  ],
+                  error: null,
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+
+      if (table === 'task_quizzes_public' || table === 'task_quizzes') {
+        return {
+          select: () => ({
+            in: async () => ({ data: [], error: null }),
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const loaded = await loadActiveRoadmap('user-1');
+    expect(loaded?.tasks.map((task) => task.type)).toEqual(['Learn', 'Build', 'Practice', 'Checkpoint']);
+    expect(loaded?.tasks.map((task) => task.id)).toEqual(['t-learn', 't-build', 't-practice', 't-checkpoint']);
+  });
+
+  it('applies planner shift via RPC when apply_user_roadmap_action succeeds', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        success: true,
+        day_shift: 3,
+        target_date: '2026-12-03',
+        message: 'Stage shifted by 3 days.',
+      },
+      error: null,
+    });
+
+    const sampleMilestones: Milestone[] = [
+      {
+        id: 'm1',
+        roadmap_id: 'roadmap-1',
+        user_id: 'user-1',
+        title: 'Stage 1',
+        position: 1,
+        start_date: '2026-11-20',
+        end_date: '2026-11-30',
+        status: 'doing',
+        effort_hours: 10,
+        skills_covered: ['Python'],
+      },
+    ];
+    const sampleTasks: Task[] = [
+      {
+        id: 't1',
+        milestone_id: 'm1',
+        user_id: 'user-1',
+        title: 'Study FastAPI',
+        subject: 'Python',
+        type: 'Learn',
+        due_date: '2026-11-25',
+        est_minutes: 45,
+        progress_pct: 0,
+        done_at: null,
+      },
+    ];
+
+    const outcome = await applyPlannerAction('user-1', 'behind', sampleMilestones, sampleTasks);
+    expect(mockRpc).toHaveBeenCalledWith('apply_user_roadmap_action', { p_action_type: 'behind' });
+    expect(outcome.updatedMilestones[0].end_date).toBe('2026-12-03');
+    expect(outcome.updatedTasks[0].due_date).toBe('2026-11-28');
+    expect(outcome.targetDate).toBe('2026-12-03');
+    expect(outcome.message).toBe('Stage shifted by 3 days.');
+  });
+
+  it('falls back to updating base tables when apply_user_roadmap_action RPC is missing', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find the function public.apply_user_roadmap_action in the schema cache',
+      },
+    });
+
+    const updates: Array<{ table: string; payload: Record<string, unknown>; id: string }> = [];
+    mockFrom.mockImplementation((table: string) => ({
+      update: (payload: Record<string, unknown>) => ({
+        eq: (_col: string, id: string) => {
+          if (table === 'profiles') {
+            updates.push({ table, payload, id });
+            return Promise.resolve({ error: null });
+          }
+          return {
+            eq: async () => {
+              updates.push({ table, payload, id });
+              return { error: null };
+            },
+          };
+        },
+      }),
+    }));
+
+    const sampleMilestones: Milestone[] = [
+      {
+        id: 'm1',
+        roadmap_id: 'roadmap-1',
+        user_id: 'user-1',
+        title: 'Stage 1',
+        position: 1,
+        start_date: '2026-11-20',
+        end_date: '2026-11-30',
+        status: 'doing',
+        effort_hours: 10,
+        skills_covered: ['Python'],
+      },
+    ];
+    const sampleTasks: Task[] = [
+      {
+        id: 't1',
+        milestone_id: 'm1',
+        user_id: 'user-1',
+        title: 'Study FastAPI',
+        subject: 'Python',
+        type: 'Learn',
+        due_date: '2026-11-25',
+        est_minutes: 45,
+        progress_pct: 0,
+        done_at: null,
+      },
+    ];
+
+    const outcome = await applyPlannerAction('user-1', 'behind', sampleMilestones, sampleTasks);
+    expect(outcome.updatedMilestones[0].end_date).toBe('2026-12-03');
+    expect(outcome.updatedTasks[0].due_date).toBe('2026-11-28');
+    expect(outcome.targetDate).toBe('2026-12-03');
+    expect(updates).toEqual([
+      { table: 'milestones', payload: { start_date: '2026-11-20', end_date: '2026-12-03' }, id: 'm1' },
+      { table: 'tasks', payload: { due_date: '2026-11-28' }, id: 't1' },
+      { table: 'user_roadmaps', payload: { target_date: '2026-12-03' }, id: 'roadmap-1' },
+      { table: 'profiles', payload: { target_completion_date: '2026-12-03' }, id: 'user-1' },
+    ]);
   });
 });

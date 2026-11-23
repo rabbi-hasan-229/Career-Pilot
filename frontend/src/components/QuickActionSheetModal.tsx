@@ -7,6 +7,7 @@ import {
   Compass,
   ArrowRight,
   User,
+  GraduationCap,
 } from 'lucide-react';
 import type { ActiveNavTab } from '../types';
 import { useAccessibleDialog } from '../hooks/useAccessibleDialog';
@@ -185,10 +186,43 @@ export const QuickActionSheetModal: React.FC<Props> = ({
                 </div>
                 <div>
                   <div style={{ fontSize: '13.5px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
-                    Skill-Gap & Job Matches
+                    Job Market &amp; Global Circulars
                   </div>
                   <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                    Compare against live industry vacancies in SQL
+                    Global jobs matched to your roadmap progression
+                  </div>
+                </div>
+              </div>
+              <ArrowRight size={16} color="var(--md-text-muted)" />
+            </button>
+
+            <button
+              onClick={() => {
+                onSelectTab('experts');
+                onClose();
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 14px',
+                borderRadius: '14px',
+                border: '1px solid var(--md-outline)',
+                background: 'var(--md-surface-variant)',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ background: 'rgba(16, 185, 129, 0.14)', padding: '10px', borderRadius: '12px', color: '#10B981' }}>
+                  <GraduationCap size={18} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 800, color: 'var(--md-text-primary)' }}>
+                    Industry Experts & Mentors
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
+                    Book 1-on-1 hourly online or offline sessions
                   </div>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Sparkles, Moon, Sun, LogOut, Compass } from 'lucide-react';
+import { Bell, Sparkles, Moon, Sun, LogOut, Compass, Menu } from 'lucide-react';
 import type { Profile } from '../types';
 import type { ThemeMode } from '../lib/theme';
 import type { AIQuotaSummary } from '../features/ai/aiGateway';
@@ -12,6 +12,7 @@ interface Props {
   onOpenProfile?: () => void;
   onOpenNotifications?: () => void;
   onOpenGoalSettings?: () => void;
+  onOpenMobileMenu?: () => void;
   onSignOut?: () => void;
 }
 
@@ -23,12 +24,24 @@ export const Navbar: React.FC<Props> = ({
   onOpenProfile,
   onOpenNotifications,
   onOpenGoalSettings,
+  onOpenMobileMenu,
   onSignOut,
 }) => {
   return (
     <header className="app-navbar">
       {/* Brand & User Greeting */}
       <div className="app-navbar-brand">
+        {onOpenMobileMenu && (
+          <button
+            type="button"
+            className="mobile-menu-trigger-btn"
+            onClick={onOpenMobileMenu}
+            aria-label="Open pages menu"
+            title="All Pages & Sections"
+          >
+            <Menu size={18} />
+          </button>
+        )}
         <div
           className="app-navbar-avatar"
           onClick={onOpenProfile}
