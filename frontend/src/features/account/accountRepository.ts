@@ -53,6 +53,11 @@ export async function exportAccountData(profile: Profile, milestones: Milestone[
     gamificationRes,
     aiUsage,
     legalAcceptances,
+    expertProfile,
+    expertBookings,
+    expertWallet,
+    walletTransactions,
+    expertWithdrawals,
   ] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
     safeOptional(() => supabase.from('user_roadmaps').select('*').eq('user_id', user.id).order('created_at', { ascending: true })),
@@ -69,6 +74,11 @@ export async function exportAccountData(profile: Profile, milestones: Milestone[
     supabase.from('user_gamification').select('*').eq('user_id', user.id).maybeSingle(),
     safeOptional(() => supabase.from('ai_usage').select('*').eq('user_id', user.id).order('created_at', { ascending: true })),
     safeOptional(() => supabase.from('legal_acceptances').select('terms_version,privacy_notice_version,accepted_at').eq('user_id', user.id).order('accepted_at', { ascending: true })),
+    safeOptional(() => supabase.from('expert_profiles').select('*').eq('user_id', user.id).maybeSingle()),
+    safeOptional(() => supabase.from('expert_bookings').select('*').or(`learner_id.eq.${user.id},expert_id.eq.${user.id}`).order('created_at', { ascending: true })),
+    safeOptional(() => supabase.from('expert_wallets').select('*').eq('expert_id', user.id).maybeSingle()),
+    safeOptional(() => supabase.from('wallet_transactions').select('*').eq('expert_id', user.id).order('created_at', { ascending: true })),
+    safeOptional(() => supabase.from('expert_withdrawals').select('*').eq('expert_id', user.id).order('requested_at', { ascending: true })),
   ]);
 
   if (profileRes.error) {
@@ -95,6 +105,11 @@ export async function exportAccountData(profile: Profile, milestones: Milestone[
     gamification,
     ai_usage: aiUsage,
     legal_acceptances: legalAcceptances,
+    expert_profile: expertProfile,
+    expert_bookings: expertBookings,
+    expert_wallet: expertWallet,
+    wallet_transactions: walletTransactions,
+    expert_withdrawals: expertWithdrawals,
   };
 }
 

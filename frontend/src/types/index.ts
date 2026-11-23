@@ -33,6 +33,7 @@ export interface Profile {
   notification_sound?: boolean;
   weekly_reminder_frequency?: '2x' | '3x' | '4x';
   learning_style?: 'hands_on' | 'balanced' | 'fast_track';
+  account_role?: 'learner' | 'expert';
 }
 
 export interface Role {
@@ -90,6 +91,14 @@ export interface QuizOption {
   is_correct?: boolean;
 }
 
+export interface TaskQuizQuestion {
+  id: string;
+  question: string;
+  options: QuizOption[];
+  explanation: string;
+  requiresServerRpc?: boolean;
+}
+
 export interface TaskQuiz {
   id: string;
   task_id: string;
@@ -97,6 +106,7 @@ export interface TaskQuiz {
   options: QuizOption[];
   explanation: string;
   time_limit_sec?: number;
+  questions?: TaskQuizQuestion[];
 }
 
 export interface AICoachMessage {
@@ -198,4 +208,207 @@ export interface AppNotification {
   actionTab?: ActiveNavTab;
 }
 
-export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills' | 'profile';
+export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills' | 'experts' | 'profile';
+
+export type ExpertDashboardTab = 'overview' | 'sessions' | 'messages' | 'availability' | 'resources' | 'wallet' | 'profile';
+
+export interface ExpertResource {
+  id: string;
+  expert_id: string;
+  title: string;
+  description: string;
+  resource_type: 'file' | 'link';
+  storage_path?: string | null;
+  file_name?: string | null;
+  file_size_bytes?: number | null;
+  external_url?: string | null;
+  created_at: string;
+}
+
+export type ExpertResourcePreview = Omit<ExpertResource, 'storage_path' | 'external_url'>;
+
+export type ExpertMeetingModes = 'online' | 'offline' | 'both';
+
+export interface ExpertExperienceItem {
+  title: string;
+  company: string;
+  period: string;
+  summary: string;
+}
+
+export interface ExpertProfile {
+  user_id: string;
+  display_name: string;
+  avatar_url?: string | null;
+  headline: string;
+  bio: string;
+  current_company?: string | null;
+  location?: string | null;
+  timezone: string;
+  years_experience: number;
+  categories: CareerCategory[];
+  target_roles: string[];
+  skills: string[];
+  experiences: ExpertExperienceItem[];
+  portfolio_url?: string | null;
+  linkedin_url?: string | null;
+  github_url?: string | null;
+  cv_storage_path?: string | null;
+  cv_filename?: string | null;
+  cv_summary?: string | null;
+  hourly_rate_cents: number;
+  currency: 'USD';
+  meeting_modes: ExpertMeetingModes;
+  offline_cities: string[];
+  offline_notes?: string | null;
+  default_meeting_url?: string | null;
+  max_hours_per_session: number;
+  status: 'draft' | 'active' | 'paused';
+  verification_tier: 'standard' | 'verified';
+  rating_avg: number;
+  review_count: number;
+  completed_sessions_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExpertAvailabilitySlot {
+  id: string;
+  expert_id: string;
+  day_of_week: number; // 0 (Sun) - 6 (Sat)
+  start_time: string; // HH:MM or HH:MM:SS
+  end_time: string;
+  is_active: boolean;
+}
+
+export type ExpertBookingStatus =
+  | 'pending_confirmation'
+  | 'confirmed'
+  | 'completed'
+  | 'cancelled_by_learner'
+  | 'cancelled_by_expert';
+
+export type ExpertPaymentStatus = 'escrow_held' | 'released_to_expert' | 'refunded';
+
+export interface ExpertBooking {
+  id: string;
+  learner_id: string | null;
+  expert_id: string | null;
+  learner_name_snapshot: string;
+  expert_name_snapshot: string;
+  expert_headline_snapshot: string;
+  hours: number;
+  hourly_rate_cents: number;
+  gross_amount_cents: number;
+  platform_fee_cents: number;
+  expert_payout_cents: number;
+  meeting_mode: 'online' | 'offline';
+  scheduled_start: string;
+  scheduled_end: string;
+  timezone: string;
+  meeting_url?: string | null;
+  offline_city?: string | null;
+  offline_venue?: string | null;
+  topic: string;
+  status: ExpertBookingStatus;
+  payment_status: ExpertPaymentStatus;
+  payment_method?: string | null;
+  payment_reference?: string | null;
+  expert_completed_at?: string | null;
+  learner_confirmed_at?: string | null;
+  released_at?: string | null;
+  cancelled_at?: string | null;
+  created_at: string;
+}
+
+export interface ExpertSessionMessage {
+  id: string;
+  booking_id: string;
+  sender_id: string;
+  sender_name: string;
+  message: string;
+  created_at: string;
+}
+
+export interface ExpertReview {
+  id: string;
+  booking_id: string;
+  expert_id: string;
+  learner_id: string;
+  learner_name: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+}
+
+export interface ExpertWallet {
+  expert_id: string;
+  pending_escrow_cents: number;
+  available_balance_cents: number;
+  total_earned_cents: number;
+  total_withdrawn_cents: number;
+  currency: 'USD';
+  updated_at: string;
+}
+
+export interface WalletTransaction {
+  id: string;
+  expert_id: string;
+  booking_id?: string | null;
+  withdrawal_id?: string | null;
+  tx_type: 'escrow_hold' | 'session_release' | 'withdrawal_debit' | 'refund_reversal';
+  amount_cents: number;
+  available_balance_after_cents: number;
+  pending_escrow_after_cents: number;
+  description: string;
+  created_at: string;
+}
+
+export interface ExpertPayoutMethod {
+  id: string;
+  expert_id: string;
+  method_type: 'bank_transfer' | 'paypal' | 'mobile_banking';
+  account_label: string;
+  masked_destination: string;
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface ExpertWithdrawal {
+  id: string;
+  expert_id: string;
+  payout_method_id?: string | null;
+  payout_summary: string;
+  amount_cents: number;
+  status: 'processing' | 'paid' | 'failed';
+  reference_code: string;
+  requested_at: string;
+  processed_at?: string | null;
+}
+
+export interface ExpertRegistrationDraft {
+  display_name: string;
+  avatar_url?: string;
+  headline: string;
+  bio: string;
+  current_company: string;
+  location: string;
+  timezone: string;
+  years_experience: number;
+  categories: CareerCategory[];
+  target_roles: string[];
+  skills: string[];
+  experiences: ExpertExperienceItem[];
+  portfolio_url: string;
+  linkedin_url: string;
+  github_url: string;
+  cv_summary: string;
+  cv_filename?: string;
+  cv_file_data_url?: string;
+  hourly_rate_cents: number;
+  meeting_modes: ExpertMeetingModes;
+  offline_cities: string[];
+  offline_notes: string;
+  default_meeting_url: string;
+  max_hours_per_session: number;
+}
