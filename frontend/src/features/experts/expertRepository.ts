@@ -300,17 +300,62 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 80) || 'expert_cv.pdf';
 }
 
+/**
+ * Ensures the active Supabase JWT is compact before Storage uploads.
+ * Legacy expert signups embedded `expert_draft` (including Base64 avatars) into
+ * `auth.users.raw_user_meta_data`, inflating the Bearer JWT beyond Storage's max
+ * HTTP header limit ("Exceeded maximum allowed HTTP header size").
+ */
+async function ensureCompactAuthSession(forceRefresh = false): Promise<void> {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+    if (!session) return;
+    const meta = (session.user?.user_metadata ?? {}) as Record<string, unknown>;
+    const hasBloatedMeta =
+      Boolean(meta.expert_draft) ||
+      (typeof meta.avatar_url === 'string' && meta.avatar_url.startsWith('data:'));
+    const hasOversizedJwt = session.access_token.length > 3500;
+
+    if (hasBloatedMeta) {
+      const cleanup: Record<string, null> = {};
+      if (meta.expert_draft) cleanup.expert_draft = null;
+      if (typeof meta.avatar_url === 'string' && meta.avatar_url.startsWith('data:')) {
+        cleanup.avatar_url = null;
+      }
+      await supabase.auth.updateUser({ data: cleanup }).catch(() => undefined);
+    }
+
+    if (forceRefresh || hasBloatedMeta || hasOversizedJwt) {
+      await supabase.auth.refreshSession().catch(() => undefined);
+    }
+  } catch {
+    // Non-fatal: proceed with upload
+  }
+}
+
 export const expertRepository = {
   async uploadExpertCV(userId: string, file: File): Promise<{ storagePath: string; filename: string }> {
     const validationError = validateExpertCVFile(file);
     if (validationError) throw new Error(validationError);
 
+    await ensureCompactAuthSession();
+
     const safeName = sanitizeFilename(file.name);
     const storagePath = `${userId}/${Date.now()}_${safeName}`;
     const contentType = resolveExpertCVMimeType(file.name, file.type);
-    const { error } = await supabase.storage
+    let { error } = await supabase.storage
       .from('expert-cvs')
       .upload(storagePath, file, { upsert: true, contentType });
+
+    if (error && /header size|431/i.test(error.message || '')) {
+      await ensureCompactAuthSession(true);
+      const retry = await supabase.storage
+        .from('expert-cvs')
+        .upload(storagePath, file, { upsert: true, contentType });
+      error = retry.error;
+    }
 
     if (error) {
       throw new Error(error.message || 'Could not upload your CV file.');
@@ -320,12 +365,22 @@ export const expertRepository = {
   },
 
   async uploadExpertCVBlob(userId: string, filename: string, blob: Blob): Promise<{ storagePath: string; filename: string }> {
+    await ensureCompactAuthSession();
+
     const safeName = sanitizeFilename(filename);
     const storagePath = `${userId}/${Date.now()}_${safeName}`;
     const contentType = resolveExpertCVMimeType(filename, blob.type);
-    const { error } = await supabase.storage
+    let { error } = await supabase.storage
       .from('expert-cvs')
       .upload(storagePath, blob, { upsert: true, contentType });
+
+    if (error && /header size|431/i.test(error.message || '')) {
+      await ensureCompactAuthSession(true);
+      const retry = await supabase.storage
+        .from('expert-cvs')
+        .upload(storagePath, blob, { upsert: true, contentType });
+      error = retry.error;
+    }
 
     if (error) {
       throw new Error(error.message || 'Could not upload your CV file.');
@@ -576,6 +631,7 @@ export const expertRepository = {
 
       if (!cvUploadFailed) {
         clearPendingExpertDraft();
+        await ensureCompactAuthSession();
       }
       return saved;
     })().finally(() => {
@@ -968,6 +1024,8 @@ export const expertRepository = {
   ): Promise<ExpertResource> {
     const err = validateExpertResourceFile(file);
     if (err) throw new Error(err);
+
+    await ensureCompactAuthSession();
 
     const safeName = sanitizeFilename(file.name);
     const storagePath = `${expertId}/${Date.now()}_${safeName}`;

@@ -218,6 +218,20 @@ export const authService = {
     setRememberMePreference(rememberMe);
     localStorage.removeItem(SESSION_STORAGE_KEY);
 
+    const compactExpertDraft = accountRole === 'expert' && expertDraft
+      ? {
+          ...expertDraft,
+          // Never embed Base64 data: images inside auth user_metadata (which lives inside the JWT header)
+          avatar_url:
+            typeof expertDraft.avatar_url === 'string' && expertDraft.avatar_url.startsWith('data:')
+              ? undefined
+              : expertDraft.avatar_url,
+          bio: (expertDraft.bio || '').slice(0, 600),
+          cv_summary: (expertDraft.cv_summary || '').slice(0, 600),
+          experiences: (expertDraft.experiences || []).slice(0, 5),
+        }
+      : undefined;
+
     const emailRedirectTo = getAuthEmailRedirectUrl();
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
@@ -228,7 +242,7 @@ export const authService = {
           full_name: cleanName,
           account_role: accountRole === 'expert' ? 'expert' : 'learner',
           ...(phone?.trim() ? { phone: phone.trim() } : {}),
-          ...(accountRole === 'expert' && expertDraft ? { expert_draft: expertDraft } : {}),
+          ...(compactExpertDraft ? { expert_draft: compactExpertDraft } : {}),
         },
       },
     });
