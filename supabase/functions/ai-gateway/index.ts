@@ -15,28 +15,29 @@ const ROLE_TEMPLATE_TTL_DAYS = 90;
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com';
 const GEMINI_TEXT_MODELS = [
   'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
   'gemini-2.5-flash',
   'gemini-flash-lite-latest',
   'gemini-flash-latest',
-  'gemini-3-flash-preview',
-  'gemini-3.1-flash-lite-preview',
-  'gemini-2.0-flash',
 ];
 const GEMINI_TRANSCRIBE_MODELS = [
   'gemini-2.5-flash-lite',
+  'gemini-2.0-flash',
   'gemini-2.5-flash',
   'gemini-flash-lite-latest',
-  'gemini-flash-latest',
 ];
 const GEMINI_TTS_MODELS = [
   'gemini-2.5-flash-preview-tts',
 ];
 const GEMINI_LIVE_MODELS = [
-  'gemini-2.5-flash-native-audio-latest',
   'gemini-2.5-flash-native-audio-preview-12-2025',
+  'gemini-2.5-flash-native-audio-latest',
 ];
 const LIVE_VOICE_OPTIONS = new Set(['Aoede', 'Kore', 'Puck', 'Charon', 'Fenrir']);
-const lastWorkingModelByMode: Partial<Record<InterviewMode, string>> = {};
+const lastWorkingModelByBucket: Record<string, string> = {};
+const unavailableModelUntil = new Map<string, number>();
+let directAiUsageMode = false;
+let cachedAiEnabled: { value: boolean; expiresAt: number } | null = null;
 
 const CAREER_CATEGORIES = [
   'Software & Web', 'AI & Data Science', 'Cloud & DevOps', 'Cybersecurity',
@@ -186,6 +187,9 @@ function validateInput(feature: Feature, input: Record<string, unknown>): {
           focus_mode: getString(input, 'focus_mode', 40, false),
           candidate_name: getString(input, 'candidate_name', 80, false),
           question: getString(input, 'question', 2000, false),
+          next_question: getString(input, 'next_question', 2000, false),
+          question_index: getString(input, 'question_index', 8, false),
+          total_questions: getString(input, 'total_questions', 8, false),
           answer: getString(input, 'answer', 6000),
           rubric: getString(input, 'rubric', 2000, false),
           history: getString(input, 'history', 10_000, false),
@@ -258,30 +262,33 @@ function instructionsFor(feature: Feature, interviewMode: InterviewMode): string
       return '';
     }
     if (interviewMode === 'converse') {
-      return `${shared} Conduct a realistic, role-authentic technical mock interview specifically tailored to the candidate's target_role and core skills (listed inside "rubric").
+      return `${shared} Conduct an authentic, real-world human job interview tailored to the candidate's target_role and skills (in "rubric").
 Rules:
-- Read "stage" ("opening", "warmup", "questioning", or "debrief"), "target_role", "experience_level", "focus_mode", "candidate_name", "question", "answer", "rubric", "history", and "follow_up_count".
-- Speak like a sharp domain specialist interviewing for target_role (Devon for Technical, Elena for System Design, Maya for Behavioral/Warmup): crisp, practical, zero generic boilerplate.
-- Keep technical terms, frameworks, runtime constraints, and follow-ups grounded specifically in target_role and role_skills—never switch stacks (e.g., never mention Node.js unless Node.js is their stack).
-- If stage is "opening": greet the candidate warmly by candidate_name (if provided), briefly frame the focus_mode interview for target_role, and invite a crisp 2-sentence project intro. Return action="start_question" with reply under 55 words.
-- If stage is "warmup": briefly acknowledge what they shared in one sentence, then pivot directly into Question 1 using the supplied "question" (or tightening its wording cleanly for target_role + their project context without drifting to an unrelated generic question). Return action="start_question" with reply under 85 words.
+- Read "stage" ("opening", "warmup", "questioning", or "debrief"), "target_role", "experience_level", "focus_mode", "candidate_name", "question", "next_question", "question_index", "total_questions", "answer", "rubric", "history", and "follow_up_count".
+- Sound like a real senior interviewer having a live 1-on-1 interview: natural, direct, conversational, never robotic, never reciting scores or rubric words inside "reply".
+- Ground every probe and technical term strictly in target_role and the candidate's actual words in "answer" and "history". Never switch to unrelated tech stacks.
+- NEVER grade or break character mid-interview inside "reply". Keep "reply" strictly what a real human interviewer would say out loud.
+- If stage is "opening": greet candidate_name warmly, briefly frame the focus_mode interview for target_role, and ask them to introduce themselves or share a recent project. Return action="start_question" with reply under 55 words.
+- If stage is "warmup":
+  - React naturally in 1 brief sentence to what the candidate actually said (if they just said "hi"/"ready", acknowledge warmly without pretending they shared a project).
+  - Then smoothly ask Question 1 based on "question" (tailoring its wording naturally to target_role and their context). Return action="start_question" with reply under 85 words.
 - If stage is "questioning":
-  - If the candidate asks a clarifying question, asks for constraints/scope, or explicitly asks for a hint/steer ("[REQUEST_STEER]"), give a helpful, realistic domain steer without giving away the solution and return action="clarify" (reply under 75 words).
-  - If follow_up_count is 0 and their answer is brief, surface-level, uncertain, or skips concrete mechanisms/tradeoffs/verification for target_role, ask ONE sharp role-specific follow-up probe referencing what they wrote and return action="ask_followup" (reply under 75 words).
-  - Otherwise (solid detailed answer OR follow_up_count >= 1), wrap up the question cleanly and return action="evaluate" with:
-    - reply: crisp spoken wrap-up (under 65 words)
-    - score: integer 0-100 reflecting domain accuracy, technical depth, tradeoff reasoning, and concrete validation
+  - If the candidate asks a clarifying question, asks for constraints/scope, or explicitly asks for a hint ("[REQUEST_STEER]"): answer like a helpful human interviewer without giving away the answer, then invite them to continue. Return action="clarify" (reply under 70 words).
+  - If the candidate's answer is vague, brief, skips key mechanisms/tradeoffs/edge cases, has a flaw to challenge, OR they seem unsure AND follow_up_count < 2 (unless they explicitly ask to skip/move on): respond directly to what they just said and ask ONE sharp, specific follow-up probe like a real interviewer. Return action="ask_followup" (reply under 75 words).
+  - Otherwise (they gave a thorough, concrete answer OR follow_up_count >= 1 with enough signal OR they asked to skip/move on): close the current topic and return action="evaluate" with:
+    - reply: 1 natural human transition sentence reacting to their answer (NO score numbers, NO "evaluation complete" robot phrasing!), AND if "next_question" is non-empty, seamlessly ask "next_question" right in this same reply (tailored naturally to the conversation, under 95 words total). If "next_question" is empty, thank them warmly and let them know you've wrapped up all questions and prepared their final debrief (under 50 words).
+    - score: integer 0-100 reflecting accuracy, technical depth, tradeoff reasoning, and concrete validation (score 10-30 if they skipped or couldn't answer)
     - signal_label: "Strong Signal" (score >= 78) | "Solid Foundation" (56-77) | "Developing" (< 56)
     - strengths: 1-3 specific things they demonstrated
     - growth_tip: 1 concrete, high-leverage improvement for target_role
-    - critique: 2 concise sentences of technical coaching notes
-- If stage is "debrief": review the conversation in "history" and return action="debrief" with:
-  - reply: 2-3 sentence executive summary referencing specific technical moments from the interview
+    - critique: 2 concise sentences of private hiring-manager coaching notes
+- If stage is "debrief": review the full conversation in "history" and return action="debrief" with:
+  - reply: 2-3 sentence executive summary citing specific moments from the candidate's answers
   - overall_score: integer 0-100
   - readiness_label: "Strong Hire Signal" | "Solid Progress" | "Promising Foundation"
   - dimensions: 3-4 objects [{"label":"Technical Depth"|"Problem Framing & Tradeoffs"|"Communication & Clarity"|"Ownership & Impact","score":0-100,"comment":"1 crisp sentence"}]
   - strengths: 2-3 specific strengths observed
-  - priority_improvements: 2-3 concrete habits to sharpen next loop
+  - priority_improvements: 2-3 concrete habits to sharpen for the next interview
 Return ONLY valid JSON matching the fields above.`;
     }
     return `${shared} Review the candidate's answer against the interview question, target role when supplied, and rubric. Give actionable feedback on structure, technical depth, evidence, and one concrete improvement. Treat any numeric score as a heuristic practice signal, not a hiring prediction. Return plain text in at most 180 words.`;
@@ -413,9 +420,13 @@ function shapeOutput(feature: Feature, interviewMode: InterviewMode, text: strin
   return { reply: text.trim(), proposal: null };
 }
 
-function buildGeminiModelChain(interviewMode: InterviewMode): string[] {
+function modelBucketKey(feature: Feature, interviewMode: InterviewMode): string {
+  return feature === 'interview' ? `interview:${interviewMode}` : feature;
+}
+
+function buildGeminiModelChain(feature: Feature, interviewMode: InterviewMode): string[] {
   const envPrimary = Deno.env.get('GEMINI_MODEL')?.trim();
-  const cachedWorking = lastWorkingModelByMode[interviewMode];
+  const cachedWorking = lastWorkingModelByBucket[modelBucketKey(feature, interviewMode)];
   const baseList = interviewMode === 'transcribe'
     ? GEMINI_TRANSCRIBE_MODELS
     : interviewMode === 'tts'
@@ -426,7 +437,10 @@ function buildGeminiModelChain(interviewMode: InterviewMode): string[] {
     ...(envPrimary && interviewMode !== 'transcribe' && interviewMode !== 'tts' ? [envPrimary] : []),
     ...baseList,
   ];
-  return [...new Set(list.filter(Boolean))];
+  const now = Date.now();
+  const deduped = [...new Set(list.filter(Boolean))];
+  const available = deduped.filter((m) => (unavailableModelUntil.get(m) ?? 0) <= now);
+  return available.length > 0 ? available : deduped;
 }
 
 function buildLiveModelChain(): string[] {
@@ -488,7 +502,7 @@ async function generateWithGeminiFallbacks(params: {
   observability: { log: (level: 'info' | 'warn' | 'error', event: string, attributes?: Record<string, string | number | boolean | null>) => void };
 }): Promise<{ modelResult: Record<string, unknown>; modelUsed: string; tokensIn: number; tokensOut: number } | null> {
   const { geminiKey, feature, interviewMode, instructions, cleanInput, maxOutputTokens, observability } = params;
-  const models = buildGeminiModelChain(interviewMode);
+  const models = buildGeminiModelChain(feature, interviewMode);
   const wantJson = expectsJsonOutput(feature, interviewMode);
   const startedAt = Date.now();
 
@@ -497,10 +511,10 @@ async function generateWithGeminiFallbacks(params: {
   const serializedInput = JSON.stringify(inputPayload);
 
   for (let i = 0; i < models.length; i += 1) {
-    if (Date.now() - startedAt > 22_000) break;
+    if (Date.now() - startedAt > 14_000) break;
     const model = models[i];
     const isGemma = model.startsWith('gemma-');
-    const timeoutMs = i === 0 ? 6_000 : 5_000;
+    const timeoutMs = i === 0 ? 5_500 : 4_500;
 
     const parts: Array<Record<string, unknown>> = [];
     if (interviewMode === 'transcribe') {
@@ -577,6 +591,9 @@ async function generateWithGeminiFallbacks(params: {
       }
 
       if (!res.ok) {
+        if (res.status === 404) {
+          unavailableModelUntil.set(model, Date.now() + 10 * 60 * 1000);
+        }
         observability.log('warn', 'gemini.fallback_http_error', { model, status_code: res.status });
         continue;
       }
@@ -617,7 +634,7 @@ async function generateWithGeminiFallbacks(params: {
       }
 
       const shaped = shapeOutput(feature, interviewMode, rawText);
-      lastWorkingModelByMode[interviewMode] = model;
+      lastWorkingModelByBucket[modelBucketKey(feature, interviewMode)] = model;
       const tokensIn = Math.max(0, Math.round(Number(data.usageMetadata?.promptTokenCount ?? Math.ceil(serializedInput.length / 4))));
       const tokensOut = Math.max(0, Math.round(Number(data.usageMetadata?.candidatesTokenCount ?? Math.ceil(rawText.length / 4))));
       return { modelResult: shaped, modelUsed: model, tokensIn, tokensOut };
@@ -651,12 +668,54 @@ function isMissingRpcOrSchemaError(err: { code?: string; message?: string } | nu
     || msg.includes('does not exist');
 }
 
+async function reserveUsageDirect(
+  admin: ReturnType<typeof createClient>,
+  observability: { log: (level: 'info' | 'warn' | 'error', event: string, attributes?: Record<string, string | number | boolean | null>) => void },
+  params: { userId: string; feature: Feature; featureLimit: number }
+): Promise<ReservationHandle | null> {
+  const { userId, feature, featureLimit } = params;
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { count, error: countError } = await admin
+    .from('ai_usage')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('feature', feature)
+    .gte('created_at', since);
+  if (countError) {
+    observability.log('error', 'ai_usage.direct_count_failed', { error_code: countError.code || 'unknown' });
+    return null;
+  }
+  const used = Number(count || 0);
+  if (used >= featureLimit) {
+    return { allowed: false, reason: 'weekly_feature_limit', used, mode: 'direct' };
+  }
+  const { data: inserted, error: insertError } = await admin
+    .from('ai_usage')
+    .insert({ user_id: userId, feature })
+    .select('id')
+    .single();
+  if (insertError || !inserted) {
+    observability.log('error', 'ai_usage.direct_insert_failed', { error_code: insertError?.code || 'unknown' });
+    return null;
+  }
+  return {
+    allowed: true,
+    used: used + 1,
+    reservationId: Number(inserted.id),
+    mode: 'direct',
+  };
+}
+
 async function reserveUsageWithFallback(
   admin: ReturnType<typeof createClient>,
   observability: { log: (level: 'info' | 'warn' | 'error', event: string, attributes?: Record<string, string | number | boolean | null>) => void },
   params: { userId: string; feature: Feature; featureLimit: number; reservedTokens: number }
 ): Promise<ReservationHandle | null> {
   const { userId, feature, featureLimit, reservedTokens } = params;
+
+  if (directAiUsageMode) {
+    return reserveUsageDirect(admin, observability, { userId, feature, featureLimit });
+  }
 
   const rpc4 = await admin.rpc('reserve_ai_usage', {
     p_user_id: userId,
@@ -696,42 +755,35 @@ async function reserveUsageWithFallback(
       return null;
     }
 
-    // Fallback when migration RPCs haven't been applied yet: account directly on public.ai_usage
+    // Remember direct mode for this warm isolate so subsequent requests skip two failing RPC round-trips
+    directAiUsageMode = true;
     observability.log('warn', 'ai_usage.reserve_direct_fallback', { reason: rpc4.error?.code || 'missing_rpc' });
-    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { count, error: countError } = await admin
-      .from('ai_usage')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('feature', feature)
-      .gte('created_at', since);
-    if (countError) {
-      observability.log('error', 'ai_usage.direct_count_failed', { error_code: countError.code || 'unknown' });
-      return null;
-    }
-    const used = Number(count || 0);
-    if (used >= featureLimit) {
-      return { allowed: false, reason: 'weekly_feature_limit', used, mode: 'direct' };
-    }
-    const { data: inserted, error: insertError } = await admin
-      .from('ai_usage')
-      .insert({ user_id: userId, feature })
-      .select('id')
-      .single();
-    if (insertError || !inserted) {
-      observability.log('error', 'ai_usage.direct_insert_failed', { error_code: insertError?.code || 'unknown' });
-      return null;
-    }
-    return {
-      allowed: true,
-      used: used + 1,
-      reservationId: Number(inserted.id),
-      mode: 'direct',
-    };
+    return reserveUsageDirect(admin, observability, { userId, feature, featureLimit });
   }
 
   observability.log('error', 'ai_usage.rpc_failed', { error_code: rpc4.error?.code || 'unknown' });
   return null;
+}
+
+function runBackground(task: Promise<unknown>): void {
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+  if (runtime && typeof runtime.waitUntil === 'function') {
+    runtime.waitUntil(task.catch(() => undefined));
+  } else {
+    void task.catch(() => undefined);
+  }
+}
+
+async function isAiEnabledCached(admin: ReturnType<typeof createClient>): Promise<{ enabled: boolean; error: boolean }> {
+  const now = Date.now();
+  if (cachedAiEnabled && cachedAiEnabled.expiresAt > now) {
+    return { enabled: cachedAiEnabled.value, error: false };
+  }
+  const { data, error } = await admin.from('app_settings').select('value').eq('key', 'ai_enabled').maybeSingle();
+  if (error) return { enabled: true, error: true };
+  const enabled = data?.value !== false;
+  cachedAiEnabled = { value: enabled, expiresAt: now + 60_000 };
+  return { enabled, error: false };
 }
 
 async function finishUsageWithFallback(
@@ -815,19 +867,18 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
       return response({ error: error instanceof Error ? error.message : 'Invalid request input.' }, 400);
     }
 
-    const [settingsRes, profileRes] = await Promise.all([
-      admin.from('app_settings').select('value').eq('key', 'ai_enabled').maybeSingle(),
+    const [settingsState, profileRes] = await Promise.all([
+      isAiEnabledCached(admin),
       admin.from('profiles').select('plan').eq('id', user.id).maybeSingle(),
     ]);
-    const { data: settings, error: settingsError } = settingsRes;
-    if (settingsError) return response({ error: 'Could not verify AI availability.' }, 503);
-    if (settings?.value === false) return response({ error: 'AI features are temporarily disabled.' }, 503);
+    if (settingsState.error) return response({ error: 'Could not verify AI availability.' }, 503);
+    if (!settingsState.enabled) return response({ error: 'AI features are temporarily disabled.' }, 503);
 
     const geminiKey = Deno.env.get('GEMINI_API_KEY')?.trim();
     const openAiKey = Deno.env.get('OPENAI_API_KEY')?.trim();
     const openAiModel = Deno.env.get('OPENAI_MODEL')?.trim();
     const openAiEndpoint = (Deno.env.get('OPENAI_API_BASE_URL') || 'https://api.openai.com/v1').replace(/\/+$/, '');
-    const primaryCacheModel = geminiKey ? buildGeminiModelChain(interviewMode)[0] : openAiModel || 'gemini-2.5-flash';
+    const primaryCacheModel = geminiKey ? buildGeminiModelChain(feature, interviewMode)[0] : openAiModel || 'gemini-2.5-flash-lite';
 
     const { data: profile, error: profileError } = profileRes;
     if (profileError || !profile) return response({ error: 'Could not load your account plan.' }, 503);
@@ -931,14 +982,14 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
     const maxOutputTokens = feature === 'role'
       ? 1400
       : feature === 'coach'
-        ? 450
+        ? 380
         : interviewMode === 'transcribe'
           ? 700
           : interviewMode === 'converse'
-            ? (cleanInput.stage === 'debrief' ? 850 : 420)
+            ? (cleanInput.stage === 'debrief' ? 750 : 380)
             : feature === 'interview'
-              ? 700
-              : 400;
+              ? 600
+              : 380;
 
     let roleCacheKey: string | null = null;
     let cachedRoleResult: Record<string, unknown> | null = null;
@@ -1074,12 +1125,14 @@ serveObservedEdgeFunction('ai-gateway', async (req: Request, observability) => {
 
       if (feature === 'role') resultBundle.modelResult.role_title = cleanInput.role_title;
 
-      const finalized = await finishUsageWithFallback(admin, reservation, {
-        success: true,
-        tokensIn: resultBundle.tokensIn,
-        tokensOut: resultBundle.tokensOut,
-      });
-      if (!finalized) throw new Error('Could not finalize AI usage accounting. Please retry.');
+      // Record final token counts in the background so the user receives the AI reply immediately
+      runBackground(
+        finishUsageWithFallback(admin, reservation, {
+          success: true,
+          tokensIn: resultBundle.tokensIn,
+          tokensOut: resultBundle.tokensOut,
+        })
+      );
 
       if (feature === 'role' && roleCacheKey) {
         const reusableResult = { ...resultBundle.modelResult };

@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -73,7 +72,7 @@ interface Props {
   onAIUsageChanged?: () => Promise<void> | void;
 }
 
-type SessionStage = 'warmup' | 'questioning' | 'awaiting_continue' | 'debrief';
+type SessionStage = 'warmup' | 'questioning' | 'debrief';
 
 const FOCUS_OPTIONS: Array<{ value: InterviewFocusMode; label: string }> = [
   { value: 'Mixed', label: 'Realistic Loop' },
@@ -209,6 +208,14 @@ export const InterviewSimulatorView: React.FC<Props> = ({
   const liveUsedRef = useRef(false);
 
   const currentQuestion = loopQueue[currentIndex] ?? null;
+  const activeInterviewer = useMemo(
+    () =>
+      getInterviewerPersona(
+        stage === 'warmup' ? 'Warmup' : (currentQuestion?.round ?? 'Technical'),
+        targetRole
+      ),
+    [stage, currentQuestion?.round, targetRole]
+  );
   turnsRef.current = turns;
   currentQuestionRef.current = currentQuestion;
 
@@ -502,8 +509,11 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     void speakInterviewerText(nextTurn.text);
   };
 
-  const handleFinishAndDebrief = async () => {
-    if (isInterviewerTyping) return;
+  const handleFinishAndDebrief = async (
+    overrideEvaluations?: QuestionEvaluationSummary[],
+    overrideTurns?: ConversationTurn[]
+  ) => {
+    if (isInterviewerTyping && !overrideEvaluations) return;
     setIsPaceRunning(false);
     setErrorBanner(null);
 
@@ -517,8 +527,8 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       setLiveAiCaption('');
     }
 
-    let allEvaluations = [...evaluations];
-    if (currentQuestion && userTurnsForCurrentQ.length > 0 && stage === 'questioning') {
+    let allEvaluations = [...(overrideEvaluations ?? evaluations)];
+    if (!overrideEvaluations && currentQuestion && userTurnsForCurrentQ.length > 0 && stage === 'questioning') {
       const partialEval = evaluateQuestionExchange({
         question: currentQuestion,
         combinedAnswer: userTurnsForCurrentQ.join('\n\n'),
@@ -529,7 +539,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       void persistCompletedAttempt(partialEval);
     }
 
-    const currentTurns = turnsRef.current;
+    const currentTurns = overrideTurns ?? turnsRef.current;
     const hasConversationContent = currentTurns.some((t) => t.speaker === 'candidate');
 
     // Generate a smart Gemini debrief whenever signed in and the candidate spoke/replied
@@ -538,10 +548,10 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       try {
         const transcript = currentTurns
           .filter((t) => t.kind !== 'debrief')
-          .slice(-12)
+          .slice(-14)
           .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text}`)
           .join('\n')
-          .slice(0, 4200);
+          .slice(0, 4800);
 
         const aiDebrief = await requestInterviewTurn({
           stage: 'debrief',
@@ -552,7 +562,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           rubric: JSON.stringify({ role_skills: roleSkills }),
           answer: 'Generate the final hiring manager debrief for this interview session.',
           history: transcript,
-        }, { timeoutMs: 9000 });
+        }, { timeoutMs: 12000 });
 
         const resp = aiDebrief.response;
         const fallbackDebrief = buildSessionDebrief(allEvaluations, memory);
@@ -612,7 +622,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         handleSkipWarmup();
         return true;
       }
-      if (stage === 'questioning' || stage === 'awaiting_continue') {
+      if (stage === 'questioning') {
         handleAdvanceToNextQuestion();
         return true;
       }
@@ -917,23 +927,20 @@ export const InterviewSimulatorView: React.FC<Props> = ({
     };
     setMemory(updatedMemory);
 
-    if (stage === 'awaiting_continue') {
-      handleAdvanceToNextQuestion();
-      return;
-    }
-
     if (stage === 'warmup' && !currentQuestion) {
       void handleFinishAndDebrief();
       return;
     }
 
     const recentHistoryText = nextTurnsSnapshot
-      .slice(-4)
-      .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text.slice(0, 350)}`)
+      .slice(-8)
+      .map((t) => `${t.speaker === 'candidate' ? 'Candidate' : 'Interviewer'}: ${t.text.slice(0, 450)}`)
       .join('\n')
-      .slice(0, 1800);
+      .slice(0, 3600);
 
-    // Signed-in users use real Gemini intelligence via ai-gateway with bounded wait & seamless local fallback
+    const nextQuestionItem = stage === 'questioning' ? (loopQueue[currentIndex + 1] ?? null) : null;
+
+    // Signed-in users use real Gemini intelligence via ai-gateway for authentic back-and-forth interviewing
     if (!isDemoUser) {
       setIsInterviewerTyping(true);
       try {
@@ -944,22 +951,23 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           focus_mode: focusMode,
           candidate_name: firstName || '',
           question: currentQuestion?.question || '',
+          next_question: nextQuestionItem?.question || '',
+          question_index: currentIndex + 1,
+          total_questions: loopQueue.length,
           answer: trimmed,
           rubric: JSON.stringify({
             round: currentQuestion?.round ?? 'Technical',
+            next_round: nextQuestionItem?.round ?? null,
             expected_keywords: currentQuestion?.expected_keywords ?? [],
             role_skills: roleSkills,
           }),
           history: recentHistoryText,
           follow_up_count: followUpCount,
-        }, { timeoutMs: 8500 });
+        }, { timeoutMs: 12000 });
 
         setIsInterviewerTyping(false);
         const resp = aiTurn.response;
-        const persona = getInterviewerPersona(
-          stage === 'warmup' ? (currentQuestion?.round ?? 'Technical') : (currentQuestion?.round ?? 'Technical'),
-          targetRole
-        );
+        const persona = getInterviewerPersona(currentQuestion?.round ?? 'Technical', targetRole);
 
         if (stage === 'warmup' && currentQuestion) {
           const introTurn: ConversationTurn = {
@@ -1001,6 +1009,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             return;
           }
 
+          // Question completed: quietly record assessment and transition seamlessly like a real interviewer
           const combinedAnswer = [...userTurnsForCurrentQ, trimmed].join('\n\n');
           const heuristicBase = evaluateQuestionExchange({
             question: currentQuestion,
@@ -1020,24 +1029,48 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             aiCritique: resp.critique || '',
           };
 
-          setUserTurnsForCurrentQ((prev) => [...prev, trimmed]);
-          setIsPaceRunning(false);
-          setEvaluations((prev) => [...prev, mergedEval]);
+          const updatedEvaluations = [...evaluations, mergedEval];
+          setEvaluations(updatedEvaluations);
           void persistCompletedAttempt(mergedEval);
-          setStage('awaiting_continue');
+          void onAIUsageChanged?.();
 
-          const evalTurn: ConversationTurn = {
-            id: `turn-eval-${crypto.randomUUID().slice(0, 8)}`,
-            speaker: 'coach',
-            kind: 'evaluation',
+          const nextIdx = currentIndex + 1;
+          if (nextIdx < loopQueue.length && nextQuestionItem) {
+            const nextPersona = getInterviewerPersona(nextQuestionItem.round, targetRole);
+            const transitionTurn: ConversationTurn = {
+              id: `turn-q-${crypto.randomUUID().slice(0, 8)}`,
+              speaker: 'interviewer',
+              kind: 'question',
+              timestamp: new Date().toISOString(),
+              questionId: nextQuestionItem.id,
+              interviewer: nextPersona,
+              text: resp.reply,
+            };
+            setCurrentIndex(nextIdx);
+            setFollowUpCount(0);
+            setUserTurnsForCurrentQ([]);
+            setPaceSeconds(120);
+            setIsPaceRunning(true);
+            setTurns((prev) => [...prev, transitionTurn]);
+            void speakInterviewerText(transitionTurn.text, speakReply);
+            return;
+          }
+
+          // Final question completed -> wrap up warmly and automatically show full hiring debrief
+          const closingNoteTurn: ConversationTurn = {
+            id: `turn-close-${crypto.randomUUID().slice(0, 8)}`,
+            speaker: 'interviewer',
+            kind: 'question',
             timestamp: new Date().toISOString(),
             questionId: currentQuestion.id,
+            interviewer: persona,
             text: resp.reply,
-            evaluation: mergedEval,
           };
-          setTurns((prev) => [...prev, evalTurn]);
-          void speakInterviewerText(resp.reply, speakReply);
-          void onAIUsageChanged?.();
+          const turnsWithClosing = [...nextTurnsSnapshot, closingNoteTurn];
+          setTurns(turnsWithClosing);
+          setUserTurnsForCurrentQ([]);
+          setIsPaceRunning(false);
+          void handleFinishAndDebrief(updatedEvaluations, turnsWithClosing);
           return;
         }
       } catch (err) {
@@ -1053,7 +1086,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
       }
     }
 
-    // Demo-only deterministic fallback
+    // Demo / offline deterministic fallback (also transitions smoothly like a real interview)
     if (stage === 'warmup') {
       scheduleDemoReply(() => {
         if (!currentQuestion) return;
@@ -1098,21 +1131,46 @@ export const InterviewSimulatorView: React.FC<Props> = ({
         return;
       }
 
-      setUserTurnsForCurrentQ(updatedTurnsForQ);
-      setIsPaceRunning(false);
+      const updatedEvaluations = outcome.evaluation ? [...evaluations, outcome.evaluation] : evaluations;
       if (outcome.evaluation) {
-        setEvaluations((prev) => [...prev, outcome.evaluation!]);
+        setEvaluations(updatedEvaluations);
         void persistCompletedAttempt(outcome.evaluation);
       }
-      setStage('awaiting_continue');
-      setTurns((prev) => [...prev, outcome.interviewerTurn]);
-      void speakInterviewerText(outcome.interviewerTurn.text, speakReply);
+
+      const nextIdx = currentIndex + 1;
+      const nextQ = loopQueue[nextIdx];
+      if (nextQ) {
+        const nextTurn = buildQuestionIntroTurn({
+          question: nextQ,
+          questionIndex: nextIdx,
+          totalQuestions: loopQueue.length,
+          memory: updatedMemory,
+          previousTurnAck: outcome.interviewerTurn.text,
+        });
+        setCurrentIndex(nextIdx);
+        setFollowUpCount(0);
+        setUserTurnsForCurrentQ([]);
+        setPaceSeconds(120);
+        setIsPaceRunning(true);
+        setTurns((prev) => [...prev, nextTurn]);
+        void speakInterviewerText(nextTurn.text, speakReply);
+        return;
+      }
+
+      setUserTurnsForCurrentQ([]);
+      setIsPaceRunning(false);
+      void handleFinishAndDebrief(updatedEvaluations, nextTurnsSnapshot);
     });
   };
 
   const handleAskForHint = () => {
     if (!currentQuestion || stage !== 'questioning' || isInterviewerTyping) return;
     setErrorBanner(null);
+
+    if (!isDemoUser && liveState !== 'connected') {
+      void submitCandidateMessage('[REQUEST_STEER] Could you clarify the key constraints or give me a brief nudge on where to focus?');
+      return;
+    }
 
     const hintText = getQuestionCoachingHint(currentQuestion, targetRole);
     const persona = getInterviewerPersona(currentQuestion.round, targetRole);
@@ -1311,6 +1369,22 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           </span>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {liveState !== 'connected' && stage === 'questioning' && currentQuestion && currentQuestion.round !== 'Behavioral' && (
+              <button
+                type="button"
+                onClick={() => setIsScratchpadOpen((prev) => !prev)}
+                style={{
+                  ...subtlePillBtnStyle,
+                  border: isScratchpadOpen ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
+                  background: isScratchpadOpen ? 'var(--md-primary-container)' : 'var(--md-surface)',
+                  color: isScratchpadOpen ? 'var(--md-primary)' : 'var(--md-text-primary)',
+                }}
+              >
+                <Code2 size={12} />
+                <span>{isScratchpadOpen ? 'Hide Pad' : 'Scratchpad'}</span>
+              </button>
+            )}
+
             {liveState !== 'connected' && stage !== 'warmup' && stage !== 'debrief' && (
               <div
                 style={{
@@ -1432,107 +1506,60 @@ export const InterviewSimulatorView: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Pinned Active Scenario Brief & Optional Code / Architecture Scratchpad */}
-        {liveState !== 'connected' && (stage === 'questioning' || stage === 'awaiting_continue') && currentQuestion && (
+        {/* Optional Code / Architecture Scratchpad (only shown when toggled) */}
+        {liveState !== 'connected' && stage === 'questioning' && currentQuestion && isScratchpadOpen && currentQuestion.round !== 'Behavioral' && (
           <div
             style={{
-              padding: '14px 20px',
+              padding: '12px 20px',
               borderBottom: '1px solid var(--md-outline)',
               background: 'rgba(18, 60, 105, 0.03)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '10px',
+              gap: '8px',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-              <div style={{ flex: 1, minWidth: '240px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--md-primary)' }}>
-                    Active Prompt · {currentQuestion.round} · {currentQuestion.difficulty}
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--md-text-muted)' }}>
-                    {getInterviewerPersona(currentQuestion.round, targetRole).name} ({getInterviewerPersona(currentQuestion.round, targetRole).roleTitle})
-                  </span>
-                </div>
-                <p style={{ margin: 0, fontSize: '13.5px', fontWeight: 600, color: 'var(--md-text-primary)', lineHeight: 1.5 }}>
-                  {currentQuestion.question}
-                </p>
-              </div>
-
-              {currentQuestion.round !== 'Behavioral' && (
-                <button
-                  type="button"
-                  onClick={() => setIsScratchpadOpen((prev) => !prev)}
-                  style={{
-                    ...subtlePillBtnStyle,
-                    border: isScratchpadOpen ? '1px solid var(--md-primary)' : '1px solid var(--md-outline)',
-                    background: isScratchpadOpen ? 'var(--md-primary-container)' : 'var(--md-surface)',
-                    color: isScratchpadOpen ? 'var(--md-primary)' : 'var(--md-text-primary)',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Code2 size={13} />
-                  <span>{isScratchpadOpen ? 'Hide Scratchpad' : 'Code & Design Pad'}</span>
-                </button>
-              )}
-            </div>
-
-            {isScratchpadOpen && currentQuestion.round !== 'Behavioral' && (
-              <div
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
+                {targetRole} Workspace Scratchpad (optional code, SQL, or architecture outline)
+              </span>
+              <button
+                type="button"
+                disabled={!scratchpadText.trim()}
+                onClick={() => {
+                  const snippet = scratchpadText.trim();
+                  if (!snippet) return;
+                  setDraftAnswer((prev) => (prev.trim() ? `${prev.trim()}\n\n${snippet}` : snippet));
+                  setIsScratchpadOpen(false);
+                }}
                 style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '8px',
-                  padding: '10px 12px',
-                  borderRadius: '10px',
-                  border: '1px solid var(--md-outline)',
-                  background: 'var(--md-surface)',
+                  ...subtlePillBtnStyle,
+                  color: scratchpadText.trim() ? 'var(--md-primary)' : 'var(--md-text-muted)',
+                  padding: '4px 10px',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '11.5px', fontWeight: 700, color: 'var(--md-text-secondary)' }}>
-                    {targetRole} Workspace Scratchpad (optional code, SQL, or architecture outline)
-                  </span>
-                  <button
-                    type="button"
-                    disabled={!scratchpadText.trim()}
-                    onClick={() => {
-                      const snippet = scratchpadText.trim();
-                      if (!snippet) return;
-                      setDraftAnswer((prev) => (prev.trim() ? `${prev.trim()}\n\n${snippet}` : snippet));
-                      setIsScratchpadOpen(false);
-                    }}
-                    style={{
-                      ...subtlePillBtnStyle,
-                      color: scratchpadText.trim() ? 'var(--md-primary)' : 'var(--md-text-muted)',
-                      padding: '4px 10px',
-                    }}
-                  >
-                    Attach to Answer
-                  </button>
-                </div>
-                <textarea
-                  rows={4}
-                  value={scratchpadText}
-                  onChange={(e) => setScratchpadText(e.target.value)}
-                  placeholder={`# Draft ${roleSkills[0] || targetRole} snippet, schema, or request lifecycle notes here...`}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid var(--md-outline)',
-                    background: 'var(--md-surface-variant)',
-                    color: 'var(--md-text-primary)',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                    fontSize: '12.5px',
-                    lineHeight: 1.5,
-                    resize: 'vertical',
-                    boxSizing: 'border-box',
-                    outline: 'none',
-                  }}
-                />
-              </div>
-            )}
+                Attach to Answer
+              </button>
+            </div>
+            <textarea
+              rows={4}
+              value={scratchpadText}
+              onChange={(e) => setScratchpadText(e.target.value)}
+              placeholder={`# Draft ${roleSkills[0] || targetRole} snippet, schema, or request lifecycle notes here...`}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--md-outline)',
+                background: 'var(--md-surface)',
+                color: 'var(--md-text-primary)',
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                fontSize: '12.5px',
+                lineHeight: 1.5,
+                resize: 'vertical',
+                boxSizing: 'border-box',
+                outline: 'none',
+              }}
+            />
           </div>
         )}
 
@@ -1573,7 +1600,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                         Feedback · {ev.round}
                       </span>
                       <p style={{ margin: '4px 0 0', fontSize: '14px', color: 'var(--md-text-primary)', fontWeight: 600, lineHeight: 1.5 }}>
-                        {turn.text}
+                        {turn.text.replace(/^\[REQUEST_STEER\]\s*/i, '')}
                       </p>
                     </div>
                     <div
@@ -1645,22 +1672,6 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                       {isSampleOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                       <span>{isSampleOpen ? 'Hide sample answer' : 'View sample answer'}</span>
                     </button>
-
-                    {stage === 'awaiting_continue' && currentQuestion?.id === ev.questionId && (
-                      <button
-                        type="button"
-                        className="btn-m3-primary"
-                        onClick={handleAdvanceToNextQuestion}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '8px 16px', fontSize: '12.5px' }}
-                      >
-                        <span>
-                          {currentIndex + 1 >= loopQueue.length
-                            ? 'View Final Debrief'
-                            : `Continue to Q${currentIndex + 2}`}
-                        </span>
-                        <ArrowRight size={14} />
-                      </button>
-                    )}
                   </div>
                 </div>
               );
@@ -1758,6 +1769,93 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     </div>
                   </div>
 
+                  {evaluations.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Question-by-Question Scorecard ({evaluations.length})
+                      </span>
+                      {evaluations.map((ev, idx) => {
+                        const isSampleOpen = Boolean(expandedSampleIds[ev.questionId]);
+                        return (
+                          <div
+                            key={`${ev.questionId}-${idx}`}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: '10px',
+                              border: '1px solid var(--md-outline)',
+                              background: 'var(--md-surface-variant)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px',
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap' }}>
+                              <div style={{ flex: 1, minWidth: '200px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--md-primary)' }}>
+                                  Q{idx + 1} · {ev.round} · {ev.difficulty}
+                                </span>
+                                <div style={{ fontSize: '12.5px', fontWeight: 600, color: 'var(--md-text-primary)', marginTop: '2px', lineHeight: 1.45 }}>
+                                  {ev.questionText}
+                                </div>
+                              </div>
+                              <span
+                                style={{
+                                  padding: '3px 10px',
+                                  borderRadius: '9999px',
+                                  background: 'var(--md-surface)',
+                                  border: '1px solid var(--md-outline)',
+                                  fontSize: '11.5px',
+                                  fontWeight: 700,
+                                  color: 'var(--md-primary)',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                {ev.signalLabel} · {ev.score}%
+                              </span>
+                            </div>
+
+                            {ev.aiCritique && (
+                              <p style={{ margin: 0, fontSize: '12px', color: 'var(--md-text-secondary)', lineHeight: 1.5 }}>
+                                {ev.aiCritique}
+                              </p>
+                            )}
+
+                            <div style={{ fontSize: '12px', color: 'var(--md-text-primary)', lineHeight: 1.45 }}>
+                              <strong>Next improvement:</strong> {ev.growthTip}
+                            </div>
+
+                            {isSampleOpen && (
+                              <div style={{ background: 'var(--md-surface)', borderRadius: '8px', padding: '10px 12px', border: '1px solid var(--md-outline)' }}>
+                                <span style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--md-primary)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>
+                                  Strong Sample Answer
+                                </span>
+                                <p style={{ margin: 0, fontSize: '12px', color: 'var(--md-text-primary)', lineHeight: 1.5 }}>
+                                  {ev.modelAnswer}
+                                </p>
+                              </div>
+                            )}
+
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedSampleIds((prev) => ({
+                                    ...prev,
+                                    [ev.questionId]: !prev[ev.questionId],
+                                  }))
+                                }
+                                style={subtlePillBtnStyle}
+                              >
+                                {isSampleOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                                <span>{isSampleOpen ? 'Hide sample answer' : 'View sample answer'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button
                       type="button"
@@ -1828,7 +1926,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                     whiteSpace: 'pre-wrap',
                   }}
                 >
-                  {turn.text}
+                  {turn.text.replace(/^\[REQUEST_STEER\]\s*/i, '')}
                 </div>
               </div>
             );
@@ -1853,7 +1951,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                   ● Live Voice Active ({liveVoice})
                 </span>
                 <span style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                  {isLiveAiSpeaking ? 'Maya is speaking (interrupt anytime)' : isLiveMuted ? 'Mic muted' : 'Listening… speak naturally'}
+                  {isLiveAiSpeaking ? `${activeInterviewer.name} is speaking (interrupt anytime)` : isLiveMuted ? 'Mic muted' : 'Listening… speak naturally'}
                 </span>
               </div>
               <div style={{ height: '4px', width: '100%', borderRadius: '999px', background: 'var(--md-outline)', overflow: 'hidden' }}>
@@ -1873,7 +1971,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
               )}
               {liveAiCaption && (
                 <p style={{ margin: 0, fontSize: '12.5px', color: 'var(--md-primary)' }}>
-                  <strong>Maya:</strong> {liveAiCaption}
+                  <strong>{activeInterviewer.name}:</strong> {liveAiCaption}
                 </p>
               )}
             </div>
@@ -1883,7 +1981,7 @@ export const InterviewSimulatorView: React.FC<Props> = ({
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px' }}>
               <span className="skeleton-box" style={{ width: '22px', height: '22px', borderRadius: '50%' }} />
               <span style={{ fontSize: '12.5px', color: 'var(--md-text-secondary)', fontStyle: 'italic' }}>
-                Maya is thinking…
+                {activeInterviewer.name} is responding…
               </span>
             </div>
           )}
@@ -1983,12 +2081,10 @@ export const InterviewSimulatorView: React.FC<Props> = ({
                   liveState === 'connected'
                     ? 'Speak directly into your mic, or type a note here…'
                     : stage === 'warmup'
-                      ? 'Share a quick overview of what you built or worked on recently…'
-                      : stage === 'awaiting_continue'
-                        ? 'Click Continue above, or press Enter to move to the next question…'
-                        : followUpCount > 0
-                          ? 'Respond to the follow-up…'
-                          : 'Explain your approach, tradeoffs, and measurable outcome…'
+                      ? 'Introduce yourself or share a recent project you worked on…'
+                      : followUpCount > 0
+                        ? 'Respond to the interviewer’s follow-up…'
+                        : 'Answer naturally—share your approach, tradeoffs, and examples…'
                 }
                 style={{
                   flex: 1,

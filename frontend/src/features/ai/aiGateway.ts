@@ -167,7 +167,7 @@ export async function synthesizeInterviewSpeech(input: {
   });
 }
 
-/** Generate a realistic human interviewer turn (opening, warmup-to-Q1, clarification, follow-up, evaluation, or debrief). */
+/** Generate a realistic human interviewer turn (opening, warmup-to-Q1, clarification, follow-up, evaluation/transition, or debrief). */
 export async function requestInterviewTurn(input: {
   stage: 'opening' | 'warmup' | 'questioning' | 'debrief';
   target_role: string;
@@ -175,6 +175,9 @@ export async function requestInterviewTurn(input: {
   focus_mode?: string;
   candidate_name?: string;
   question: string;
+  next_question?: string;
+  question_index?: number;
+  total_questions?: number;
   answer: string;
   rubric?: string;
   history?: string;
@@ -188,6 +191,9 @@ export async function requestInterviewTurn(input: {
     focus_mode: input.focus_mode || '',
     candidate_name: input.candidate_name || '',
     question: input.question,
+    next_question: input.next_question || '',
+    question_index: input.question_index !== undefined ? String(input.question_index) : '',
+    total_questions: input.total_questions !== undefined ? String(input.total_questions) : '',
     answer: input.answer,
     rubric: input.rubric || '',
     history: input.history || '',
