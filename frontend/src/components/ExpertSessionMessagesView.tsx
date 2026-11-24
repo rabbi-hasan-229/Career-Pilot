@@ -1,7 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, MessageSquare, Search } from 'lucide-react';
 import type { ExpertBooking, ExpertProfile, ExpertSessionMessage } from '../types';
 import { expertRepository } from '../features/experts/expertRepository';
+import {
+  createRealtimeChannelName,
+  mergeLatestByBooking,
+  syncSupabaseRealtimeAuth,
+} from '../features/experts/sessionChatSync';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { SessionChatThread } from './SessionChatThread';
 
@@ -31,54 +36,119 @@ export const ExpertSessionMessagesView: React.FC<Props> = ({
   );
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [latestByBooking, setLatestByBooking] = useState<Record<string, ExpertSessionMessage>>({});
+  const [inboxSyncState, setInboxSyncState] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
+  const [reconnectNonce, setReconnectNonce] = useState(0);
+  const reconnectAttemptRef = useRef(0);
 
   const bookingIdsKey = useMemo(
-    () => bookings.map((b) => b.id).join(','),
+    () => [...bookings].map((b) => b.id).sort().join(','),
     [bookings]
   );
 
-  useEffect(() => {
+  const refreshLatestPreviews = useCallback(async () => {
     const ids = bookingIdsKey ? bookingIdsKey.split(',') : [];
     if (ids.length === 0) return;
-    let active = true;
-    void expertRepository
-      .loadLatestSessionMessages(ids)
-      .then((map) => {
-        if (active) setLatestByBooking(map);
-      })
-      .catch(() => {
-        // Non-blocking preview fetch
-      });
-    return () => {
-      active = false;
-    };
+    try {
+      const map = await expertRepository.loadLatestSessionMessages(ids);
+      setLatestByBooking((prev) => mergeLatestByBooking(prev, Object.values(map)));
+    } catch {
+      // Non-blocking preview fetch
+    }
   }, [bookingIdsKey]);
+
+  useEffect(() => {
+    void refreshLatestPreviews();
+  }, [refreshLatestPreviews]);
 
   // Update preview snippets when any participant posts a message
   useEffect(() => {
-    if (!isSupabaseConfigured() || bookings.length === 0) return;
-    const bookingIdSet = new Set(bookings.map((b) => b.id));
-    const channel = supabase
-      .channel(`expert_inbox:${expertProfile.user_id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'expert_session_messages',
-        },
-        (payload) => {
-          const msg = payload.new as ExpertSessionMessage | undefined;
-          if (!msg?.booking_id || !bookingIdSet.has(msg.booking_id)) return;
-          setLatestByBooking((prev) => ({ ...prev, [msg.booking_id]: msg }));
-        }
-      )
-      .subscribe();
+    if (!isSupabaseConfigured() || !bookingIdsKey) return;
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let reconnectTimer: number | null = null;
+    const bookingIdSet = new Set(bookingIdsKey.split(','));
+
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer !== null) return;
+      const delayMs = Math.min(15_000, 2_000 * 2 ** reconnectAttemptRef.current);
+      reconnectAttemptRef.current = Math.min(reconnectAttemptRef.current + 1, 4);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (active) setReconnectNonce((n) => n + 1);
+      }, delayMs);
+    };
+
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+
+      channel = supabase
+        .channel(createRealtimeChannelName('expert_inbox', expertProfile.user_id))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'expert_session_messages',
+          },
+          (payload) => {
+            if (!active || payload.eventType === 'DELETE') return;
+            const msg = payload.new as ExpertSessionMessage | undefined;
+            if (!msg?.booking_id || !bookingIdSet.has(msg.booking_id)) return;
+            setLatestByBooking((prev) => mergeLatestByBooking(prev, [msg]));
+          }
+        )
+        .subscribe((status) => {
+          if (!active) return;
+          if (status === 'SUBSCRIBED') {
+            reconnectAttemptRef.current = 0;
+            setInboxSyncState('live');
+            void refreshLatestPreviews();
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            setInboxSyncState('reconnecting');
+            void refreshLatestPreviews();
+            scheduleReconnect();
+          }
+        });
+    };
+
+    void connect();
 
     return () => {
-      void supabase.removeChannel(channel);
+      active = false;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
     };
-  }, [expertProfile.user_id, bookings]);
+  }, [expertProfile.user_id, bookingIdsKey, reconnectNonce, refreshLatestPreviews]);
+
+  // Keep inbox previews fresh when tab regains visibility/network or socket is recovering
+  useEffect(() => {
+    if (!isSupabaseConfigured() || !bookingIdsKey) return;
+    const handleResume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void refreshLatestPreviews();
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('online', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+
+    const intervalMs = inboxSyncState === 'live' ? 15_000 : 4_000;
+    const pollTimer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void refreshLatestPreviews();
+    }, intervalMs);
+
+    return () => {
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('online', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.clearInterval(pollTimer);
+    };
+  }, [bookingIdsKey, inboxSyncState, refreshLatestPreviews]);
 
   const filteredBookings = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -291,7 +361,10 @@ export const ExpertSessionMessagesView: React.FC<Props> = ({
             currentUserName={expertProfile.display_name}
             onBack={() => setMobileShowThread(false)}
             onMessageSent={(msg) =>
-              setLatestByBooking((prev) => ({ ...prev, [activeBooking.id]: msg }))
+              setLatestByBooking((prev) => mergeLatestByBooking(prev, [msg]))
+            }
+            onMessageReceived={(msg) =>
+              setLatestByBooking((prev) => mergeLatestByBooking(prev, [msg]))
             }
             onToast={onToast}
           />

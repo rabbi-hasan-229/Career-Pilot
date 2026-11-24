@@ -37,6 +37,7 @@ import { ExpertResourcesView } from './ExpertResourcesView';
 import { ExpertSessionMessagesView } from './ExpertSessionMessagesView';
 import { ExpertIntroCard } from './ExpertIntroCard';
 import { MobileNavDrawer, MobileSectionStrip } from './MobileNavDrawer';
+import { createRealtimeChannelName, syncSupabaseRealtimeAuth } from '../features/experts/sessionChatSync';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface Props {
@@ -128,23 +129,50 @@ export const ExpertDashboardShell: React.FC<Props> = ({
   // Realtime sync for new bookings & escrow updates
   useEffect(() => {
     if (!isSupabaseConfigured()) return;
-    const channel = supabase
-      .channel(`expert_dashboard:${expertProfile.user_id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'expert_bookings',
-          filter: `expert_id=eq.${expertProfile.user_id}`,
-        },
-        () => {
-          void loadDashboardData();
-        }
-      )
-      .subscribe();
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+
+      channel = supabase
+        .channel(createRealtimeChannelName('expert_dashboard', expertProfile.user_id))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'expert_bookings',
+            filter: `expert_id=eq.${expertProfile.user_id}`,
+          },
+          () => {
+            void loadDashboardData();
+          }
+        )
+        .subscribe((status) => {
+          if (active && status === 'SUBSCRIBED') {
+            void loadDashboardData();
+          }
+        });
+    };
+
+    void connect();
+
+    const handleResume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void loadDashboardData();
+    };
+    window.addEventListener('focus', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+
     return () => {
-      void supabase.removeChannel(channel);
+      active = false;
+      window.removeEventListener('focus', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
     };
   }, [expertProfile.user_id, loadDashboardData]);
 

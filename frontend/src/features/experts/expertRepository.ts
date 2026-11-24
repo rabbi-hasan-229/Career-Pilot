@@ -590,12 +590,15 @@ export const expertRepository = {
     return data as ExpertReview;
   },
 
-  async loadSessionMessages(bookingId: string): Promise<ExpertSessionMessage[]> {
-    const { data, error } = await supabase
+  async loadSessionMessages(bookingId: string, afterCreatedAt?: string): Promise<ExpertSessionMessage[]> {
+    let query = supabase
       .from('expert_session_messages')
       .select('*')
-      .eq('booking_id', bookingId)
-      .order('created_at', { ascending: true });
+      .eq('booking_id', bookingId);
+    if (afterCreatedAt) {
+      query = query.gte('created_at', afterCreatedAt);
+    }
+    const { data, error } = await query.order('created_at', { ascending: true });
     if (error) throw new Error(error.message || 'Could not load session messages.');
     return (data as ExpertSessionMessage[]) ?? [];
   },

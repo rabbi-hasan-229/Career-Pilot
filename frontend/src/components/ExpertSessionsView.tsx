@@ -30,7 +30,11 @@ export const ExpertSessionsView: React.FC<Props> = ({
   const [meetingDrafts, setMeetingDrafts] = useState<Record<string, string>>({});
   const [venueDrafts, setVenueDrafts] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [chatBooking, setChatBooking] = useState<ExpertBooking | null>(null);
+  const [chatBookingId, setChatBookingId] = useState<string | null>(null);
+
+  const chatBooking = chatBookingId
+    ? bookings.find((b) => b.id === chatBookingId) ?? null
+    : null;
 
   const filtered = bookings.filter((b) => {
     if (filterTab === 'pending') return b.status === 'pending_confirmation';
@@ -280,7 +284,7 @@ export const ExpertSessionsView: React.FC<Props> = ({
                   <button
                     type="button"
                     className="btn-m3-white"
-                    onClick={() => setChatBooking(booking)}
+                    onClick={() => setChatBookingId(booking.id)}
                     style={{ padding: '7px 12px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
                   >
                     <MessageSquare size={13} /> Message Learner
@@ -336,7 +340,7 @@ export const ExpertSessionsView: React.FC<Props> = ({
         booking={chatBooking}
         currentUserId={expertProfile.user_id}
         currentUserName={expertProfile.display_name}
-        onClose={() => setChatBooking(null)}
+        onClose={() => setChatBookingId(null)}
         onToast={onToast}
       />
     </div>

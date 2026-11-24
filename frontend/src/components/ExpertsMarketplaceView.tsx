@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Briefcase,
   Calendar,
@@ -21,6 +21,8 @@ import {
 import type { ExpertBooking, ExpertProfile, ExpertResource, Profile } from '../types';
 import { careerCategories } from '../features/roadmap/careerCatalog';
 import { expertRepository, formatFileSize } from '../features/experts/expertRepository';
+import { createRealtimeChannelName, syncSupabaseRealtimeAuth } from '../features/experts/sessionChatSync';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import {
   formatCurrencyCents,
   formatHourlyRate,
@@ -59,11 +61,85 @@ export const ExpertsMarketplaceView: React.FC<Props> = ({
   // Modals / Drawers
   const [inspectingExpert, setInspectingExpert] = useState<ExpertProfile | null>(null);
   const [bookingExpert, setBookingExpert] = useState<ExpertProfile | null>(null);
-  const [chatBooking, setChatBooking] = useState<ExpertBooking | null>(null);
+  const [chatBookingId, setChatBookingId] = useState<string | null>(null);
   const [reviewBooking, setReviewBooking] = useState<ExpertBooking | null>(null);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState('');
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
+
+  const chatBooking = useMemo(
+    () => (chatBookingId ? bookings.find((b) => b.id === chatBookingId) ?? null : null),
+    [bookings, chatBookingId]
+  );
+
+  const refreshLearnerBookings = useCallback(async () => {
+    if (profile.is_demo || !isSupabaseConfigured()) return;
+    try {
+      const bookingRows = await expertRepository.loadLearnerBookings(profile.id);
+      setBookings(bookingRows);
+      const unlockedExpertIds = bookingRows
+        .filter((b) => b.payment_status !== 'refunded' && b.expert_id)
+        .map((b) => b.expert_id as string);
+      if (unlockedExpertIds.length > 0) {
+        const resRows = await expertRepository
+          .listUnlockedResourcesForExperts(unlockedExpertIds, false)
+          .catch(() => []);
+        setUnlockedResources(resRows);
+      }
+    } catch {
+      // Silent background sync
+    }
+  }, [profile.id, profile.is_demo]);
+
+  // Realtime sync for learner bookings (confirmations, meeting links, completions)
+  useEffect(() => {
+    if (profile.is_demo || !isSupabaseConfigured()) return;
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+
+      channel = supabase
+        .channel(createRealtimeChannelName('learner_bookings', profile.id))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'expert_bookings',
+            filter: `learner_id=eq.${profile.id}`,
+          },
+          () => {
+            void refreshLearnerBookings();
+          }
+        )
+        .subscribe((status) => {
+          if (active && status === 'SUBSCRIBED') {
+            void refreshLearnerBookings();
+          }
+        });
+    };
+
+    void connect();
+
+    const handleResume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void refreshLearnerBookings();
+    };
+    window.addEventListener('focus', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+
+    return () => {
+      active = false;
+      window.removeEventListener('focus', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [profile.id, profile.is_demo, refreshLearnerBookings]);
 
   useEffect(() => {
     let active = true;
@@ -814,7 +890,7 @@ export const ExpertsMarketplaceView: React.FC<Props> = ({
                     <button
                       type="button"
                       className="btn-m3-white"
-                      onClick={() => setChatBooking(booking)}
+                      onClick={() => setChatBookingId(booking.id)}
                       style={{ padding: '7px 12px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
                     >
                       <MessageSquare size={13} /> Session Chat
@@ -904,7 +980,7 @@ export const ExpertsMarketplaceView: React.FC<Props> = ({
         currentUserId={profile.id}
         currentUserName={profile.full_name}
         isDemo={Boolean(profile.is_demo)}
-        onClose={() => setChatBooking(null)}
+        onClose={() => setChatBookingId(null)}
         onToast={onToast}
       />
 

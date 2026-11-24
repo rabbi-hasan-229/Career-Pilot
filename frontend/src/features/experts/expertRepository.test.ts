@@ -248,5 +248,29 @@ describe('expertRepository & CV validation', () => {
     const saved = await expertRepository.sendSessionMessage('bk-1', 'exp-1', 'Mentor', '  See you at 3 PM  ');
     expect(saved.message).toBe('See you at 3 PM');
     await expect(expertRepository.sendSessionMessage('bk-1', 'exp-1', 'Mentor', '   ')).rejects.toThrow('Enter a message first.');
+
+    const incrementalChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      order: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'msg-3',
+            booking_id: 'bk-1',
+            sender_id: 'exp-1',
+            sender_name: 'Mentor',
+            message: 'See you at 3 PM',
+            created_at: '2026-11-23T12:15:00Z',
+          },
+        ],
+        error: null,
+      }),
+    };
+    mockFrom.mockReturnValue(incrementalChain);
+    const delta = await expertRepository.loadSessionMessages('bk-1', '2026-11-23T12:15:00Z');
+    expect(incrementalChain.gte).toHaveBeenCalledWith('created_at', '2026-11-23T12:15:00Z');
+    expect(delta).toHaveLength(1);
+    expect(delta[0].id).toBe('msg-3');
   });
 });

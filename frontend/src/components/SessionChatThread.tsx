@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Calendar,
@@ -12,6 +12,13 @@ import {
 import type { ExpertBooking, ExpertSessionMessage } from '../types';
 import { expertRepository } from '../features/experts/expertRepository';
 import { getCurrentIsoTimestamp } from '../features/experts/expertMatching';
+import {
+  createRealtimeChannelName,
+  getLatestMessageTimestamp,
+  mergeSessionMessages,
+  removeSessionMessage,
+  syncSupabaseRealtimeAuth,
+} from '../features/experts/sessionChatSync';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 interface Props {
@@ -20,6 +27,7 @@ interface Props {
   currentUserName: string;
   isDemo?: boolean;
   onMessageSent?: (message: ExpertSessionMessage) => void;
+  onMessageReceived?: (message: ExpertSessionMessage) => void;
   onClose?: () => void;
   onBack?: () => void;
   onToast: (msg: string) => void;
@@ -68,6 +76,7 @@ export const SessionChatThread: React.FC<Props> = ({
   currentUserName,
   isDemo = false,
   onMessageSent,
+  onMessageReceived,
   onClose,
   onBack,
   onToast,
@@ -97,59 +106,186 @@ export const SessionChatThread: React.FC<Props> = ({
   const [draft, setDraft] = useState('');
   const [loadedBookingId, setLoadedBookingId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [syncState, setSyncState] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
+  const [reconnectNonce, setReconnectNonce] = useState(0);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const onToastRef = useRef(onToast);
+  const onMessageSentRef = useRef(onMessageSent);
+  const onMessageReceivedRef = useRef(onMessageReceived);
+  const latestTimestampRef = useRef<string | undefined>(undefined);
+  const reconcileInFlightRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
 
+  useEffect(() => {
+    onToastRef.current = onToast;
+  }, [onToast]);
+
+  useEffect(() => {
+    onMessageSentRef.current = onMessageSent;
+  }, [onMessageSent]);
+
+  useEffect(() => {
+    onMessageReceivedRef.current = onMessageReceived;
+  }, [onMessageReceived]);
+
+  useEffect(() => {
+    latestTimestampRef.current = getLatestMessageTimestamp(messages);
+  }, [messages]);
+
+  const reconcileMessages = useCallback(
+    async (forceFull = false) => {
+      if (isDemoBooking || !isSupabaseConfigured() || reconcileInFlightRef.current) return;
+      reconcileInFlightRef.current = true;
+      try {
+        const afterTimestamp = forceFull ? undefined : latestTimestampRef.current;
+        const rows = await expertRepository.loadSessionMessages(booking.id, afterTimestamp);
+        if (rows.length > 0) {
+          setMessages((prev) => mergeSessionMessages(prev, rows));
+          const latest = rows[rows.length - 1];
+          if (latest) {
+            onMessageReceivedRef.current?.(latest);
+          }
+        }
+      } catch {
+        // Silent background reconciliation; avoid toast spam on transient network blips
+      } finally {
+        reconcileInFlightRef.current = false;
+      }
+    },
+    [booking.id, isDemoBooking]
+  );
+
+  // Initial message history load
   useEffect(() => {
     if (isDemoBooking) return;
     let active = true;
     void expertRepository
       .loadSessionMessages(booking.id)
       .then((rows) => {
-        if (active) {
-          setMessages(rows);
-          setLoadedBookingId(booking.id);
+        if (!active) return;
+        setMessages((prev) => mergeSessionMessages(prev, rows));
+        setLoadedBookingId(booking.id);
+        const latest = rows[rows.length - 1];
+        if (latest) {
+          onMessageReceivedRef.current?.(latest);
         }
       })
       .catch((err) => {
         if (active) {
-          onToast(err instanceof Error ? err.message : 'Could not load session messages.');
+          onToastRef.current(err instanceof Error ? err.message : 'Could not load session messages.');
           setLoadedBookingId(booking.id);
         }
       });
     return () => {
       active = false;
     };
-  }, [booking.id, isDemoBooking, onToast]);
+  }, [booking.id, isDemoBooking]);
 
-  // Live Supabase realtime sync when the other participant sends a message
+  // Live Supabase Realtime sync with auth refresh, catch-up on subscribe, and auto-reconnect
   useEffect(() => {
     if (isDemoBooking || !isSupabaseConfigured()) return;
-    const channel = supabase
-      .channel(`session_chat:${booking.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'expert_session_messages',
-          filter: `booking_id=eq.${booking.id}`,
-        },
-        (payload) => {
-          const incoming = payload.new as ExpertSessionMessage | undefined;
-          if (!incoming?.id) return;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === incoming.id)) return prev;
-            return [...prev, incoming];
-          });
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let reconnectTimer: number | null = null;
+
+    const scheduleReconnect = () => {
+      if (!active || reconnectTimer !== null) return;
+      const delayMs = Math.min(15_000, 2_000 * 2 ** reconnectAttemptRef.current);
+      reconnectAttemptRef.current = Math.min(reconnectAttemptRef.current + 1, 4);
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (active) {
+          setReconnectNonce((n) => n + 1);
         }
-      )
-      .subscribe();
-    return () => {
-      void supabase.removeChannel(channel);
+      }, delayMs);
     };
-  }, [booking.id, isDemoBooking]);
+
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+
+      channel = supabase
+        .channel(createRealtimeChannelName('session_chat', booking.id))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'expert_session_messages',
+            filter: `booking_id=eq.${booking.id}`,
+          },
+          (payload) => {
+            if (!active) return;
+            if (payload.eventType === 'DELETE') {
+              const oldId = (payload.old as { id?: string } | undefined)?.id;
+              if (oldId) {
+                setMessages((prev) => removeSessionMessage(prev, oldId));
+              }
+              return;
+            }
+            const incoming = payload.new as ExpertSessionMessage | undefined;
+            if (!incoming?.id) return;
+            setMessages((prev) => mergeSessionMessages(prev, [incoming]));
+            onMessageReceivedRef.current?.(incoming);
+          }
+        )
+        .subscribe((status) => {
+          if (!active) return;
+          if (status === 'SUBSCRIBED') {
+            reconnectAttemptRef.current = 0;
+            setSyncState('live');
+            // Catch up any messages sent during the initial fetch -> socket handshake window
+            void reconcileMessages(false);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+            setSyncState('reconnecting');
+            void reconcileMessages(false);
+            scheduleReconnect();
+          }
+        });
+    };
+
+    void connect();
+
+    return () => {
+      active = false;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+      }
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [booking.id, isDemoBooking, reconnectNonce, reconcileMessages]);
+
+  // Reconcile immediately when returning to the tab, focusing the window, or regaining network,
+  // plus a lightweight adaptive safety-net sync so messages never stall even if WebSockets drop.
+  useEffect(() => {
+    if (isDemoBooking || !isSupabaseConfigured()) return;
+
+    const handleResume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void reconcileMessages(false);
+    };
+
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('online', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+
+    const intervalMs = syncState === 'live' ? 12_000 : 3_000;
+    const pollTimer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void reconcileMessages(false);
+    }, intervalMs);
+
+    return () => {
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('online', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.clearInterval(pollTimer);
+    };
+  }, [isDemoBooking, syncState, reconcileMessages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -196,8 +332,8 @@ export const SessionChatThread: React.FC<Props> = ({
         message: text,
         created_at: getCurrentIsoTimestamp(),
       };
-      setMessages((prev) => [...prev, demoMessage]);
-      onMessageSent?.(demoMessage);
+      setMessages((prev) => mergeSessionMessages(prev, [demoMessage]));
+      onMessageSentRef.current?.(demoMessage);
       setDraft('');
       return;
     }
@@ -210,11 +346,11 @@ export const SessionChatThread: React.FC<Props> = ({
         currentUserName,
         text
       );
-      setMessages((prev) => (prev.some((m) => m.id === saved.id) ? prev : [...prev, saved]));
-      onMessageSent?.(saved);
+      setMessages((prev) => mergeSessionMessages(prev, [saved]));
+      onMessageSentRef.current?.(saved);
       setDraft('');
     } catch (err) {
-      onToast(err instanceof Error ? err.message : 'Could not send message.');
+      onToastRef.current(err instanceof Error ? err.message : 'Could not send message.');
     } finally {
       setIsSending(false);
     }
@@ -330,8 +466,45 @@ export const SessionChatThread: React.FC<Props> = ({
                   {counterpartRole}
                 </span>
               </div>
-              <div style={{ fontSize: '11.5px', color: 'var(--md-text-muted)', marginTop: '1px' }}>
-                Session Chat · {booking.hours}h {booking.meeting_mode === 'online' ? 'Online Video' : 'In-Person'}
+              <div
+                style={{
+                  fontSize: '11.5px',
+                  color: 'var(--md-text-muted)',
+                  marginTop: '1px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span>
+                  Session Chat · {booking.hours}h {booking.meeting_mode === 'online' ? 'Online Video' : 'In-Person'}
+                </span>
+                {!isDemoBooking && isSupabaseConfigured() && (
+                  <span
+                    aria-live="polite"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '10.5px',
+                      fontWeight: 700,
+                      color: syncState === 'live' ? 'var(--md-success)' : 'var(--md-text-muted)',
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: '9999px',
+                        background: syncState === 'live' ? 'var(--md-success)' : 'var(--md-warning, #F59E0B)',
+                        display: 'inline-block',
+                      }}
+                    />
+                    {syncState === 'live' ? 'Live' : 'Syncing…'}
+                  </span>
+                )}
               </div>
             </div>
           </div>
