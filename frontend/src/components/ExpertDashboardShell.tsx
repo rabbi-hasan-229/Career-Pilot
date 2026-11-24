@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  Bell,
   Briefcase,
   Calendar,
   CheckCircle2,
@@ -44,6 +45,11 @@ interface Props {
   profile: Profile;
   expertProfile: ExpertProfile;
   theme: ThemeMode;
+  unreadNotificationCount?: number;
+  unreadSessionMessagesCount?: number;
+  pendingChatBookingId?: string | null;
+  onPendingChatHandled?: () => void;
+  onOpenNotifications?: () => void;
   onToggleTheme: () => void;
   onExpertProfileUpdated: (updated: ExpertProfile) => void;
   onSignOut: () => void;
@@ -55,6 +61,11 @@ export const ExpertDashboardShell: React.FC<Props> = ({
   profile,
   expertProfile,
   theme,
+  unreadNotificationCount = 0,
+  unreadSessionMessagesCount = 0,
+  pendingChatBookingId,
+  onPendingChatHandled,
+  onOpenNotifications,
   onToggleTheme,
   onExpertProfileUpdated,
   onSignOut,
@@ -189,6 +200,11 @@ export const ExpertDashboardShell: React.FC<Props> = ({
   const pendingCount = bookings.filter((b) => b.status === 'pending_confirmation').length;
   const upcomingCount = bookings.filter((b) => b.status === 'confirmed').length;
 
+  useEffect(() => {
+    if (!pendingChatBookingId) return;
+    setActiveTab('messages');
+  }, [pendingChatBookingId]);
+
   return (
     <div className="app-root-container">
       <div className="app-desktop-shell">
@@ -286,6 +302,20 @@ export const ExpertDashboardShell: React.FC<Props> = ({
                       {pendingCount}
                     </span>
                   )}
+                  {item.id === 'messages' && unreadSessionMessagesCount > 0 && (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        background: 'var(--md-error, #EF4444)',
+                        color: '#FFFFFF',
+                        padding: '1px 7px',
+                        borderRadius: '9999px',
+                      }}
+                    >
+                      {unreadSessionMessagesCount > 9 ? '9+' : unreadSessionMessagesCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -376,6 +406,42 @@ export const ExpertDashboardShell: React.FC<Props> = ({
               >
                 {theme === 'dark' ? <Sun size={16} color="#F59E0B" /> : <Moon size={16} />}
               </button>
+              {onOpenNotifications && (
+                <button
+                  type="button"
+                  className="app-navbar-icon-btn"
+                  onClick={onOpenNotifications}
+                  style={{ position: 'relative', color: 'var(--md-text-primary)' }}
+                  title={unreadNotificationCount > 0 ? `${unreadNotificationCount} unread notifications` : 'Notifications'}
+                  aria-label={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} unread)` : 'Notifications'}
+                >
+                  <Bell size={16} />
+                  {unreadNotificationCount > 0 && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        top: '3px',
+                        right: '3px',
+                        minWidth: '16px',
+                        height: '16px',
+                        padding: '0 4px',
+                        borderRadius: '9999px',
+                        background: 'var(--md-error, #EF4444)',
+                        color: '#FFFFFF',
+                        fontSize: '9.5px',
+                        fontWeight: 800,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        lineHeight: 1,
+                        border: '1.5px solid var(--md-surface)',
+                      }}
+                    >
+                      {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                    </span>
+                  )}
+                </button>
+              )}
               <button
                 type="button"
                 className="app-navbar-icon-btn"
@@ -393,7 +459,12 @@ export const ExpertDashboardShell: React.FC<Props> = ({
               id: item.id,
               label: item.label,
               icon: item.icon,
-              badge: item.id === 'sessions' ? pendingCount : undefined,
+              badge:
+                item.id === 'sessions'
+                  ? pendingCount
+                  : item.id === 'messages'
+                    ? unreadSessionMessagesCount
+                    : undefined,
             }))}
             activeId={activeTab}
             onSelect={(id) => setActiveTab(id as ExpertDashboardTab)}
@@ -502,6 +573,8 @@ export const ExpertDashboardShell: React.FC<Props> = ({
               <ExpertSessionMessagesView
                 expertProfile={expertProfile}
                 bookings={bookings}
+                initialBookingId={pendingChatBookingId}
+                onInitialBookingHandled={onPendingChatHandled}
                 onGoToSessions={() => setActiveTab('sessions')}
                 onToast={onToast}
               />
@@ -594,7 +667,12 @@ export const ExpertDashboardShell: React.FC<Props> = ({
               id: item.id,
               label: item.label,
               icon: item.icon,
-              badge: item.id === 'sessions' ? pendingCount : undefined,
+              badge:
+                item.id === 'sessions'
+                  ? pendingCount
+                  : item.id === 'messages'
+                    ? unreadSessionMessagesCount
+                    : undefined,
             })),
           },
         ]}

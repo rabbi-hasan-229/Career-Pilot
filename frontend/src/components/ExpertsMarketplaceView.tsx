@@ -36,12 +36,16 @@ import { CardGridSkeleton } from './SkeletonScreen';
 
 interface Props {
   profile: Profile;
+  initialChatBookingId?: string | null;
+  onInitialChatHandled?: () => void;
   onOpenGoalSettings: () => void;
   onToast: (msg: string) => void;
 }
 
 export const ExpertsMarketplaceView: React.FC<Props> = ({
   profile,
+  initialChatBookingId,
+  onInitialChatHandled,
   onOpenGoalSettings,
   onToast,
 }) => {
@@ -71,6 +75,13 @@ export const ExpertsMarketplaceView: React.FC<Props> = ({
     () => (chatBookingId ? bookings.find((b) => b.id === chatBookingId) ?? null : null),
     [bookings, chatBookingId]
   );
+
+  useEffect(() => {
+    if (!initialChatBookingId) return;
+    setSubTab('bookings');
+    setChatBookingId(initialChatBookingId);
+    onInitialChatHandled?.();
+  }, [initialChatBookingId, onInitialChatHandled]);
 
   const refreshLearnerBookings = useCallback(async () => {
     if (profile.is_demo || !isSupabaseConfigured()) return;

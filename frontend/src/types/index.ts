@@ -205,7 +205,9 @@ export interface AppNotification {
   type: 'reminder' | 'milestone' | 'streak' | 'system';
   read: boolean;
   actionLabel?: string;
-  actionTab?: ActiveNavTab;
+  actionTab?: ActiveNavTab | ExpertDashboardTab;
+  bookingId?: string;
+  kind?: string;
 }
 
 export type ActiveNavTab = 'home' | 'plan' | 'overview' | 'coach' | 'interview' | 'cv' | 'skills' | 'experts' | 'profile';

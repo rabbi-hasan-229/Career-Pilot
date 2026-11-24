@@ -55,6 +55,8 @@ function fromDatabase(row: any): AppNotification {
     read: Boolean(row.read_at),
     actionLabel: row.metadata?.actionLabel,
     actionTab: row.metadata?.actionTab,
+    bookingId: typeof row.metadata?.booking_id === 'string' ? row.metadata.booking_id : undefined,
+    kind: typeof row.metadata?.kind === 'string' ? row.metadata.kind : undefined,
   };
 }
 
@@ -194,7 +196,12 @@ async function getActiveServiceWorkerRegistration(): Promise<ServiceWorkerRegist
   }
 }
 
-async function showBrowserNotification(title: string, message: string, tag?: string): Promise<boolean> {
+async function showBrowserNotification(
+  title: string,
+  message: string,
+  tag?: string,
+  targetUrl = '/?view=plan'
+): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window) || Notification.permission !== 'granted') {
     return false;
   }
@@ -208,7 +215,7 @@ async function showBrowserNotification(title: string, message: string, tag?: str
         icon: '/favicon.svg',
         badge: '/favicon.svg',
         tag: effectiveTag,
-        data: { url: '/?view=plan' },
+        data: { url: targetUrl },
       });
       return true;
     } catch (swError) {
@@ -727,6 +734,82 @@ export const notificationService = {
       : `All goals for ${milestoneTitle} are complete. Keep building toward ${profile.target_role}.`;
     await this.sendNotification(title, body, 'reminder', profile);
     return true;
+  },
+
+  async showBrowserPopup(title: string, message: string, tag?: string, targetUrl?: string): Promise<boolean> {
+    return showBrowserNotification(title, message, tag, targetUrl);
+  },
+
+  async getUnreadSummary(userId: string, isDemo = false): Promise<{ totalUnread: number; unreadSessionMessages: number }> {
+    const localUnread = readLocal(userId).filter((n) => !n.read);
+    const localSummary = {
+      totalUnread: localUnread.length,
+      unreadSessionMessages: localUnread.filter((n) => n.kind === 'session_message').length,
+    };
+    if (isDemo) return localSummary;
+    try {
+      const { data, error } = await supabase
+        .from('user_notifications')
+        .select('id,metadata')
+        .eq('user_id', userId)
+        .is('read_at', null)
+        .limit(100);
+      if (error) {
+        if (isNotificationRemoteFallbackError(error)) return localSummary;
+        throw error;
+      }
+      const rows = (data ?? []) as Array<{ id: string; metadata?: { kind?: string } | null }>;
+      const remoteUnreadSessionMessages = rows.filter((r) => r.metadata?.kind === 'session_message').length;
+      return {
+        totalUnread: rows.length + localSummary.totalUnread,
+        unreadSessionMessages: remoteUnreadSessionMessages + localSummary.unreadSessionMessages,
+      };
+    } catch (error) {
+      if (isNotificationRemoteFallbackError(error)) return localSummary;
+      return localSummary;
+    }
+  },
+
+  async markAsRead(userId: string, notificationId: string, isDemo = false): Promise<void> {
+    writeLocal(
+      userId,
+      readLocal(userId).map((n) => (n.id === notificationId ? { ...n, read: true } : n))
+    );
+    if (isDemo || notificationId.startsWith('local_')) return;
+    try {
+      const { error } = await supabase
+        .from('user_notifications')
+        .update({ read_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('id', notificationId)
+        .is('read_at', null);
+      if (error && !isNotificationRemoteFallbackError(error)) throw error;
+    } catch (error) {
+      if (!isNotificationRemoteFallbackError(error)) throw error;
+    }
+  },
+
+  async markBookingMessageNotificationsRead(userId: string, bookingId: string, isDemo = false): Promise<void> {
+    if (!bookingId) return;
+    writeLocal(
+      userId,
+      readLocal(userId).map((n) =>
+        n.kind === 'session_message' && n.bookingId === bookingId ? { ...n, read: true } : n
+      )
+    );
+    if (isDemo) return;
+    try {
+      const { error } = await supabase
+        .from('user_notifications')
+        .update({ read_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .eq('metadata->>kind', 'session_message')
+        .eq('metadata->>booking_id', bookingId)
+        .is('read_at', null);
+      if (error && !isNotificationRemoteFallbackError(error)) throw error;
+    } catch {
+      // Non-blocking read sync
+    }
   },
 
   async markAllAsRead(userId: string, isDemo = false): Promise<void> {

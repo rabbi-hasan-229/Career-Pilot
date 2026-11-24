@@ -161,4 +161,48 @@ describe('Notification Service & Controls', () => {
       fromSpy.mockRestore();
     }
   });
+
+  it('tracks unread summary including session message notifications and marks booking notifications read', async () => {
+    const eqMock = vi.fn().mockReturnThis();
+    const isMock = vi.fn().mockResolvedValue({
+      data: [
+        { id: 'n-1', metadata: { kind: 'session_message', booking_id: 'bk-42' } },
+        { id: 'n-2', metadata: { kind: 'system' } },
+      ],
+      error: null,
+    });
+    const limitMock = vi.fn().mockResolvedValue({
+      data: [
+        { id: 'n-1', metadata: { kind: 'session_message', booking_id: 'bk-42' } },
+        { id: 'n-2', metadata: { kind: 'system' } },
+      ],
+      error: null,
+    });
+
+    const fromSpy = vi.spyOn(supabase, 'from').mockImplementation(() => ({
+      select: () => ({
+        eq: () => ({
+          is: () => ({
+            limit: limitMock,
+          }),
+        }),
+      }),
+      update: () => ({
+        eq: eqMock,
+        is: isMock,
+      }),
+    }) as unknown as ReturnType<typeof supabase.from>);
+
+    try {
+      const summary = await notificationService.getUnreadSummary('signed-in-user-2', false);
+      expect(summary.totalUnread).toBe(2);
+      expect(summary.unreadSessionMessages).toBe(1);
+
+      await notificationService.markBookingMessageNotificationsRead('signed-in-user-2', 'bk-42', false);
+      expect(eqMock).toHaveBeenCalledWith('metadata->>kind', 'session_message');
+      expect(eqMock).toHaveBeenCalledWith('metadata->>booking_id', 'bk-42');
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
 });

@@ -19,6 +19,7 @@ import {
   removeSessionMessage,
   syncSupabaseRealtimeAuth,
 } from '../features/experts/sessionChatSync';
+import { notificationService } from '../features/notifications/notificationService';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 interface Props {
@@ -290,6 +291,13 @@ export const SessionChatThread: React.FC<Props> = ({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length, booking.id]);
+
+  // Mark session message notifications for this booking as read while the user is actively viewing it
+  useEffect(() => {
+    if (isDemoBooking) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    void notificationService.markBookingMessageNotificationsRead(currentUserId, booking.id, isDemoBooking);
+  }, [booking.id, currentUserId, isDemoBooking, messages.length]);
 
   const isLoading = !isDemoBooking && loadedBookingId !== booking.id;
 

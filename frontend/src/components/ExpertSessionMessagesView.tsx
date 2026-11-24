@@ -13,6 +13,8 @@ import { SessionChatThread } from './SessionChatThread';
 interface Props {
   expertProfile: ExpertProfile;
   bookings: ExpertBooking[];
+  initialBookingId?: string | null;
+  onInitialBookingHandled?: () => void;
   onGoToSessions: () => void;
   onToast: (msg: string) => void;
 }
@@ -27,18 +29,27 @@ function getInitials(name: string): string {
 export const ExpertSessionMessagesView: React.FC<Props> = ({
   expertProfile,
   bookings,
+  initialBookingId,
+  onInitialBookingHandled,
   onGoToSessions,
   onToast,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(
-    () => bookings[0]?.id ?? null
+    () => initialBookingId ?? bookings[0]?.id ?? null
   );
-  const [mobileShowThread, setMobileShowThread] = useState(false);
+  const [mobileShowThread, setMobileShowThread] = useState(() => Boolean(initialBookingId));
   const [latestByBooking, setLatestByBooking] = useState<Record<string, ExpertSessionMessage>>({});
   const [inboxSyncState, setInboxSyncState] = useState<'connecting' | 'live' | 'reconnecting'>('connecting');
   const [reconnectNonce, setReconnectNonce] = useState(0);
   const reconnectAttemptRef = useRef(0);
+
+  useEffect(() => {
+    if (!initialBookingId) return;
+    setSelectedBookingId(initialBookingId);
+    setMobileShowThread(true);
+    onInitialBookingHandled?.();
+  }, [initialBookingId, onInitialBookingHandled]);
 
   const bookingIdsKey = useMemo(
     () => [...bookings].map((b) => b.id).sort().join(','),

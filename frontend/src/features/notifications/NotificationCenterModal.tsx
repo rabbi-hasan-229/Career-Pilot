@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   X,
   Bell,
@@ -12,17 +12,22 @@ import {
   Award,
   Send,
   Save,
+  MessageSquare,
 } from 'lucide-react';
 import { notificationService, type DetailedNotificationSettings } from './notificationService';
-import type { Task, Profile } from '../../types';
+import type { AppNotification, Task, Profile } from '../../types';
 import { useAccessibleDialog } from '../../hooks/useAccessibleDialog';
 import { ListSkeleton } from '../../components/SkeletonScreen';
+import { createRealtimeChannelName, syncSupabaseRealtimeAuth } from '../experts/sessionChatSync';
+import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 
 interface Props {
   isOpen: boolean;
   onClose: () => void;
   tasks: Task[];
   profile: Profile;
+  onNotificationAction?: (notification: AppNotification) => void;
+  onNotificationsChanged?: () => void;
   onToast: (msg: string) => void;
 }
 
@@ -40,6 +45,8 @@ export const NotificationCenterModal: React.FC<Props> = ({
   onClose,
   tasks,
   profile,
+  onNotificationAction,
+  onNotificationsChanged,
   onToast,
 }) => {
   type Notifications = Awaited<ReturnType<typeof notificationService.listNotifications>>;
@@ -58,20 +65,58 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const dialogRef = useAccessibleDialog(isOpen, onClose);
   const userKey = `${profile.id}:${Boolean(profile.is_demo)}`;
 
+  const refreshNotifications = useCallback(async () => {
+    try {
+      const items = await notificationService.listNotifications(profile.id, Boolean(profile.is_demo));
+      setLoadedResult({ key: userKey, notifications: items, error: '' });
+    } catch (e: unknown) {
+      setLoadedResult({
+        key: userKey,
+        notifications: [],
+        error: extractNotificationError(e, 'Could not load notifications.'),
+      });
+    }
+  }, [profile.id, profile.is_demo, userKey]);
+
   useEffect(() => {
     if (!isOpen) return;
+    void refreshNotifications();
+  }, [isOpen, refreshNotifications]);
+
+  // Live refresh inbox while Notification Center is open
+  useEffect(() => {
+    if (!isOpen || profile.is_demo || !isSupabaseConfigured()) return;
     let active = true;
-    notificationService.listNotifications(profile.id, Boolean(profile.is_demo))
-      .then((items) => { if (active) setLoadedResult({ key: userKey, notifications: items, error: '' }); })
-      .catch((e: unknown) => {
-        if (active) setLoadedResult({
-          key: userKey,
-          notifications: [],
-          error: extractNotificationError(e, 'Could not load notifications.'),
-        });
-      });
-    return () => { active = false; };
-  }, [isOpen, profile.id, profile.is_demo, userKey]);
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+      channel = supabase
+        .channel(createRealtimeChannelName('notification_modal', profile.id))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_notifications',
+            filter: `user_id=eq.${profile.id}`,
+          },
+          () => {
+            if (active) void refreshNotifications();
+          }
+        )
+        .subscribe();
+    };
+    void connect();
+
+    return () => {
+      active = false;
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+    };
+  }, [isOpen, profile.id, profile.is_demo, refreshNotifications]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -116,11 +161,21 @@ export const NotificationCenterModal: React.FC<Props> = ({
   const handleMarkAllRead = async () => {
     try {
       await notificationService.markAllAsRead(profile.id, Boolean(profile.is_demo));
-      setLoadedResult({ key: userKey, notifications: await notificationService.listNotifications(profile.id, Boolean(profile.is_demo)), error: '' });
+      await refreshNotifications();
+      onNotificationsChanged?.();
       onToast('Marked all notifications as read.');
     } catch (e) {
       onToast(extractNotificationError(e, 'Could not update notifications.'));
     }
+  };
+
+  const handleOpenNotification = async (notification: AppNotification) => {
+    if (!notification.read) {
+      await notificationService.markAsRead(profile.id, notification.id, Boolean(profile.is_demo)).catch(() => undefined);
+      onNotificationsChanged?.();
+    }
+    onClose();
+    onNotificationAction?.(notification);
   };
 
   const handlePushToggle = async () => {
@@ -436,13 +491,36 @@ export const NotificationCenterModal: React.FC<Props> = ({
                     transition: 'all 0.15s ease',
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
-                    <strong style={{ fontSize: '12.5px', color: 'var(--md-text-primary)' }}>{n.title}</strong>
-                    <span style={{ fontSize: '10.5px', color: 'var(--md-text-muted)' }}>{n.time}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '3px' }}>
+                    <strong style={{ fontSize: '12.5px', color: 'var(--md-text-primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      {n.kind === 'session_message' && <MessageSquare size={12} color="var(--md-primary)" />}
+                      <span>{n.title}</span>
+                    </strong>
+                    <span style={{ fontSize: '10.5px', color: 'var(--md-text-muted)', flexShrink: 0 }}>{n.time}</span>
                   </div>
                   <p style={{ margin: 0, color: 'var(--md-text-secondary)', fontSize: '11.5px', lineHeight: 1.45 }}>
                     {n.message}
                   </p>
+                  {onNotificationAction && (n.actionLabel || n.bookingId || n.actionTab) && (
+                    <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => void handleOpenNotification(n)}
+                        style={{
+                          background: 'var(--md-primary)',
+                          color: '#ffffff',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '5px 10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {n.actionLabel || 'Open'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

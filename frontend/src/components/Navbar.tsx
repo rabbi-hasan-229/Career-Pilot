@@ -11,6 +11,7 @@ interface Props {
   onToggleTheme: () => void;
   onOpenProfile?: () => void;
   onOpenNotifications?: () => void;
+  unreadNotificationCount?: number;
   onOpenGoalSettings?: () => void;
   onOpenMobileMenu?: () => void;
   onSignOut?: () => void;
@@ -23,6 +24,7 @@ export const Navbar: React.FC<Props> = ({
   onToggleTheme,
   onOpenProfile,
   onOpenNotifications,
+  unreadNotificationCount = 0,
   onOpenGoalSettings,
   onOpenMobileMenu,
   onSignOut,
@@ -136,21 +138,34 @@ export const Navbar: React.FC<Props> = ({
           className="app-navbar-icon-btn"
           onClick={onOpenNotifications}
           style={{ position: 'relative', color: 'var(--md-text-primary)' }}
-          title="Notifications"
-          aria-label="Notifications"
+          title={unreadNotificationCount > 0 ? `${unreadNotificationCount} unread notifications` : 'Notifications'}
+          aria-label={unreadNotificationCount > 0 ? `Notifications (${unreadNotificationCount} unread)` : 'Notifications'}
         >
           <Bell size={16} />
-          <span
-            style={{
-              position: 'absolute',
-              top: '9px',
-              right: '9px',
-              width: '7px',
-              height: '7px',
-              borderRadius: '50%',
-              background: 'var(--md-primary)',
-            }}
-          />
+          {unreadNotificationCount > 0 && (
+            <span
+              style={{
+                position: 'absolute',
+                top: '3px',
+                right: '3px',
+                minWidth: '16px',
+                height: '16px',
+                padding: '0 4px',
+                borderRadius: '9999px',
+                background: 'var(--md-error, #EF4444)',
+                color: '#FFFFFF',
+                fontSize: '9.5px',
+                fontWeight: 800,
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                lineHeight: 1,
+                border: '1.5px solid var(--md-surface)',
+              }}
+            >
+              {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+            </span>
+          )}
         </button>
 
         {/* Sign Out Button */}

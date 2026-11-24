@@ -14,9 +14,10 @@ import { isSupabaseConfigured, supabase } from './lib/supabase';
 import { daysBetweenDateOnly, getLocalDateOnly } from './lib/dateOnly';
 import { getInitialTheme, applyTheme } from './lib/theme';
 import type { ThemeMode } from './lib/theme';
-import type { ActiveNavTab, Task, AICoachMessage, Profile, Milestone, ExpertProfile } from './types';
+import type { ActiveNavTab, AppNotification, Task, AICoachMessage, Profile, Milestone, ExpertProfile } from './types';
 import type { RolePlanOutline } from './features/roadmap/careerCatalog';
 import { expertRepository } from './features/experts/expertRepository';
+import { createRealtimeChannelName, syncSupabaseRealtimeAuth } from './features/experts/sessionChatSync';
 
 const RoadmapView = lazy(() => import('./features/roadmap/RoadmapView').then((module) => ({ default: module.RoadmapView })));
 const WeeklyScheduleView = lazy(() => import('./features/roadmap/WeeklyScheduleView').then((module) => ({ default: module.WeeklyScheduleView })));
@@ -72,6 +73,9 @@ export function App() {
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [unreadSessionMessagesCount, setUnreadSessionMessagesCount] = useState(0);
+  const [pendingChatBookingId, setPendingChatBookingId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -97,14 +101,16 @@ export function App() {
   // Theme
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme());
 
-  const navigateToTab = (tab: ActiveNavTab) => {
-    if (tab === activeTab) return;
-    const url = new URL(window.location.href);
-    if (tab === 'home') url.searchParams.delete('view');
-    else url.searchParams.set('view', tab);
-    window.history.pushState({ view: tab }, '', url);
-    setActiveTab(tab);
-  };
+  const navigateToTab = useCallback((tab: ActiveNavTab) => {
+    setActiveTab((prev) => {
+      if (tab === prev) return prev;
+      const url = new URL(window.location.href);
+      if (tab === 'home') url.searchParams.delete('view');
+      else url.searchParams.set('view', tab);
+      window.history.pushState({ view: tab }, '', url);
+      return tab;
+    });
+  }, []);
 
   useEffect(() => {
     const restoreTabFromHistory = () => setActiveTab(getTabFromUrl());
@@ -418,94 +424,182 @@ export function App() {
     return () => window.clearInterval(timer);
   }, [tasks, milestones, profile]);
 
+  const refreshUnreadNotifications = useCallback(async (userId?: string, isDemo?: boolean) => {
+    const targetId = userId ?? profile?.id;
+    const demoFlag = isDemo ?? Boolean(profile?.is_demo);
+    if (!targetId) {
+      setUnreadNotificationCount(0);
+      setUnreadSessionMessagesCount(0);
+      return;
+    }
+    const summary = await notificationService.getUnreadSummary(targetId, demoFlag);
+    setUnreadNotificationCount(summary.totalUnread);
+    setUnreadSessionMessagesCount(summary.unreadSessionMessages);
+  }, [profile?.id, profile?.is_demo]);
+
+  useEffect(() => {
+    if (!profile?.id) {
+      setUnreadNotificationCount(0);
+      setUnreadSessionMessagesCount(0);
+      return;
+    }
+    void refreshUnreadNotifications(profile.id, Boolean(profile.is_demo));
+
+    const handleResume = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void refreshUnreadNotifications(profile.id, Boolean(profile.is_demo));
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('online', handleResume);
+    document.addEventListener('visibilitychange', handleResume);
+    const pollTimer = window.setInterval(handleResume, 15_000);
+    return () => {
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('online', handleResume);
+      document.removeEventListener('visibilitychange', handleResume);
+      window.clearInterval(pollTimer);
+    };
+  }, [profile?.id, profile?.is_demo, refreshUnreadNotifications]);
+
   // Realtime Backend Data Integration: Live sync for tasks, AI coach messages, and notifications
   useEffect(() => {
-    if (!profile || profile.is_demo || !isSupabaseConfigured()) return;
+    if (!profile?.id || profile.is_demo || !isSupabaseConfigured()) return;
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    const userId = profile.id;
 
-    const channel = supabase
-      .channel(`career_pilot_realtime:${profile.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'tasks',
-          filter: `user_id=eq.${profile.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            const row = payload.new as any;
-            setTasks((prev) => {
-              if (prev.some((t) => t.id === row.id)) return prev;
-              return [...prev, row as Task];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            const row = payload.new as any;
-            setTasks((prev) => prev.map((t) => (t.id === row.id ? { ...t, ...row } : t)));
-          } else if (payload.eventType === 'DELETE') {
-            const oldId = (payload.old as { id?: string })?.id;
-            if (oldId) {
-              setTasks((prev) => prev.filter((t) => t.id !== oldId));
-            }
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'ai_coach_messages',
-          filter: `user_id=eq.${profile.id}`,
-        },
-        (payload) => {
-          const row = payload.new as any;
-          if (row?.id && row?.message) {
-            const incomingSender: 'user' | 'ai' = row.sender === 'user' ? 'user' : 'ai';
-            const mappedRow: AICoachMessage = {
-              id: row.id,
-              sender: incomingSender,
-              text: row.message,
-              timestamp: row.created_at || new Date().toISOString(),
-              proposal: row.proposal ?? undefined,
-            };
-            setCoachMessages((prev) => {
-              if (prev.some((m) => m.id === row.id)) return prev;
-              const matchingOptimisticIndex = prev.findIndex(
-                (m) => m.id.startsWith('local-') && m.sender === incomingSender && m.text === row.message
-              );
-              if (matchingOptimisticIndex !== -1) {
-                return prev.map((m, idx) => (idx === matchingOptimisticIndex ? mappedRow : m));
+    const connect = async () => {
+      await syncSupabaseRealtimeAuth();
+      if (!active) return;
+
+      channel = supabase
+        .channel(createRealtimeChannelName('career_pilot_realtime', userId))
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'tasks',
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (!active) return;
+            if (payload.eventType === 'INSERT') {
+              const row = payload.new as any;
+              setTasks((prev) => {
+                if (prev.some((t) => t.id === row.id)) return prev;
+                return [...prev, row as Task];
+              });
+            } else if (payload.eventType === 'UPDATE') {
+              const row = payload.new as any;
+              setTasks((prev) => prev.map((t) => (t.id === row.id ? { ...t, ...row } : t)));
+            } else if (payload.eventType === 'DELETE') {
+              const oldId = (payload.old as { id?: string })?.id;
+              if (oldId) {
+                setTasks((prev) => prev.filter((t) => t.id !== oldId));
               }
-              return [...prev, mappedRow];
-            });
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'user_notifications',
-          filter: `user_id=eq.${profile.id}`,
-        },
-        (payload) => {
-          const row = payload.new as any;
-          if (row?.title && row?.body) {
-            showToast(`🔔 ${row.title}: ${row.body}`);
-            if (notificationService.isSoundEnabled(profile.id)) {
-              notificationService.playChime();
             }
           }
-        }
-      )
-      .subscribe();
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'ai_coach_messages',
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (!active) return;
+            const row = payload.new as any;
+            if (row?.id && row?.message) {
+              const incomingSender: 'user' | 'ai' = row.sender === 'user' ? 'user' : 'ai';
+              const mappedRow: AICoachMessage = {
+                id: row.id,
+                sender: incomingSender,
+                text: row.message,
+                timestamp: row.created_at || new Date().toISOString(),
+                proposal: row.proposal ?? undefined,
+              };
+              setCoachMessages((prev) => {
+                if (prev.some((m) => m.id === row.id)) return prev;
+                const matchingOptimisticIndex = prev.findIndex(
+                  (m) => m.id.startsWith('local-') && m.sender === incomingSender && m.text === row.message
+                );
+                if (matchingOptimisticIndex !== -1) {
+                  return prev.map((m, idx) => (idx === matchingOptimisticIndex ? mappedRow : m));
+                }
+                return [...prev, mappedRow];
+              });
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_notifications',
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (!active) return;
+            void refreshUnreadNotifications(userId, false);
+            if (payload.eventType !== 'INSERT') return;
+            const row = payload.new as any;
+            if (row?.title && row?.body) {
+              const isChatMsg = row.metadata?.kind === 'session_message';
+              showToast(`${isChatMsg ? '💬' : '🔔'} ${row.title}: ${row.body}`);
+              if (notificationService.isSoundEnabled(userId)) {
+                notificationService.playChime();
+              }
+              const targetUrl = isChatMsg ? '/?view=experts' : '/?view=plan';
+              void notificationService.showBrowserPopup(
+                row.title,
+                row.body,
+                row.metadata?.dedupe_key || `notif-${row.id}`,
+                targetUrl
+              );
+            }
+          }
+        )
+        .subscribe((status) => {
+          if (active && status === 'SUBSCRIBED') {
+            void refreshUnreadNotifications(userId, false);
+          }
+        });
+    };
+
+    void connect();
 
     return () => {
-      void supabase.removeChannel(channel);
+      active = false;
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
     };
-  }, [profile]);
+  }, [profile?.id, profile?.is_demo, showToast, refreshUnreadNotifications]);
+
+  const handlePendingChatHandled = useCallback(() => {
+    setPendingChatBookingId(null);
+  }, []);
+
+  const handleNotificationAction = useCallback((notification: AppNotification) => {
+    if (notification.bookingId) {
+      setPendingChatBookingId(notification.bookingId);
+    }
+    if (profile?.account_role === 'expert') {
+      return;
+    }
+    if (notification.kind === 'session_message' || notification.bookingId) {
+      navigateToTab('experts');
+      return;
+    }
+    const learnerTabs: ActiveNavTab[] = ['home', 'plan', 'overview', 'coach', 'interview', 'cv', 'skills', 'experts', 'profile'];
+    if (notification.actionTab && learnerTabs.includes(notification.actionTab as ActiveNavTab)) {
+      navigateToTab(notification.actionTab as ActiveNavTab);
+    }
+  }, [profile?.account_role, navigateToTab]);
 
   const handleRequestSignOut = () => {
     setIsSignOutModalOpen(true);
@@ -1035,6 +1129,11 @@ export function App() {
             profile={profile}
             expertProfile={expertProfile}
             theme={theme}
+            unreadNotificationCount={unreadNotificationCount}
+            unreadSessionMessagesCount={unreadSessionMessagesCount}
+            pendingChatBookingId={pendingChatBookingId}
+            onPendingChatHandled={handlePendingChatHandled}
+            onOpenNotifications={() => setIsNotificationsOpen(true)}
             onToggleTheme={toggleTheme}
             onExpertProfileUpdated={(updated) => {
               setExpertProfile(updated);
@@ -1058,6 +1157,17 @@ export function App() {
           />
         </Suspense>
         <Suspense fallback={null}>
+          {isNotificationsOpen && (
+            <NotificationCenterModal
+              isOpen={isNotificationsOpen}
+              onClose={() => setIsNotificationsOpen(false)}
+              tasks={tasks}
+              profile={profile}
+              onNotificationAction={handleNotificationAction}
+              onNotificationsChanged={() => void refreshUnreadNotifications(profile.id, Boolean(profile.is_demo))}
+              onToast={showToast}
+            />
+          )}
           {isSignOutModalOpen && (
             <SignOutModal
               isOpen
@@ -1140,6 +1250,7 @@ export function App() {
             onToggleTheme={toggleTheme}
             onOpenProfile={() => navigateToTab('profile')}
             onOpenNotifications={() => setIsNotificationsOpen(true)}
+            unreadNotificationCount={unreadNotificationCount}
             onOpenGoalSettings={() => setIsRoleModalOpen(true)}
             onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
             onSignOut={handleRequestSignOut}
@@ -1261,6 +1372,8 @@ export function App() {
             {activeTab === 'experts' && (
               <ExpertsMarketplaceView
                 profile={profile}
+                initialChatBookingId={pendingChatBookingId}
+                onInitialChatHandled={handlePendingChatHandled}
                 onOpenGoalSettings={() => setIsRoleModalOpen(true)}
                 onToast={showToast}
               />
@@ -1429,6 +1542,8 @@ export function App() {
             onClose={() => setIsNotificationsOpen(false)}
             tasks={tasks}
             profile={profile}
+            onNotificationAction={handleNotificationAction}
+            onNotificationsChanged={() => void refreshUnreadNotifications(profile.id, Boolean(profile.is_demo))}
             onToast={showToast}
           />
         )}
