@@ -65,6 +65,21 @@ const ALLOWED_CV_MIME_TYPES = new Set([
   'application/msword',
 ]);
 
+export function resolveExpertCVMimeType(filename: string, rawMimeType?: string | null): string {
+  const normalized = (rawMimeType || '').trim().toLowerCase();
+  if (ALLOWED_CV_MIME_TYPES.has(normalized)) {
+    return normalized;
+  }
+  const lowerName = (filename || '').trim().toLowerCase();
+  if (lowerName.endsWith('.docx')) {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (lowerName.endsWith('.doc')) {
+    return 'application/msword';
+  }
+  return 'application/pdf';
+}
+
 export function validateExpertCVFile(file: File): string | null {
   if (!file) return 'Please choose a CV file.';
   const extOk = /\.(pdf|docx?)$/i.test(file.name);
@@ -77,7 +92,84 @@ export function validateExpertCVFile(file: File): string | null {
   return null;
 }
 
-export function savePendingExpertDraft(draft: ExpertRegistrationDraft): void {
+const CV_IDB_NAME = 'career_pilot_pending_cv_db';
+const CV_IDB_STORE = 'pending_files';
+const CV_IDB_KEY = 'pending_expert_cv';
+
+function openPendingCvDb(): Promise<IDBDatabase | null> {
+  if (typeof window === 'undefined' || !('indexedDB' in window) || !window.indexedDB) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    try {
+      const req = window.indexedDB.open(CV_IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(CV_IDB_STORE)) {
+          db.createObjectStore(CV_IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function savePendingCvBlobToIdb(filename: string, blob: Blob): Promise<void> {
+  const db = await openPendingCvDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(CV_IDB_STORE, 'readwrite');
+      tx.objectStore(CV_IDB_STORE).put({ filename, blob }, CV_IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); resolve(); };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
+
+async function loadPendingCvBlobFromIdb(): Promise<{ filename: string; blob: Blob } | null> {
+  const db = await openPendingCvDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CV_IDB_STORE, 'readonly');
+      const req = tx.objectStore(CV_IDB_STORE).get(CV_IDB_KEY);
+      req.onsuccess = () => {
+        const val = req.result as { filename?: string; blob?: Blob } | undefined;
+        db.close();
+        resolve(val?.blob && val.filename ? { filename: val.filename, blob: val.blob } : null);
+      };
+      req.onerror = () => { db.close(); resolve(null); };
+    } catch {
+      db.close();
+      resolve(null);
+    }
+  });
+}
+
+async function clearPendingCvBlobFromIdb(): Promise<void> {
+  const db = await openPendingCvDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(CV_IDB_STORE, 'readwrite');
+      tx.objectStore(CV_IDB_STORE).delete(CV_IDB_KEY);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); resolve(); };
+    } catch {
+      db.close();
+      resolve();
+    }
+  });
+}
+
+export function savePendingExpertDraft(draft: ExpertRegistrationDraft, rawCvFile?: File | null): void {
   const { cv_file_data_url, ...metadataOnly } = draft;
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -86,7 +178,7 @@ export function savePendingExpertDraft(draft: ExpertRegistrationDraft): void {
         try {
           window.localStorage.setItem(PENDING_EXPERT_CV_DATA_KEY, cv_file_data_url);
         } catch {
-          // Ignore quota error for large binary CV data URL; structured draft is still saved
+          // Large PDFs can exceed localStorage quota; IndexedDB stores the full binary below
         }
       } else {
         window.localStorage.removeItem(PENDING_EXPERT_CV_DATA_KEY);
@@ -94,6 +186,18 @@ export function savePendingExpertDraft(draft: ExpertRegistrationDraft): void {
     }
   } catch {
     // Ignore storage quota issues
+  }
+  if (rawCvFile) {
+    const normalizedType = resolveExpertCVMimeType(rawCvFile.name, rawCvFile.type);
+    const typedBlob = new Blob([rawCvFile], { type: normalizedType });
+    void savePendingCvBlobToIdb(rawCvFile.name, typedBlob);
+  } else if (cv_file_data_url && draft.cv_filename) {
+    const blob = dataUrlToBlob(cv_file_data_url, draft.cv_filename);
+    if (blob) {
+      void savePendingCvBlobToIdb(draft.cv_filename, blob);
+    }
+  } else {
+    void clearPendingCvBlobFromIdb();
   }
 }
 
@@ -119,6 +223,7 @@ export function clearPendingExpertDraft(): void {
   } catch {
     // Ignore storage failure
   }
+  void clearPendingCvBlobFromIdb();
 }
 
 function saveLocalExpertProfileFallback(userId: string, profile: ExpertProfile): void {
@@ -165,12 +270,12 @@ export function consumePendingOAuthAccountRole(): 'expert' | null {
   }
 }
 
-function dataUrlToBlob(dataUrl: string): Blob | null {
+function dataUrlToBlob(dataUrl: string, filename = 'expert_cv.pdf'): Blob | null {
   try {
     const [meta, base64] = dataUrl.split(',');
     if (!meta || !base64) return null;
     const mimeMatch = /data:([^;]+);base64/.exec(meta);
-    const mime = mimeMatch ? mimeMatch[1] : 'application/pdf';
+    const mime = resolveExpertCVMimeType(filename, mimeMatch ? mimeMatch[1] : null);
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) {
@@ -202,9 +307,10 @@ export const expertRepository = {
 
     const safeName = sanitizeFilename(file.name);
     const storagePath = `${userId}/${Date.now()}_${safeName}`;
+    const contentType = resolveExpertCVMimeType(file.name, file.type);
     const { error } = await supabase.storage
       .from('expert-cvs')
-      .upload(storagePath, file, { upsert: true, contentType: file.type || 'application/pdf' });
+      .upload(storagePath, file, { upsert: true, contentType });
 
     if (error) {
       throw new Error(error.message || 'Could not upload your CV file.');
@@ -216,9 +322,10 @@ export const expertRepository = {
   async uploadExpertCVBlob(userId: string, filename: string, blob: Blob): Promise<{ storagePath: string; filename: string }> {
     const safeName = sanitizeFilename(filename);
     const storagePath = `${userId}/${Date.now()}_${safeName}`;
+    const contentType = resolveExpertCVMimeType(filename, blob.type);
     const { error } = await supabase.storage
       .from('expert-cvs')
-      .upload(storagePath, blob, { upsert: true, contentType: blob.type || 'application/pdf' });
+      .upload(storagePath, blob, { upsert: true, contentType });
 
     if (error) {
       throw new Error(error.message || 'Could not upload your CV file.');
@@ -226,14 +333,31 @@ export const expertRepository = {
     return { storagePath, filename };
   },
 
-  async getExpertCVSignedUrl(storagePath: string): Promise<string> {
+  async getExpertCVSignedUrl(
+    storagePath: string,
+    options?: { download?: string | boolean }
+  ): Promise<string> {
     const { data, error } = await supabase.storage
       .from('expert-cvs')
-      .createSignedUrl(storagePath, 60 * 15);
+      .createSignedUrl(storagePath, 60 * 15, options?.download ? { download: options.download } : undefined);
     if (error || !data?.signedUrl) {
       throw new Error(error?.message || 'Could not open CV document.');
     }
     return data.signedUrl;
+  },
+
+  async findLatestUploadedCVPath(expertUserId: string): Promise<string | null> {
+    if (!expertUserId || !isSupabaseConfigured()) return null;
+    try {
+      const { data, error } = await supabase.storage
+        .from('expert-cvs')
+        .list(expertUserId, { limit: 10, sortBy: { column: 'created_at', order: 'desc' } });
+      if (error || !data || data.length === 0) return null;
+      const latest = data.find((entry) => entry.name && !entry.name.endsWith('/'));
+      return latest ? `${expertUserId}/${latest.name}` : null;
+    } catch {
+      return null;
+    }
   },
 
   async claimInitialExpertRole(): Promise<void> {
@@ -351,28 +475,77 @@ export const expertRepository = {
     if (existingPromise) return existingPromise;
 
     const run = (async () => {
+      const localDraft = loadPendingExpertDraft();
+      const idbCv = await loadPendingCvBlobFromIdb();
       const metaDraft =
         userMetadata?.expert_draft && typeof userMetadata.expert_draft === 'object'
           ? (userMetadata.expert_draft as ExpertRegistrationDraft)
           : null;
-      const draft = loadPendingExpertDraft() ?? metaDraft;
-      if (!draft) return null;
 
-      let cvStoragePath: string | null = null;
-      let cvFilename: string | null = draft.cv_filename || null;
+      // Avoid overwriting an already-customized expert profile with stale signup metadata on subsequent logins
+      const existingProfile = await this.loadMyExpertProfile(userId).catch(() => null);
+      if (existingProfile && !localDraft && !idbCv) {
+        return existingProfile;
+      }
 
-      if (draft.cv_file_data_url && draft.cv_filename) {
+      const draft = localDraft ?? (existingProfile ? null : metaDraft);
+      if (!draft && !idbCv) return existingProfile;
+
+      let cvStoragePath: string | null = existingProfile?.cv_storage_path ?? null;
+      let cvFilename: string | null = idbCv?.filename || draft?.cv_filename || existingProfile?.cv_filename || null;
+      let cvUploadFailed = false;
+
+      if (!cvStoragePath && (idbCv || (draft?.cv_file_data_url && draft?.cv_filename))) {
         try {
-          const blob = dataUrlToBlob(draft.cv_file_data_url);
-          if (blob) {
-            const uploaded = await this.uploadExpertCVBlob(userId, draft.cv_filename, blob);
+          const uploadBlob = idbCv?.blob ?? dataUrlToBlob(draft!.cv_file_data_url!, draft!.cv_filename!);
+          const uploadName = idbCv?.filename ?? draft!.cv_filename!;
+          if (uploadBlob && uploadName) {
+            const uploaded = await this.uploadExpertCVBlob(userId, uploadName, uploadBlob);
             cvStoragePath = uploaded.storagePath;
             cvFilename = uploaded.filename;
           }
         } catch (uploadErr) {
-          console.warn('CV file upload deferred; saving profile with CV metadata:', uploadErr);
+          cvUploadFailed = true;
+          console.warn('CV file upload deferred; preserving pending CV blob for retry:', uploadErr);
         }
       }
+
+      // If profile already exists and we only had a pending CV blob to attach, update just the CV columns
+      if (existingProfile && !localDraft) {
+        if (cvStoragePath && cvStoragePath !== existingProfile.cv_storage_path) {
+          const saved = await this.saveExpertProfile({
+            displayName: existingProfile.display_name,
+            avatarUrl: existingProfile.avatar_url ?? avatarUrl ?? null,
+            headline: existingProfile.headline,
+            bio: existingProfile.bio,
+            currentCompany: existingProfile.current_company ?? undefined,
+            location: existingProfile.location ?? undefined,
+            timezone: existingProfile.timezone,
+            yearsExperience: existingProfile.years_experience,
+            categories: existingProfile.categories,
+            targetRoles: existingProfile.target_roles,
+            skills: existingProfile.skills,
+            experiences: existingProfile.experiences,
+            portfolioUrl: existingProfile.portfolio_url ?? undefined,
+            linkedinUrl: existingProfile.linkedin_url ?? undefined,
+            githubUrl: existingProfile.github_url ?? undefined,
+            cvStoragePath,
+            cvFilename,
+            cvSummary: existingProfile.cv_summary ?? undefined,
+            hourlyRateCents: existingProfile.hourly_rate_cents,
+            meetingModes: existingProfile.meeting_modes,
+            offlineCities: existingProfile.offline_cities,
+            offlineNotes: existingProfile.offline_notes ?? undefined,
+            defaultMeetingUrl: existingProfile.default_meeting_url ?? undefined,
+            maxHoursPerSession: existingProfile.max_hours_per_session,
+          });
+          if (!cvUploadFailed) clearPendingExpertDraft();
+          return saved;
+        }
+        return existingProfile;
+      }
+
+      if (!draft) return existingProfile;
 
       const saved = await this.saveExpertProfile({
         displayName: draft.display_name,
@@ -401,7 +574,9 @@ export const expertRepository = {
         maxHoursPerSession: draft.max_hours_per_session,
       });
 
-      clearPendingExpertDraft();
+      if (!cvUploadFailed) {
+        clearPendingExpertDraft();
+      }
       return saved;
     })().finally(() => {
       inFlightRegistrations.delete(userId);

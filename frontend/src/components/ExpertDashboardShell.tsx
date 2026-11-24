@@ -489,6 +489,39 @@ export const ExpertDashboardShell: React.FC<Props> = ({
                 <code>supabase/migrations/20261122000000_expert_marketplace_wallet.sql</code> to your Supabase project to publish your profile to learners and receive bookings &amp; wallet payouts.
               </div>
             )}
+            {isSchemaMigrated && expertProfile.cv_filename && !expertProfile.cv_storage_path && (
+              <div
+                role="status"
+                style={{
+                  padding: '12px 16px',
+                  borderRadius: '12px',
+                  background: 'var(--md-warning-bg, #FEF3C7)',
+                  border: '1px solid var(--md-warning, #F59E0B)',
+                  color: 'var(--md-text-primary)',
+                  fontSize: '12.5px',
+                  lineHeight: 1.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                  gap: '10px',
+                }}
+              >
+                <span>
+                  <strong>Action Needed — CV File Missing:</strong> Your profile lists <code>{expertProfile.cv_filename}</code>, but the file was not uploaded to storage yet. Re-upload it so learners can view and download your CV.
+                </span>
+                {activeTab !== 'profile' && (
+                  <button
+                    type="button"
+                    className="btn-m3-primary"
+                    onClick={() => setActiveTab('profile')}
+                    style={{ padding: '6px 12px', fontSize: '12px', flexShrink: 0 }}
+                  >
+                    Upload CV Now
+                  </button>
+                )}
+              </div>
+            )}
             {activeTab === 'overview' && (
               <>
                 <ExpertIntroCard

@@ -4,6 +4,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  Download,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -53,20 +54,27 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
   const [availability, setAvailability] = useState<ExpertAvailabilitySlot[]>([]);
   const [reviews, setReviews] = useState<ExpertReview[]>([]);
   const [resourcePreviews, setResourcePreviews] = useState<ExpertResourcePreview[]>([]);
+  const [fallbackCvPath, setFallbackCvPath] = useState<string | null>(null);
   const [isOpeningCv, setIsOpeningCv] = useState(false);
+  const [isDownloadingCv, setIsDownloadingCv] = useState(false);
 
   useEffect(() => {
     if (!expert) return;
     let active = true;
+    setFallbackCvPath(null);
     void Promise.all([
       expertRepository.loadExpertAvailability(expert.user_id, isDemo).catch(() => []),
       expertRepository.loadExpertReviews(expert.user_id, isDemo).catch(() => []),
       expertRepository.listExpertResourcePreviews(expert.user_id, isDemo).catch(() => []),
-    ]).then(([availRows, reviewRows, previewRows]) => {
+      !isDemo && !expert.cv_storage_path
+        ? expertRepository.findLatestUploadedCVPath(expert.user_id).catch(() => null)
+        : Promise.resolve(null),
+    ]).then(([availRows, reviewRows, previewRows, foundCvPath]) => {
       if (!active) return;
       setAvailability(availRows);
       setReviews(reviewRows);
       setResourcePreviews(previewRows);
+      setFallbackCvPath(foundCvPath);
     });
     return () => {
       active = false;
@@ -89,23 +97,56 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
 
   const activeSlots = availability.filter((s) => s.is_active);
 
+  const resolvedCvPath = expert.cv_storage_path || fallbackCvPath;
+
   const handleOpenCv = async () => {
-    if (!expert.cv_storage_path) {
+    if (!resolvedCvPath) {
       onToast(
         expert.cv_summary
-          ? 'Review the CV summary below (no downloadable PDF file attached).'
-          : 'No downloadable CV file has been attached yet.'
+          ? 'Review the CV summary below (the expert has not uploaded a PDF file yet).'
+          : 'The expert has not finished uploading their CV file yet.'
       );
       return;
     }
     setIsOpeningCv(true);
     try {
-      const signedUrl = await expertRepository.getExpertCVSignedUrl(expert.cv_storage_path);
-      window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      const signedUrl = await expertRepository.getExpertCVSignedUrl(resolvedCvPath);
+      const opened = window.open(signedUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        const link = document.createElement('a');
+        link.href = signedUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
     } catch (err) {
       onToast(err instanceof Error ? err.message : 'Could not open expert CV.');
     } finally {
       setIsOpeningCv(false);
+    }
+  };
+
+  const handleDownloadCv = async () => {
+    if (!resolvedCvPath) return;
+    setIsDownloadingCv(true);
+    try {
+      const downloadName = expert.cv_filename || `${expert.display_name.replace(/\s+/g, '_')}_CV.pdf`;
+      const signedUrl = await expertRepository.getExpertCVSignedUrl(resolvedCvPath, {
+        download: downloadName,
+      });
+      const link = document.createElement('a');
+      link.href = signedUrl;
+      link.download = downloadName;
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (err) {
+      onToast(err instanceof Error ? err.message : 'Could not download expert CV.');
+    } finally {
+      setIsDownloadingCv(false);
     }
   };
 
@@ -437,7 +478,7 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
                 gap: '10px',
               }}
             >
-              {(expert.cv_storage_path || expert.cv_filename) && (
+              {(resolvedCvPath || expert.cv_filename) && (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                     <div
@@ -468,27 +509,61 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
                         {expert.cv_filename || 'Curriculum Vitae'}
                       </div>
                       <div style={{ fontSize: '11.5px', color: 'var(--md-text-secondary)' }}>
-                        {expert.cv_storage_path ? 'Verified resume document' : 'Filename on profile'}
+                        {resolvedCvPath ? 'Verified resume document' : 'CV file pending upload by expert'}
                       </div>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-m3-white"
-                    onClick={() => void handleOpenCv()}
-                    disabled={isOpeningCv}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '12px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      flexShrink: 0,
-                    }}
-                  >
-                    <ExternalLink size={13} />
-                    <span>{isOpeningCv ? 'Opening...' : 'View CV'}</span>
-                  </button>
+                  {resolvedCvPath ? (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        className="btn-m3-white"
+                        onClick={() => void handleOpenCv()}
+                        disabled={isOpeningCv || isDownloadingCv}
+                        style={{
+                          padding: '6px 11px',
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                        }}
+                      >
+                        <ExternalLink size={13} />
+                        <span>{isOpeningCv ? 'Opening...' : 'View'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-m3-primary"
+                        onClick={() => void handleDownloadCv()}
+                        disabled={isDownloadingCv || isOpeningCv}
+                        style={{
+                          padding: '6px 11px',
+                          fontSize: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                        }}
+                      >
+                        <Download size={13} />
+                        <span>{isDownloadingCv ? 'Downloading...' : 'Download'}</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        padding: '4px 9px',
+                        borderRadius: '9999px',
+                        background: 'var(--md-surface)',
+                        border: '1px solid var(--md-outline)',
+                        color: 'var(--md-text-muted)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      Not uploaded yet
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -498,7 +573,7 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
                 </p>
               )}
 
-              {!expert.cv_storage_path && !expert.cv_filename && !expert.cv_summary && profileLinks.length === 0 && (
+              {!resolvedCvPath && !expert.cv_filename && !expert.cv_summary && profileLinks.length === 0 && (
                 <div style={{ fontSize: '12.5px', color: 'var(--md-text-muted)' }}>
                   No CV document or portfolio links added yet.
                 </div>
@@ -510,9 +585,9 @@ export const ExpertProfileDrawer: React.FC<Props> = ({
                     display: 'flex',
                     flexWrap: 'wrap',
                     gap: '8px',
-                    paddingTop: expert.cv_storage_path || expert.cv_filename || expert.cv_summary ? '8px' : 0,
+                    paddingTop: resolvedCvPath || expert.cv_filename || expert.cv_summary ? '8px' : 0,
                     borderTop:
-                      expert.cv_storage_path || expert.cv_filename || expert.cv_summary
+                      resolvedCvPath || expert.cv_filename || expert.cv_summary
                         ? '1px solid var(--md-outline)'
                         : 'none',
                   }}

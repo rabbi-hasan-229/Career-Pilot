@@ -17,7 +17,12 @@ vi.mock('../../lib/supabase', () => ({
   },
 }));
 
-import { expertRepository, validateExpertCVFile, validateExpertResourceFile } from './expertRepository';
+import {
+  expertRepository,
+  resolveExpertCVMimeType,
+  validateExpertCVFile,
+  validateExpertResourceFile,
+} from './expertRepository';
 
 describe('expertRepository & CV validation', () => {
   beforeEach(() => {
@@ -33,6 +38,13 @@ describe('expertRepository & CV validation', () => {
 
     const oversized = new File([new Uint8Array(6 * 1024 * 1024)], 'big.pdf', { type: 'application/pdf' });
     expect(validateExpertCVFile(oversized)).toContain('5 MB or smaller');
+
+    // Normalizes missing or generic Windows/browser MIME types based on file extension
+    expect(resolveExpertCVMimeType('images.pdf', 'application/octet-stream')).toBe('application/pdf');
+    expect(resolveExpertCVMimeType('resume.docx', '')).toBe(
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    expect(resolveExpertCVMimeType('resume.doc', 'application/octet-stream')).toBe('application/msword');
   });
 
   it('books an expert session through the atomic book_expert_session RPC with SSLCOMMERZ details', async () => {

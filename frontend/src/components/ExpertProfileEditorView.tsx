@@ -138,6 +138,23 @@ export const ExpertProfileEditorView: React.FC<Props> = ({
           </div>
         )}
 
+        {expertProfile.cv_filename && !expertProfile.cv_storage_path && !cvFile && (
+          <div
+            role="status"
+            style={{
+              padding: '10px 12px',
+              borderRadius: '10px',
+              background: 'var(--md-warning-bg, #FEF3C7)',
+              border: '1px solid var(--md-warning, #F59E0B)',
+              color: 'var(--md-text-primary)',
+              fontSize: '12.5px',
+              lineHeight: 1.45,
+            }}
+          >
+            <strong>Re-upload required for {expertProfile.cv_filename}:</strong> Select your PDF or Word CV file below and click <strong>Save Changes</strong> to attach the downloadable file.
+          </div>
+        )}
+
         <ExpertProfileFormFields
           draft={draft}
           onChange={setDraft}

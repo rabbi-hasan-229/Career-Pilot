@@ -182,7 +182,7 @@ export const AuthScreen: React.FC<Props> = ({ onAuthenticated, onToast }) => {
           savePendingExpertDraft({
             ...expertDraftMeta,
             cv_file_data_url: cvDataUrl,
-          });
+          }, expertCvFile);
         } else {
           clearPendingExpertDraft();
         }
